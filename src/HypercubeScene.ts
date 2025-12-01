@@ -159,7 +159,7 @@ export class HypercubeRenderer {
   visibleEdges!: Uint32Array;
   private lineMaterial: THREE.LineBasicMaterial;
   private solidMaterial: THREE.MeshStandardMaterial;
-  private mode: 'wireframe' | 'solid' = 'wireframe';
+  private mode: 'wireframe' | 'transparent' | 'solid' = 'wireframe';
   private hullNeedsUpdate = false;
   private points: (THREE.Vector3 & { __vertexId: number })[] = [];
   private visibleVertexMask?: Uint8Array;
@@ -173,14 +173,14 @@ export class HypercubeRenderer {
     this.scene.add(this.group);
     this.lineMaterial = new THREE.LineBasicMaterial({ color: 0xe5efff, transparent: true, opacity: 0.95 });
     this.solidMaterial = new THREE.MeshStandardMaterial({
-      color: 0x4f86ff,
-      metalness: 0.8,
-      roughness: 0.08,
-      transparent: true,
-      opacity: 0.28,
-      envMapIntensity: 1.6,
+      color: 0xffffff,
+      metalness: 1.0,
+      roughness: 0.05,
+      transparent: false,
+      opacity: 1,
+      envMapIntensity: 1.8,
       side: THREE.DoubleSide,
-      depthWrite: false,
+      depthWrite: true,
       vertexColors: false,
     });
   }
@@ -237,19 +237,37 @@ export class HypercubeRenderer {
     (this.geometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
     this.geometry.computeBoundingSphere();
     this.geometry.computeBoundingBox();
-    if (this.mode === 'solid') {
+    if (this.mode !== 'wireframe') {
       this.hullNeedsUpdate = true;
       this.updateHullGeometry();
     }
   }
 
-  setMode(mode: 'wireframe' | 'solid') {
+  setMode(mode: 'wireframe' | 'transparent' | 'solid') {
     this.mode = mode;
-    // Always keep wireframe lines visible to reveal interior structure
-    if (this.line) this.line.visible = true;
-    if (this.mesh) this.mesh.visible = mode === 'solid' && this.mesh.geometry.attributes.position !== undefined;
-    this.hullNeedsUpdate = mode === 'solid';
-    if (mode === 'solid') this.updateHullGeometry();
+    if (this.line) {
+      this.line.visible = mode === 'wireframe' || mode === 'transparent';
+      const lm = this.line.material as THREE.LineBasicMaterial;
+      lm.depthTest = mode === 'transparent' ? false : true;
+      this.line.renderOrder = mode === 'transparent' ? 5 : 0;
+    }
+    if (this.mesh) {
+      // transparent reuses solid material with lower opacity
+      if (mode === 'transparent') {
+        this.solidMaterial.transparent = true;
+        this.solidMaterial.opacity = 0.5;
+        this.solidMaterial.depthWrite = false; // avoid hiding edges
+      } else {
+        this.solidMaterial.transparent = false;
+        this.solidMaterial.opacity = 1;
+        this.solidMaterial.depthWrite = true;
+      }
+      this.solidMaterial.needsUpdate = true;
+      this.mesh.material = this.solidMaterial;
+      this.mesh.visible = mode !== 'wireframe' && this.mesh.geometry.attributes.position !== undefined;
+    }
+    this.hullNeedsUpdate = mode !== 'wireframe';
+    if (mode !== 'wireframe') this.updateHullGeometry();
   }
 
   // Filtrado simple por dimensión: mantiene vértices cuyo X[k] ∈ [min,max].
@@ -258,7 +276,7 @@ export class HypercubeRenderer {
       this.setIndexAttribute(this.allEdges);
       this.visibleEdges = this.allEdges;
       this.visibleVertexMask = undefined;
-      if (this.mode === 'solid') {
+      if (this.mode !== 'wireframe') {
         this.hullNeedsUpdate = true;
         this.updateHullGeometry();
       }
@@ -280,10 +298,16 @@ export class HypercubeRenderer {
     this.setIndexAttribute(this.visibleEdges);
     this.geometry.index!.needsUpdate = true;
     this.visibleVertexMask = keep;
-    if (this.mode === 'solid') {
+    if (this.mode !== 'wireframe') {
       this.hullNeedsUpdate = true;
       this.updateHullGeometry();
     }
+  }
+
+  refreshSurface() {
+    if (this.mode === 'wireframe' || !this.mesh) return;
+    this.hullNeedsUpdate = true;
+    this.updateHullGeometry();
   }
 
   dispose() {
@@ -304,7 +328,7 @@ export class HypercubeRenderer {
   }
 
   private updateHullGeometry() {
-    if (!this.mesh || !this.hullNeedsUpdate || this.mode !== 'solid') return;
+    if (!this.mesh || !this.hullNeedsUpdate || this.mode === 'wireframe') return;
     const mask = this.visibleVertexMask;
     const indices = mask
       ? this.points.reduce<number[]>((acc, _p, idx) => {

@@ -97,7 +97,14 @@ const tmpN = new Float32Array(32);
 const tmpCenter = new THREE.Vector3();
 let pcaCache: Float32Array | null = null;
 let projectionDirty = true;
-let setViewMode: (solid: boolean) => void;
+let setViewMode: (mode: 'wireframe' | 'transparent' | 'solid') => void;
+const setUIEnabled = (enabled: boolean) => {
+  try { (pane as any).disabled = !enabled; } catch {}
+  if (viewToggle) {
+    viewToggle.style.pointerEvents = enabled ? 'auto' : 'none';
+    viewToggle.style.opacity = enabled ? '1' : '0.5';
+  }
+};
 const objList = document.getElementById('object-list') as HTMLDivElement | null;
 const axisLegend = document.getElementById('axis-legend') as HTMLDivElement | null;
 const axisList = document.getElementById('axis-list') as HTMLDivElement | null;
@@ -143,14 +150,13 @@ const transformOp = {
   lockAxis: -1 as -1 | 0 | 1 | 2, // 0=x,1=y,2=z in current projected axes
   objectDataStart: null as Float32Array | null,
   wPlane: false,
+  moveOffset: new THREE.Vector3(),
 };
 const playState = {
   active: false,
   savedProj: 'Canonico' as ProjMode,
   savedAxes: { x: 0, y: 1, z: 2 },
   savedRot: new Float32Array(),
-  button: null as any,
-  buttonEl: null as HTMLButtonElement | null,
   spinPhase: 0,
 };
 const axisDrag = { active: false, lastX: 0, accum: 0, prevZoom: controls.enableZoom, prevPan: controls.enablePan };
@@ -201,48 +207,8 @@ function applySnapshot(snap: SceneSnapshot) {
   applySliceFilter();
   pane.refresh();
 }
-function resolvePlayButtonEl() {
-  if (playState.buttonEl && document.body.contains(playState.buttonEl)) return playState.buttonEl;
-  const view = (playState.button as any)?.controller?.view || (playState.button as any)?.controller_?.view;
-  const cand = view?.buttonElement as HTMLButtonElement | undefined;
-  if (cand) playState.buttonEl = cand;
-  if (!playState.buttonEl && paneContainer) {
-    const buttons = Array.from(paneContainer.querySelectorAll('button')) as HTMLButtonElement[];
-    const match = buttons.find(b => b.textContent?.toLowerCase().includes('demo pca') || b.textContent?.toLowerCase().includes('detener'));
-    if (match) playState.buttonEl = match;
-  }
-  return playState.buttonEl;
-}
-function updatePlayButtonLabel() {
-  const el = resolvePlayButtonEl();
-  if (!el) return;
-  el.textContent = playState.active ? 'Detener' : 'Animación 4D (tesseracto)';
-}
-function startPlay() {
-  if (playState.active) return;
-  playState.active = true;
-  playState.savedProj = PARAMS.proyeccion;
-  playState.savedAxes = { x: PARAMS.axesX, y: PARAMS.axesY, z: PARAMS.axesZ };
-  playState.savedRot = new Float32Array(rot.matrix);
-  playState.spinPhase = 0;
-  PARAMS.proyeccion = 'Canonico';
-  projectionDirty = true;
-  pane.refresh();
-  updatePlayButtonLabel();
-  projectAndRenderAll();
-  applySliceFilter();
-}
-function stopPlay() {
-  if (!playState.active) return;
-  playState.active = false;
-  if (playState.savedRot.length) rot.matrix.set(playState.savedRot);
-  projector.R = rot.matrix;
-  PARAMS.proyeccion = 'Canonico';
-  setProjectionAxes(playState.savedAxes);
-  projectionDirty = true;
-  pane.refresh();
-  updatePlayButtonLabel();
-}
+function resolvePlayButtonEl() { return null; }
+function updatePlayButtonLabel() {}
 function cycleAxes(step: number) {
   if (playState.active) return;
   const n = Math.max(1, N);
@@ -302,10 +268,13 @@ function syncTransformUIFromSelection() {
 
 function updateObjectList() {
   if (!objList) return;
-  const items = [`${baseLabel} (N=${N})`, ...extraInstances.map(inst => inst.label)];
+  const items = [];
+  if (M > 0) items.push(`${baseLabel} (N=${N})`);
+  items.push(...extraInstances.map(inst => inst.label));
   objList.innerHTML = `<h4>Objetos</h4><ul>${items.map((it, idx) => {
-    const active = idx - 1 === selectedInstance;
-    return `<li data-idx="${idx-1}" class="${active ? 'active' : ''}">${it}</li>`;
+    const dataIdx = M > 0 ? idx - 1 : idx - 0;
+    const active = dataIdx === selectedInstance;
+    return `<li data-idx="${dataIdx}" class="${active ? 'active' : ''}">${it}</li>`;
   }).join('')}</ul>`;
   objList.querySelectorAll('li').forEach(li => {
     li.addEventListener('click', () => {
@@ -427,6 +396,18 @@ function clearAxisGuide() {
   if (wGuide) { scene.remove(wGuide); wGuide.geometry.dispose(); wGuide = null; }
 }
 
+function computeCenterFromPositions(positions: Float32Array, count: number) {
+  if (!count) return new THREE.Vector3();
+  let sumX = 0, sumY = 0, sumZ = 0;
+  for (let i = 0; i < count; i++) {
+    const pIdx = i * 3;
+    sumX += positions[pIdx];
+    sumY += positions[pIdx + 1];
+    sumZ += positions[pIdx + 2];
+  }
+  return new THREE.Vector3(sumX / count, sumY / count, sumZ / count);
+}
+
 function updateAxisGuide() {
   clearAxisGuide();
   if (transformOp.mode === 'none') return;
@@ -438,17 +419,6 @@ function updateAxisGuide() {
     axisIdx === 2 ? 1 : 0,
   );
   if (!hasAxis && !transformOp.wPlane) return;
-
-  const computeCenterFromPositions = (positions: Float32Array, count: number) => {
-    let sumX = 0, sumY = 0, sumZ = 0;
-    for (let i = 0; i < count; i++) {
-      const pIdx = i * 3;
-      sumX += positions[pIdx];
-      sumY += positions[pIdx + 1];
-      sumZ += positions[pIdx + 2];
-    }
-    return new THREE.Vector3(sumX / count, sumY / count, sumZ / count);
-  };
 
   let center = new THREE.Vector3();
   if (transformOp.targetVertex >= 0) {
@@ -581,7 +551,7 @@ const PARAMS = {
   sliceDim: -1,
   sliceMin: -0.5,
   sliceMax: 0.5,
-  modoSolido: false,
+  renderMode: 'wireframe' as 'wireframe' | 'transparent' | 'solid',
   editMode: false,
   autoSpin: false,
   axesX: 0,
@@ -709,6 +679,7 @@ function projectAndRenderAll() {
       const tpos = tmpVec.set(transform.pos.x + center.x, transform.pos.y + center.y, transform.pos.z + center.z);
       renderer.setTransform(tpos, new THREE.Euler(transform.rot.x, transform.rot.y, transform.rot.z), transform.scale);
       renderer.writeInterleavedFrom(Ydst);
+      renderer.refreshSurface();
     };
     if (M > 0 && rendererND.geometry) {
       projectOne(X, M, Y, baseTransform, rendererND);
@@ -724,6 +695,7 @@ function projectAndRenderAll() {
       const tpos = tmpVec.set(baseTransform.pos.x + center.x, baseTransform.pos.y + center.y, baseTransform.pos.z + center.z);
       rendererND.setTransform(tpos, new THREE.Euler(baseTransform.rot.x, baseTransform.rot.y, baseTransform.rot.z), baseTransform.scale);
       rendererND.writeInterleavedFrom(Y);
+      rendererND.refreshSurface();
     }
     extraInstances.forEach(inst => {
       projector.project(inst.X, inst.M, inst.Y);
@@ -731,6 +703,7 @@ function projectAndRenderAll() {
       const tpos = tmpVec.set(inst.transform.pos.x + center.x, inst.transform.pos.y + center.y, inst.transform.pos.z + center.z);
       inst.renderer.setTransform(tpos, new THREE.Euler(inst.transform.rot.x, inst.transform.rot.y, inst.transform.rot.z), inst.transform.scale);
       inst.renderer.writeInterleavedFrom(inst.Y);
+      inst.renderer.refreshSurface();
     });
   }
   updateSelectionOutline();
@@ -788,15 +761,15 @@ function addInstanceAt(offset: THREE.Vector3) {
   instRenderer.setTransform(t.pos, new THREE.Euler(t.rot.x, t.rot.y, t.rot.z), t.scale);
   instRenderer.writeInterleavedFrom(Yloc);
   instRenderer.filterEdgesByDimRange(data.verts, N, data.V, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
-  instRenderer.setMode(PARAMS.modoSolido ? 'solid' : 'wireframe');
+  instRenderer.setMode(PARAMS.renderMode);
   projectAndRenderAll();
   applySliceFilter();
-  if (setViewMode) setViewMode(PARAMS.modoSolido);
+  if (setViewMode) setViewMode(PARAMS.renderMode);
   updateObjectList();
 }
 
 function rebuildState(newN: number, newX: Float32Array, newE: Uint32Array, source: 'primitive' | 'custom') {
-  if (playState.active) stopPlay();
+  if (playState.active) { playState.active = false; }
   playState.savedRot = new Float32Array();
   playState.savedAxes = { x: 0, y: 1, z: 2 };
   playState.spinPhase = 0;
@@ -808,7 +781,7 @@ function rebuildState(newN: number, newX: Float32Array, newE: Uint32Array, sourc
   controls.reset();
   camera.position.set(2.6, 1.8, 2.6);
   // ensure render mode persists
-  const currentModeSolid = PARAMS.modoSolido;
+  const currentMode = PARAMS.renderMode;
   dataSource = source;
   N = newN;
   PARAMS.N = newN;
@@ -849,8 +822,8 @@ function rebuildState(newN: number, newX: Float32Array, newE: Uint32Array, sourc
   }
   if (M > 0) {
     rendererND.build(M, E);
-    rendererND.setMode(PARAMS.modoSolido ? 'solid' : 'wireframe');
-    if (setViewMode) setViewMode(currentModeSolid);
+    rendererND.setMode(PARAMS.renderMode);
+    if (setViewMode) setViewMode(currentMode);
     projectAndRenderAll();
     applySliceFilter();
   } else {
@@ -1048,7 +1021,7 @@ function resetToIsometric() {
   PARAMS.primitive = 'hypercube';
   PARAMS.proyeccion = 'PCA';
   PARAMS.autoReortho = false;
-  PARAMS.modoSolido = false;
+  PARAMS.renderMode = 'wireframe';
   PARAMS.sliceDim = -1;
   PARAMS.sliceMin = -0.5;
   PARAMS.sliceMax = 0.5;
@@ -1077,16 +1050,21 @@ pane.addBinding(PARAMS, 'editMode', { label: 'Modo edición' });
 if (viewToggle) {
   const btns = Array.from(viewToggle.querySelectorAll('button')) as HTMLButtonElement[];
   const syncButtons = () => {
-    btns.forEach(btn => btn.classList.toggle('active', (btn.dataset.mode === 'solid') === PARAMS.modoSolido));
+    btns.forEach(btn => btn.classList.toggle('active', (btn.dataset.mode === PARAMS.renderMode)));
   };
-  setViewMode = (solid: boolean) => {
-    PARAMS.modoSolido = solid;
-    rendererND.setMode(solid ? 'solid' : 'wireframe');
-    extraInstances.forEach(inst => inst.renderer.setMode(solid ? 'solid' : 'wireframe'));
+  setViewMode = (mode: 'wireframe' | 'transparent' | 'solid') => {
+    if (playState.active) return;
+    PARAMS.renderMode = mode;
+    rendererND.setMode(mode);
+    rendererND.refreshSurface();
+    extraInstances.forEach(inst => {
+      inst.renderer.setMode(mode);
+      inst.renderer.refreshSurface();
+    });
     syncButtons();
   };
   btns.forEach(btn => {
-    btn.addEventListener('click', () => setViewMode(btn.dataset.mode === 'solid'));
+    btn.addEventListener('click', () => setViewMode(btn.dataset.mode as any));
   });
   syncButtons();
 }
@@ -1118,22 +1096,9 @@ const fProj = pane.addFolder({ title: 'Proyección' });
 fProj.addBinding(PARAMS, 'perspMode', { label: 'Perspectiva' }).on('change', () => {
   projectAndRenderAll();
 });
-const playBtn = fProj.addButton({ title: 'Reproducir rotación en W' });
-playState.button = playBtn;
-playState.buttonEl = (playBtn as any)?.controller?.view?.buttonElement || (playBtn as any)?.controller_?.view?.buttonElement || null;
-playBtn.on('click', () => {
-  if (!playState.active) {
-    startPlay();
-  } else {
-    stopPlay();
-    projectAndRenderAll();
-    applySliceFilter();
-  }
-});
 fProj.addBinding(PARAMS, 'autoReortho', { label: 'Re‑ortonormalizar' }).on('change', () => {
   // nada inmediato; se evalúa en runtime
 });
-updatePlayButtonLabel();
 
 // --- Animación ---
 const clock = new THREE.Clock();
@@ -1196,6 +1161,7 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
       }
       projector.project(inst.X, inst.M, inst.Y);
       inst.renderer.writeInterleavedFrom(inst.Y);
+      inst.renderer.refreshSurface();
       inst.renderer.filterEdgesByDimRange(inst.X, N, inst.M, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
     } else {
       const mat = new THREE.Matrix4().compose(baseTransform.pos, new THREE.Quaternion().setFromEuler(new THREE.Euler(baseTransform.rot.x, baseTransform.rot.y, baseTransform.rot.z)), baseTransform.scale).invert();
@@ -1207,30 +1173,43 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
       }
       projector.project(X, M, Y);
       rendererND.writeInterleavedFrom(Y);
+      rendererND.refreshSurface();
       rendererND.filterEdgesByDimRange(X, N, M, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
     }
     if (vertexMarker) vertexMarker.position.set(posArr[idx], posArr[idx+1], posArr[idx+2]);
     if (statusBar) statusBar.textContent = `Vértice (${transformOp.targetVertex}): (${posArr[idx].toFixed(3)}, ${posArr[idx+1].toFixed(3)}, ${posArr[idx+2].toFixed(3)})`;
     } else {
-      const target = transformOp.instIdx === -1 ? baseTransform : extraInstances[transformOp.instIdx].transform;
-      if (transformOp.mode === 'move') {
-        const src = transformOp.instIdx === -1 ? X : extraInstances[transformOp.instIdx].X;
-        const baseData = transformOp.objectDataStart;
-        const count = transformOp.instIdx === -1 ? M : extraInstances[transformOp.instIdx].M;
-        if (baseData && count > 0) {
-          const delta = new THREE.Vector3(
-          transformOp.lockAxis === 1 || transformOp.lockAxis === 2 ? 0 : dx * 0.01,
-          transformOp.lockAxis === 0 || transformOp.lockAxis === 2 ? 0 : -dy * 0.01,
-          0,
-          );
-          const axes = [PARAMS.axesX, PARAMS.axesY, PARAMS.axesZ];
-          for (let i = 0; i < count; i++) {
-            for (let c = 0; c < 3; c++) {
-              const dim = axes[c] % N;
+    const target = transformOp.instIdx === -1 ? baseTransform : extraInstances[transformOp.instIdx].transform;
+    if (transformOp.mode === 'move') {
+      const src = transformOp.instIdx === -1 ? X : extraInstances[transformOp.instIdx].X;
+      const baseData = transformOp.objectDataStart;
+      const count = transformOp.instIdx === -1 ? M : extraInstances[transformOp.instIdx].M;
+      if (baseData && count > 0) {
+        const rect = renderer.domElement.getBoundingClientRect();
+        ndc.set(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1);
+        raycaster.setFromCamera(ndc, camera);
+        const hit = raycaster.ray.intersectPlane(transformOp.plane, tmpVec);
+        if (!hit) return;
+        const delta = hit.clone().add(transformOp.moveOffset).sub(transformOp.planeHitStart);
+        if (transformOp.lockAxis === 0) {
+          delta.y = 0;
+          delta.z = 0;
+        } else if (transformOp.lockAxis === 1) {
+          delta.x = 0;
+          delta.z = 0;
+        } else if (transformOp.lockAxis === 2) {
+          delta.x = 0;
+          delta.y = 0;
+        }
+        const axes = [PARAMS.axesX, PARAMS.axesY, PARAMS.axesZ];
+        for (let i = 0; i < count; i++) {
+          for (let c = 0; c < 3; c++) {
+            const dim = axes[c] % N;
             const idxD = dim * count + i;
             src[idxD] = baseData[idxD] + delta.getComponent(c);
           }
         }
+        transformOp.lastHit.copy(hit);
         projectionDirty = true;
       }
     } else if (transformOp.mode === 'rotate') {
@@ -1328,10 +1307,10 @@ renderer.domElement.addEventListener('contextmenu', (ev) => {
           instRenderer.setTransform(t.pos, new THREE.Euler(t.rot.x, t.rot.y, t.rot.z), t.scale);
           instRenderer.writeInterleavedFrom(Yloc);
           instRenderer.filterEdgesByDimRange(data.verts, N, data.V, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
-          instRenderer.setMode(PARAMS.modoSolido ? 'solid' : 'wireframe');
+          instRenderer.setMode(PARAMS.renderMode);
           projectAndRenderAll();
           applySliceFilter();
-          if (setViewMode) setViewMode(PARAMS.modoSolido);
+          if (setViewMode) setViewMode(PARAMS.renderMode);
           updateObjectList();
         };
         ctxMenu.appendChild(btn);
@@ -1483,6 +1462,7 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
       transformOp.lockAxis = -1;
       transformOp.objectDataStart = null;
       clearAxisGuide();
+      transformOp.moveOffset.set(0,0,0);
       syncTransformUIFromSelection();
       projectAndRenderAll();
       applySliceFilter();
@@ -1648,10 +1628,49 @@ window.addEventListener('keydown', (ev) => {
   // Transform hotkeys
   if (transformOp.mode === 'none') {
     if (ev.key === 'g' || ev.key === 'r' || ev.key === 's') {
+      if (playState.active) return;
       ev.preventDefault();
       const modeMap: Record<string, TransformMode> = { g: 'move', r: 'rotate', s: 'scale' };
       const fakeEvent = new PointerEvent('pointerdown', { clientX: lastPointer.x, clientY: lastPointer.y });
       startTransform(modeMap[ev.key], fakeEvent);
+    } else if (ev.key.toLowerCase() === 'a' && ev.shiftKey) {
+      ev.preventDefault();
+      // open add-object menu at last pointer position
+      if (!ctxMenu) return;
+      ctxMenu.innerHTML = '';
+      const opts: { label: string; kind: PrimitiveKind }[] = [
+        { label: 'Hipercubo', kind: 'hypercube' },
+        { label: 'Cross polytope', kind: 'cross' },
+        { label: 'Simplex', kind: 'simplex' },
+      ];
+      const spawnPoint = pickPointOnTargetPlane(new PointerEvent('pointerdown', { clientX: lastPointer.x, clientY: lastPointer.y }));
+      opts.forEach(opt => {
+        const btn = document.createElement('button');
+        btn.textContent = `Añadir ${opt.label}`;
+        btn.onclick = () => {
+          ctxMenu.style.display = 'none';
+          const data = buildPrimitive(opt.kind, N);
+          const instRenderer = new HypercubeRenderer(scene);
+          instRenderer.build(data.V, data.edges);
+          tmpOffset.copy(spawnPoint);
+          const Yloc = new Float32Array(3 * data.V);
+          const label = `${opt.label} #${extraInstances.length + 1}`;
+          const t = { pos: tmpOffset.clone(), rot: new THREE.Vector3(), scale: new THREE.Vector3(1,1,1) };
+          extraInstances.push({ renderer: instRenderer, Y: Yloc, X: data.verts, E: data.edges, M: data.V, offset: tmpOffset.clone(), label, kind: opt.kind, transform: t });
+          projector.project(data.verts, data.V, Yloc);
+          instRenderer.setTransform(t.pos, new THREE.Euler(t.rot.x, t.rot.y, t.rot.z), t.scale);
+          instRenderer.writeInterleavedFrom(Yloc);
+          instRenderer.filterEdgesByDimRange(data.verts, N, data.V, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
+          instRenderer.setMode(PARAMS.renderMode);
+          projectAndRenderAll();
+          applySliceFilter();
+          updateObjectList();
+        };
+        ctxMenu.appendChild(btn);
+      });
+      ctxMenu.style.left = `${lastPointer.x}px`;
+      ctxMenu.style.top = `${lastPointer.y}px`;
+      ctxMenu.style.display = 'block';
     } else if (ev.key === 'w') {
       ev.preventDefault();
       PARAMS.perspMode = !PARAMS.perspMode;
@@ -1710,26 +1729,7 @@ window.addEventListener('keydown', (ev) => {
 
 function animate() {
   const dt = Math.min(clock.getDelta(), 0.05);
-  if (playState.active && N > 1) {
-    playState.spinPhase += dt;
-    const spinSpeed = Math.min(1.0, 0.3 + 0.05 * N); // faster inside‑out demo spin
-    if (N >= 4) {
-      // rotate over all plane pairs to show full N‑D motion
-      const pairCount = (N * (N - 1)) / 2;
-      const perPairSpeed = spinSpeed / Math.max(1, pairCount * 0.4);
-      for (let i = 0; i < N; i++) {
-        for (let j = i + 1; j < N; j++) {
-          rot.applyGivensLeft(i, j, dt * perPairSpeed);
-        }
-      }
-    } else {
-      // fallback for lower dims
-      rot.applyGivensLeft(0, 1, dt * spinSpeed);
-      if (N > 2) rot.applyGivensLeft(1, 2, dt * spinSpeed * 0.7);
-    }
-    projector.R = rot.matrix;
-    projectionDirty = true;
-  }
+  // animation disabled
   if (PARAMS.autoReortho) rot.reorthonormalize();
 
   projectAndRenderAll();
@@ -1774,6 +1774,24 @@ function startTransform(mode: TransformMode, ev: PointerEvent) {
       transformOp.objectDataStart = new Float32Array(src.length);
       transformOp.objectDataStart.set(src);
       transformOp.lastHit.set(0,0,0);
+      if (mode === 'move') {
+        const positions = selectedInstance === -1 ? rendererND.positions : extraInstances[selectedInstance].renderer.positions;
+        const ctr = computeCenterFromPositions(positions, count);
+        transformOp.planeHitStart.copy(ctr);
+        transformOp.plane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(tmpVec).normalize(), ctr);
+        // compute initial cursor offset so movement stays relative to click
+        const rect = renderer.domElement.getBoundingClientRect();
+        ndc.set(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1);
+        raycaster.setFromCamera(ndc, camera);
+        const hit = raycaster.ray.intersectPlane(transformOp.plane, tmpVec);
+        if (hit) {
+          transformOp.lastHit.copy(hit);
+          transformOp.moveOffset.copy(transformOp.planeHitStart).sub(hit);
+        } else {
+          transformOp.lastHit.copy(ctr);
+          transformOp.moveOffset.set(0,0,0);
+        }
+      }
     } else {
       transformOp.objectDataStart = null;
     }
