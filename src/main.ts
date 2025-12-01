@@ -842,31 +842,6 @@ function splitNumericLine(line: string) {
   return line.split(/[, \t;]+/).filter(Boolean).map(Number);
 }
 
-function parseCSV(text: string) {
-  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  if (!lines.length) throw new Error('Archivo CSV vacío');
-  const first = splitNumericLine(lines[0]);
-  const D = first.length;
-  if (D < 3 || D > 32) throw new Error('CSV debe tener entre 3 y 32 dimensiones por fila');
-  const rows: number[][] = [first];
-  for (let i = 1; i < lines.length; i++) {
-    const parts = splitNumericLine(lines[i]);
-    if (!parts.length) continue;
-    if (parts.length !== D) throw new Error(`Fila ${i+1} tiene ${parts.length} columnas, se esperaban ${D}`);
-    rows.push(parts);
-  }
-  const Mloc = rows.length;
-  const arr = new Float32Array(D * Mloc);
-  for (let r = 0; r < Mloc; r++) {
-    for (let d = 0; d < D; d++) {
-      const v = rows[r][d];
-      if (!Number.isFinite(v)) throw new Error(`Valor no numérico en fila ${r+1}, col ${d+1}`);
-      arr[d * Mloc + r] = v;
-    }
-  }
-  return { N: D, X: arr };
-}
-
 function parseJSONData(text: string) {
   const obj = JSON.parse(text);
   const points: any[] = Array.isArray(obj) ? obj : obj?.points;
@@ -889,7 +864,33 @@ function parseJSONData(text: string) {
       flat[d * Mloc + r] = v;
     }
   }
-  return { N: D, X: flat };
+  let edges = edgesFallback;
+  const rawEdges: any[] = Array.isArray(obj.edges) ? obj.edges : [];
+  if (rawEdges.length >= 2 && Array.isArray(rawEdges[0])) {
+    const list: number[] = [];
+    for (const pair of rawEdges) {
+      if (!Array.isArray(pair) || pair.length < 2) continue;
+      const [a, b] = pair.map(Number);
+      if (Number.isInteger(a) && Number.isInteger(b)) {
+        list.push(a, b);
+      }
+    }
+    if (list.length >= 2) edges = new Uint32Array(list);
+  } else if (obj.adjacency && typeof obj.adjacency === 'object') {
+    const list: number[] = [];
+    for (const [k, vals] of Object.entries(obj.adjacency)) {
+      const a = Number(k);
+      if (!Number.isInteger(a)) continue;
+      if (Array.isArray(vals)) {
+        for (const bVal of vals) {
+          const b = Number(bVal);
+          if (Number.isInteger(b)) list.push(a, b);
+        }
+      }
+    }
+    if (list.length >= 2) edges = new Uint32Array(list);
+  }
+  return { N: D, X: flat, edges };
 }
 
 function downloadText(name: string, text: string, mime = 'text/plain') {
@@ -905,14 +906,13 @@ function downloadText(name: string, text: string, mime = 'text/plain') {
 async function handleImport(file: File) {
   try {
     const text = await file.text();
-    const lower = file.name.toLowerCase();
-    const parsed = lower.endsWith('.csv') ? parseCSV(text) : parseJSONData(text);
+    const parsed = parseJSONData(text);
     pushUndoSnapshot();
     if (parsed.N < 3 || parsed.N > 8) {
       alert('Solo se admiten datasets de entre 3 y 8 dimensiones para visualizar.');
       return;
     }
-    const edges = edgesFallback;
+    const edges = parsed.edges ?? edgesFallback;
     rebuildState(parsed.N, parsed.X, edges, 'custom');
   } catch (err) {
     console.error(err);
@@ -923,30 +923,50 @@ async function handleImport(file: File) {
 }
 
 function exportProjectionJSON() {
-  // export current N-D data so it can be re‑imported
-  const pts = [];
-  for (let r = 0; r < M; r++) {
+  const { Xsrc, count, Esrc } = getCurrentExportData();
+  if (count === 0) { alert('No hay datos para exportar'); return; }
+  const pts: Record<string, number>[] = [];
+  for (let r = 0; r < count; r++) {
     const row: Record<string, number> = {};
-    for (let d = 0; d < N; d++) {
-      row[`d${d}`] = X[d * M + r];
-    }
+    for (let d = 0; d < N; d++) row[`d${d}`] = Xsrc[d * count + r];
     pts.push(row);
   }
-  downloadText('data.json', JSON.stringify({ points: pts }, null, 2), 'application/json');
+  let edges: number[][] = [];
+  if (Esrc && Esrc.length > 1) {
+    edges = [];
+    for (let i = 0; i < Esrc.length; i += 2) {
+      edges.push([Esrc[i], Esrc[i + 1]]);
+    }
+  }
+  // adjacency list
+  const adjacency: Record<number, number[]> = {};
+  edges.forEach(([a, b]) => {
+    (adjacency[a] ??= []).push(b);
+    (adjacency[b] ??= []).push(a);
+  });
+  downloadText('data.json', JSON.stringify({ points: pts, edges, adjacency }, null, 2), 'application/json');
 }
 
 function exportProjectionCSV() {
-  // export current N-D data so it can be re-imported
+  const { Xsrc, count } = getCurrentExportData();
+  if (count === 0) { alert('No hay datos para exportar'); return; }
   const headers = Array.from({ length: N }, (_, d) => `d${d}`).join(',');
   const lines = [headers];
-  for (let r = 0; r < M; r++) {
+  for (let r = 0; r < count; r++) {
     const row: string[] = [];
-    for (let d = 0; d < N; d++) {
-      row.push(`${X[d * M + r]}`);
-    }
+    for (let d = 0; d < N; d++) row.push(`${Xsrc[d * count + r]}`);
     lines.push(row.join(','));
   }
   downloadText('data.csv', lines.join('\n'), 'text/csv');
+}
+
+function getCurrentExportData() {
+  if (selectedInstance >= 0 && extraInstances[selectedInstance]) {
+    const inst = extraInstances[selectedInstance];
+    return { Xsrc: inst.X, count: inst.M, Esrc: inst.E };
+  }
+  if (M > 0) return { Xsrc: X, count: M, Esrc: E };
+  return { Xsrc: new Float32Array(), count: 0, Esrc: new Uint32Array() };
 }
 
 function formatCoords(Nloc: number, coords: Float32Array, idx: number) {
@@ -1084,9 +1104,8 @@ if (fileInput) {
 }
 
 const fData = pane.addFolder({ title: 'Datos' });
-fData.addButton({ title: 'Importar (CSV/JSON)' }).on('click', () => fileInput?.click());
-fData.addButton({ title: 'Exportar proyección CSV' }).on('click', () => exportProjectionCSV());
-fData.addButton({ title: 'Exportar proyección JSON' }).on('click', () => exportProjectionJSON());
+fData.addButton({ title: 'Importar (JSON)' }).on('click', () => fileInput?.click());
+fData.addButton({ title: 'Exportar datos JSON' }).on('click', () => exportProjectionJSON());
 
 const fDims = pane.addFolder({ title: 'Dimensiones' });
 // Primitiva fija; selector eliminado del UI.
