@@ -1253,11 +1253,20 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
           projectionDirty = true;
         }
       } else {
-        target.rot.set(
-          transformOp.lockAxis === 1 || transformOp.lockAxis === 2 ? transformOp.startRot.x : transformOp.startRot.x + dy * 0.005,
-          transformOp.lockAxis === 0 || transformOp.lockAxis === 2 ? transformOp.startRot.y : transformOp.startRot.y + dx * 0.005,
-          transformOp.startRot.z,
-        );
+        const deltaX = dx * 0.005;
+        const deltaY = dy * 0.005;
+        const lx = transformOp.startRot.x;
+        const ly = transformOp.startRot.y;
+        const lz = transformOp.startRot.z;
+        if (transformOp.lockAxis === 0) {
+          target.rot.set(lx + deltaY, ly, lz);
+        } else if (transformOp.lockAxis === 1) {
+          target.rot.set(lx, ly + deltaX, lz);
+        } else if (transformOp.lockAxis === 2) {
+          target.rot.set(lx, ly, lz + deltaX);
+        } else {
+          target.rot.set(lx + deltaY, ly + deltaX, lz);
+        }
       }
     } else if (transformOp.mode === 'scale') {
       const delta = (dx - dy) * 0.005;
@@ -1641,7 +1650,7 @@ window.addEventListener('keydown', (ev) => {
     if (ev.key === 'g' || ev.key === 'r' || ev.key === 's') {
       ev.preventDefault();
       const modeMap: Record<string, TransformMode> = { g: 'move', r: 'rotate', s: 'scale' };
-      const fakeEvent = new PointerEvent('pointerdown', { clientX: 0, clientY: 0 });
+      const fakeEvent = new PointerEvent('pointerdown', { clientX: lastPointer.x, clientY: lastPointer.y });
       startTransform(modeMap[ev.key], fakeEvent);
     } else if (ev.key === 'w') {
       ev.preventDefault();
