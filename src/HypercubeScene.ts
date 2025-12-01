@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { ConvexHull } from 'three/examples/jsm/math/ConvexHull.js';
 
 // Genera hipercubo en N dimensiones: vértices y aristas.
-export type PrimitiveKind = 'hypercube' | 'cross';
+export type PrimitiveKind = 'hypercube' | 'cross' | 'simplex';
 
 export function hypercubeEdges(N: number) {
   const V = 1 << N; // número de vértices
@@ -48,10 +48,43 @@ export function crossPolytopeEdges(N: number) {
   return { verts, edges: new Uint32Array(edges), V };
 }
 
+export function simplexEdges(N: number) {
+  const V = N + 1;
+  const verts = new Float32Array(N * V);
+  // Vertex 0 at origin; vertices 1..N on axes.
+  for (let axis = 0; axis < N; axis++) {
+    const idx = axis + 1;
+    verts[axis * V + idx] = 1;
+  }
+  // Center at origin
+  const centroid = new Float32Array(N);
+  for (let d = 0; d < N; d++) {
+    let sum = 0;
+    for (let v = 0; v < V; v++) sum += verts[d * V + v];
+    centroid[d] = sum / V;
+  }
+  for (let d = 0; d < N; d++) {
+    const c = centroid[d];
+    for (let v = 0; v < V; v++) verts[d * V + v] -= c;
+  }
+  // Scale to fit roughly in [-0.5,0.5]
+  let maxAbs = 0;
+  for (let i = 0; i < verts.length; i++) maxAbs = Math.max(maxAbs, Math.abs(verts[i]));
+  const scale = maxAbs > 0 ? 0.5 / maxAbs : 1;
+  for (let i = 0; i < verts.length; i++) verts[i] *= scale;
+
+  const edges: number[] = [];
+  for (let a = 0; a < V; a++) {
+    for (let b = a + 1; b < V; b++) edges.push(a, b);
+  }
+  return { verts, edges: new Uint32Array(edges), V };
+}
+
 export function buildPrimitive(kind: PrimitiveKind, N: number) {
   switch (kind) {
     case 'hypercube': return hypercubeEdges(N);
     case 'cross': return crossPolytopeEdges(N);
+    case 'simplex': return simplexEdges(N);
     default: throw new Error(`Tipo de primitiva no soportado: ${kind}`);
   }
 }
