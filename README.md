@@ -14,6 +14,7 @@ En la esquina superior derecha hay un panel con:
 - Lista de objetos activos.
 - Controles de datos (importar / exportar).
 - Dimensiones `N`.
+- Internamente todo se representa en 8D: al crear una primitiva con un `N` menor, sus coordenadas se embeben en 8 dimensiones usando ejes consecutivos a partir del eje activo actual; las dimensiones restantes quedan a cero.
 - Proyección (canónica o PCA).
 - Ajustes avanzados de rotación y corte (slicing).
 

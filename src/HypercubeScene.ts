@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { ConvexHull } from 'three/examples/jsm/math/ConvexHull.js';
 
 // Genera hipercubo en N dimensiones: vértices y aristas.
-export type PrimitiveKind = 'hypercube' | 'cross' | 'simplex';
+export type PrimitiveKind = 'hypercube' | 'cross' | 'simplex' | 'simplexPrism';
 
 export function hypercubeEdges(N: number) {
   const V = 1 << N; // número de vértices
@@ -80,11 +80,41 @@ export function simplexEdges(N: number) {
   return { verts, edges: new Uint32Array(edges), V };
 }
 
+export function simplexPrismEdges(N: number) {
+  const baseDim = Math.max(2, N - 1); // prisma sobre simplex de dimensión baseDim
+  const base = simplexEdges(baseDim);
+  const baseV = base.V; // = baseDim + 1
+  const V = baseV * 2;
+  const verts = new Float32Array(N * V);
+  // Copia base en dimensiones 0..baseDim-1, y usa la última dimensión como extrusión.
+  for (let v = 0; v < baseV; v++) {
+    for (let d = 0; d < baseDim; d++) {
+      const val = base.verts[d * baseV + v];
+      verts[d * V + v] = val; // capa inferior
+      verts[d * V + (v + baseV)] = val; // capa superior
+    }
+    const extrudeDim = Math.min(N - 1, baseDim);
+    verts[extrudeDim * V + v] = -0.4;
+    verts[extrudeDim * V + (v + baseV)] = 0.4;
+  }
+  const edges: number[] = [];
+  // aristas en cada simplex (inferior y superior)
+  for (let e = 0; e < base.edges.length; e += 2) {
+    const a = base.edges[e], b = base.edges[e + 1];
+    edges.push(a, b); // inferior
+    edges.push(a + baseV, b + baseV); // superior
+  }
+  // aristas verticales
+  for (let v = 0; v < baseV; v++) edges.push(v, v + baseV);
+  return { verts, edges: new Uint32Array(edges), V };
+}
+
 export function buildPrimitive(kind: PrimitiveKind, N: number) {
   switch (kind) {
     case 'hypercube': return hypercubeEdges(N);
     case 'cross': return crossPolytopeEdges(N);
     case 'simplex': return simplexEdges(N);
+    case 'simplexPrism': return simplexPrismEdges(N);
     default: throw new Error(`Tipo de primitiva no soportado: ${kind}`);
   }
 }

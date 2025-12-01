@@ -82,7 +82,8 @@ const vertexGeo = new THREE.SphereGeometry(0.012, 8, 8);
 const axisPalette = ['#ff6b6b', '#4caf50', '#2196f3', '#f0c674', '#9b59b6', '#1abc9c', '#e67e22', '#ecf0f1'];
 
 // --- Estado N‑D ---
-let N = 4;
+const MAX_N = 8;
+let N = MAX_N;
 let X = new Float32Array();
 let E = new Uint32Array();
 let M = 0;
@@ -116,6 +117,7 @@ type SceneSnapshot = {
   M: number;
   axes: { x: number; y: number; z: number };
   baseTransform: { pos: THREE.Vector3; rot: THREE.Vector3; scale: THREE.Vector3 };
+  baseOrigN: number;
 };
 const undoStack: SceneSnapshot[] = [];
 const redoStack: SceneSnapshot[] = [];
@@ -130,6 +132,7 @@ let axisGuide: THREE.Line | null = null;
 let wGuide: THREE.Line | null = null;
 let deletePending = false;
 const baseTransform = { pos: new THREE.Vector3(), rot: new THREE.Vector3(), scale: new THREE.Vector3(1,1,1) };
+let baseOriginalN = 0;
 const transformUI = { posX: 0, posY: 0, posZ: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1 };
 type TransformMode = 'none' | 'move' | 'rotate' | 'scale';
 type ProjectionAxes = { x: number; y: number; z: number };
@@ -163,11 +166,31 @@ const axisDrag = { active: false, lastX: 0, accum: 0, prevZoom: controls.enableZ
 let axesOrder: number[] = Array.from({ length: N }, (_, i) => i);
 let axesOffset = 0;
 
+const visibleDims = () => Math.max(3, Math.min(PARAMS.N, MAX_N));
+
+function embedToMax(localVerts: Float32Array, localN: number, axesSeq: number[], offset: number) {
+  const V = localVerts.length / localN;
+  const out = new Float32Array(MAX_N * V);
+  for (let d = 0; d < localN; d++) {
+    const dim = axesSeq[(offset + d) % MAX_N];
+    for (let v = 0; v < V; v++) {
+      out[dim * V + v] = localVerts[d * V + v];
+    }
+  }
+  return out;
+}
+
 function setProjectionAxes({ x, y, z }: ProjectionAxes) {
-  PARAMS.axesX = x;
-  PARAMS.axesY = y;
-  PARAMS.axesZ = z;
-  const idx = axesOrder.indexOf(x);
+  const nVis = visibleDims();
+  const list = axesOrder.slice(0, nVis);
+  const clamp = (v: number) => {
+    const idx = list.indexOf(v);
+    return idx >= 0 ? v : list[0] ?? 0;
+  };
+  PARAMS.axesX = clamp(x);
+  PARAMS.axesY = clamp(y);
+  PARAMS.axesZ = clamp(z);
+  const idx = list.indexOf(PARAMS.axesX);
   if (idx >= 0) axesOffset = idx;
   projectionDirty = true;
   transformOp.lockAxis = -1;
@@ -188,6 +211,7 @@ function pushUndoSnapshot() {
       rot: baseTransform.rot.clone(),
       scale: baseTransform.scale.clone(),
     },
+    baseOrigN: baseOriginalN,
   };
   undoStack.push(snap);
   if (undoStack.length > MAX_HISTORY) undoStack.shift();
@@ -196,7 +220,7 @@ function pushUndoSnapshot() {
 
 function applySnapshot(snap: SceneSnapshot) {
   const rebuiltEdges = edgesFallback;
-  rebuildState(snap.N, snap.X, rebuiltEdges, dataSource);
+  rebuildState(snap.N, snap.X, rebuiltEdges, dataSource, snap.baseOrigN);
   M = snap.M;
   PARAMS.axesX = snap.axes.x; PARAMS.axesY = snap.axes.y; PARAMS.axesZ = snap.axes.z;
   baseTransform.pos.copy(snap.baseTransform.pos);
@@ -211,7 +235,7 @@ function resolvePlayButtonEl() { return null; }
 function updatePlayButtonLabel() {}
 function cycleAxes(step: number) {
   if (playState.active) return;
-  const n = Math.max(1, N);
+  const n = visibleDims();
   if (n < 3) return;
   axesOffset = (((axesOffset + step) % n) + n) % n;
   if (!playState.active && PARAMS.proyeccion !== 'Canonico') {
@@ -269,8 +293,8 @@ function syncTransformUIFromSelection() {
 function updateObjectList() {
   if (!objList) return;
   const items = [];
-  if (M > 0) items.push(`${baseLabel} (N=${N})`);
-  items.push(...extraInstances.map(inst => inst.label));
+  if (M > 0) items.push(`${baseLabel} (N=${baseOriginalN || PARAMS.N})`);
+  items.push(...extraInstances.map(inst => `${inst.label} (N=${inst.originalN})`));
   objList.innerHTML = `<h4>Objetos</h4><ul>${items.map((it, idx) => {
     const dataIdx = M > 0 ? idx - 1 : idx - 0;
     const active = dataIdx === selectedInstance;
@@ -304,7 +328,8 @@ function updateAxesHelperColors() {
 function updateAxisLegend() {
   updateAxesHelperColors();
   if (!axisLegend) return;
-  const badges = Array.from({ length: N }).map((_, i) => {
+  const nVis = visibleDims();
+  const badges = Array.from({ length: nVis }).map((_, i) => {
     const color = axisPalette[i % axisPalette.length];
     return `<span class="badge" style="background:${color};">d${i}</span>`;
   }).join('');
@@ -312,13 +337,15 @@ function updateAxisLegend() {
 }
 function renderAxisList() {
   if (!axisList) return;
-  if (N < 1) { axisList.innerHTML = ''; return; }
+  const nVis = visibleDims();
+  if (nVis < 1) { axisList.innerHTML = ''; return; }
+  const list = axesOrder.slice(0, nVis);
   const activeDims = new Set([
-    axesOrder[(axesOffset + 0) % N],
-    axesOrder[(axesOffset + 1) % N],
-    axesOrder[(axesOffset + 2) % N],
+    list[(axesOffset + 0) % nVis],
+    list[(axesOffset + 1) % nVis],
+    list[(axesOffset + 2) % nVis],
   ]);
-  const items = axesOrder.map((dim, idx) => {
+  const items = list.map((dim, idx) => {
     const color = axisPalette[dim % axisPalette.length];
     const active = activeDims.has(dim);
     return `<li draggable="true" data-idx="${idx}" class="${active ? 'active' : ''}" style="border-left:4px solid ${color};">${`d${dim}`}</li>`;
@@ -337,12 +364,12 @@ function renderAxisList() {
       const moved = axesOrder.splice(from, 1)[0];
       axesOrder.splice(to, 0, moved);
       // keep current leading axis if possible
-      const newOffset = axesOrder.indexOf(PARAMS.axesX);
+      const newOffset = axesOrder.slice(0, visibleDims()).indexOf(PARAMS.axesX);
       axesOffset = newOffset >= 0 ? newOffset : 0;
       setProjectionAxes({
-        x: axesOrder[axesOffset % N],
-        y: axesOrder[(axesOffset + 1) % N],
-        z: axesOrder[(axesOffset + 2) % N],
+        x: axesOrder[axesOffset % visibleDims()],
+        y: axesOrder[(axesOffset + 1) % visibleDims()],
+        z: axesOrder[(axesOffset + 2) % visibleDims()],
       });
       renderAxisList();
     });
@@ -528,6 +555,7 @@ type Instance = {
   label: string;
   kind: PrimitiveKind;
   transform: { pos: THREE.Vector3; rot: THREE.Vector3; scale: THREE.Vector3; };
+  originalN: number;
 };
 
 const extraInstances: Instance[] = [];
@@ -542,7 +570,7 @@ let paneVisible = true;
 // --- UI (Tweakpane) ---
 const pane = new Pane({ container: paneContainer }) as any;
 const PARAMS = {
-  N,
+  N: 4,
   primitive: 'hypercube' as PrimitiveMode,
   proyeccion: 'Canonico' as ProjMode,
   autoReortho: false,
@@ -581,7 +609,8 @@ function refreshPlaneOptions() {
 
 function applyProjectionMatrix() {
   if (PARAMS.proyeccion === 'Canonico' || M === 0) {
-    const axes = [PARAMS.axesX % N, PARAMS.axesY % N, PARAMS.axesZ % N].map(v => Math.max(0, Math.min(N - 1, v)));
+    const nVis = visibleDims();
+    const axes = [PARAMS.axesX % nVis, PARAMS.axesY % nVis, PARAMS.axesZ % nVis].map(v => Math.max(0, Math.min(nVis - 1, v)));
     const P = new Float32Array(3 * N);
     P[0 * N + axes[0]] = 1;
     P[1 * N + axes[1]] = 1;
@@ -749,18 +778,25 @@ function clearExtraInstances() {
 }
 
 function addInstanceAt(offset: THREE.Vector3) {
-  const baseData = M > 0 ? { verts: new Float32Array(X), edges: new Uint32Array(E), V: M } : buildPrimitive(PARAMS.primitive, N);
-  const data = baseData;
+  let data: { verts: Float32Array; edges: Uint32Array; V: number; kind: PrimitiveKind };
+  if (M > 0) {
+    data = { verts: new Float32Array(X), edges: new Uint32Array(E), V: M, kind: PARAMS.primitive };
+  } else {
+    const local = buildPrimitive(PARAMS.primitive, PARAMS.N);
+    const embedded = embedToMax(local.verts, PARAMS.N, axesOrder, axesOffset);
+    data = { verts: embedded, edges: local.edges, V: local.V, kind: PARAMS.primitive };
+  }
   const instRenderer = new HypercubeRenderer(scene);
   instRenderer.build(data.V, data.edges);
   const Yloc = new Float32Array(3 * data.V);
-  const label = `${baseLabel} #${extraInstances.length + 1}`;
+  const label = `${data.kind} #${extraInstances.length + 1}`;
   const t = { pos: offset.clone(), rot: new THREE.Vector3(), scale: new THREE.Vector3(1,1,1) };
-  extraInstances.push({ renderer: instRenderer, Y: Yloc, X: data.verts, E: data.edges, M: data.V, offset: offset.clone(), label, kind: PARAMS.primitive, transform: t });
+  const originalN = M > 0 ? baseOriginalN || PARAMS.N : PARAMS.N;
+  extraInstances.push({ renderer: instRenderer, Y: Yloc, X: data.verts, E: data.edges, M: data.V, offset: offset.clone(), label, kind: data.kind, transform: t, originalN });
   projector.project(data.verts, data.V, Yloc);
   instRenderer.setTransform(t.pos, new THREE.Euler(t.rot.x, t.rot.y, t.rot.z), t.scale);
   instRenderer.writeInterleavedFrom(Yloc);
-  instRenderer.filterEdgesByDimRange(data.verts, N, data.V, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
+  instRenderer.filterEdgesByDimRange(data.verts, MAX_N, data.V, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
   instRenderer.setMode(PARAMS.renderMode);
   projectAndRenderAll();
   applySliceFilter();
@@ -768,7 +804,7 @@ function addInstanceAt(offset: THREE.Vector3) {
   updateObjectList();
 }
 
-function rebuildState(newN: number, newX: Float32Array, newE: Uint32Array, source: 'primitive' | 'custom') {
+function rebuildState(newN: number, newX: Float32Array, newE: Uint32Array, source: 'primitive' | 'custom', localN?: number) {
   if (playState.active) { playState.active = false; }
   playState.savedRot = new Float32Array();
   playState.savedAxes = { x: 0, y: 1, z: 2 };
@@ -783,13 +819,14 @@ function rebuildState(newN: number, newX: Float32Array, newE: Uint32Array, sourc
   // ensure render mode persists
   const currentMode = PARAMS.renderMode;
   dataSource = source;
-  N = newN;
-  PARAMS.N = newN;
+  const ambientN = MAX_N;
+  N = ambientN;
+  PARAMS.N = Math.min(PARAMS.N, MAX_N);
   X = new Float32Array(newX);
   E = newE.length ? new Uint32Array(newE) : edgesFallback;
-  M = newX.length / newN;
-  rot = new RotND(newN);
-  projector = new NDProjector(newN, rot.matrix, canonicalP(newN));
+  M = ambientN > 0 ? Math.floor(newX.length / ambientN) : 0;
+  rot = new RotND(ambientN);
+  projector = new NDProjector(ambientN, rot.matrix, canonicalP(ambientN));
   Y = new Float32Array(3 * M);
   pcaCache = null;
   projectionDirty = true;
@@ -797,6 +834,7 @@ function rebuildState(newN: number, newX: Float32Array, newE: Uint32Array, sourc
   baseTransform.pos.set(0,0,0);
   baseTransform.rot.set(0,0,0);
   baseTransform.scale.set(1,1,1);
+  baseOriginalN = localN ?? visibleDims();
   axesOrder = Array.from({ length: N }, (_, i) => i);
   axesOffset = 0;
   PARAMS.axesX = axesOrder[0] ?? 0;
@@ -805,18 +843,18 @@ function rebuildState(newN: number, newX: Float32Array, newE: Uint32Array, sourc
   refreshPlaneOptions();
   planeBindings.forEach(({ i, j }, idx) => {
     const plane = planes[idx];
-    i.max = newN - 1;
-    j.max = newN - 1;
-    plane.i = Math.min(plane.i, newN - 1);
-    plane.j = Math.min(plane.j, newN - 1);
+    i.max = ambientN - 1;
+    j.max = ambientN - 1;
+    plane.i = Math.min(plane.i, ambientN - 1);
+    plane.j = Math.min(plane.j, ambientN - 1);
     i.value = plane.i;
     j.value = plane.j;
     i.refresh();
     j.refresh();
   });
   if (sliceDimBinding) {
-    sliceDimBinding.max = newN - 1;
-    if (PARAMS.sliceDim >= newN) PARAMS.sliceDim = newN - 1;
+    sliceDimBinding.max = ambientN - 1;
+    if (PARAMS.sliceDim >= ambientN) PARAMS.sliceDim = ambientN - 1;
     sliceDimBinding.value = PARAMS.sliceDim;
     sliceDimBinding.refresh();
   }
@@ -912,8 +950,10 @@ async function handleImport(file: File) {
       alert('Solo se admiten datasets de entre 3 y 8 dimensiones para visualizar.');
       return;
     }
+    PARAMS.N = parsed.N;
+    const embedded = embedToMax(parsed.X, parsed.N, axesOrder, axesOffset);
     const edges = parsed.edges ?? edgesFallback;
-    rebuildState(parsed.N, parsed.X, edges, 'custom');
+    rebuildState(MAX_N, embedded, edges, 'custom', parsed.N);
   } catch (err) {
     console.error(err);
     alert(`Error al importar: ${(err as Error).message}`);
@@ -1054,7 +1094,8 @@ function resetToIsometric() {
   PARAMS.sliceMax = 0.5;
 
   const rebuilt = buildPrimitive(PARAMS.primitive, targetN);
-  rebuildState(targetN, rebuilt.verts, rebuilt.edges, 'primitive');
+  const embedded = embedToMax(rebuilt.verts, targetN, axesOrder, axesOffset);
+  rebuildState(MAX_N, embedded, rebuilt.edges, 'primitive', targetN);
 
   DEFAULT_PLANES.forEach((base, idx) => {
     const clone = clonePlane(base);
@@ -1108,14 +1149,16 @@ fData.addButton({ title: 'Importar (JSON)' }).on('click', () => fileInput?.click
 fData.addButton({ title: 'Exportar datos JSON' }).on('click', () => exportProjectionJSON());
 
 const fDims = pane.addFolder({ title: 'Dimensiones' });
-// Primitiva fija; selector eliminado del UI.
-fDims.addBinding(PARAMS, 'N', { min: 3, max: 8, step: 1, label: 'N' }).on('change', (ev: TpChangeEvent<number>) => {
-  if (dataSource === 'custom') { PARAMS.N = N; return; }
-  pushUndoSnapshot();
-  N = ev.value;
-  const emptyVerts = new Float32Array(0);
-  const emptyEdges = new Uint32Array(0);
-  rebuildState(N, emptyVerts, emptyEdges, 'primitive');
+fDims.addBinding(PARAMS, 'N', { min: 3, max: MAX_N, step: 1, label: 'N (para nuevas primitivas)' }).on('change', () => {
+  // Solo actualiza el valor para nuevas primitivas; no toca escena existente ni cámara.
+  PARAMS.N = Math.min(PARAMS.N, MAX_N);
+  const nVis = visibleDims();
+  if (axesOffset >= nVis) axesOffset = 0;
+  PARAMS.axesX = axesOrder[axesOffset] ?? 0;
+  PARAMS.axesY = axesOrder[axesOffset + 1] ?? 1;
+  PARAMS.axesZ = axesOrder[axesOffset + 2] ?? 2;
+  renderAxisList();
+  updateAxisLegend();
 });
 
 const fProj = pane.addFolder({ title: 'Proyección' });
@@ -1315,24 +1358,26 @@ renderer.domElement.addEventListener('contextmenu', (ev) => {
         { label: 'Hipercubo', kind: 'hypercube' },
         { label: 'Cross polytope', kind: 'cross' },
         { label: 'Simplex', kind: 'simplex' },
+        { label: 'Prisma de simplex', kind: 'simplexPrism' },
       ];
       opts.forEach(opt => {
         const btn = document.createElement('button');
         btn.textContent = `Añadir ${opt.label}`;
         btn.onclick = () => {
           ctxMenu.style.display = 'none';
-          const data = buildPrimitive(opt.kind, N);
+          const data = buildPrimitive(opt.kind, PARAMS.N);
+          const embedded = embedToMax(data.verts, PARAMS.N, axesOrder, axesOffset);
           const instRenderer = new HypercubeRenderer(scene);
           instRenderer.build(data.V, data.edges);
           tmpOffset.copy(spawnPoint);
           const Yloc = new Float32Array(3 * data.V);
           const label = `${opt.label} #${extraInstances.length + 1}`;
           const t = { pos: tmpOffset.clone(), rot: new THREE.Vector3(), scale: new THREE.Vector3(1,1,1) };
-          extraInstances.push({ renderer: instRenderer, Y: Yloc, X: data.verts, E: data.edges, M: data.V, offset: tmpOffset.clone(), label, kind: opt.kind, transform: t });
-          projector.project(data.verts, data.V, Yloc);
+          extraInstances.push({ renderer: instRenderer, Y: Yloc, X: embedded, E: data.edges, M: data.V, offset: tmpOffset.clone(), label, kind: opt.kind, transform: t, originalN: PARAMS.N });
+          projector.project(embedded, data.V, Yloc);
           instRenderer.setTransform(t.pos, new THREE.Euler(t.rot.x, t.rot.y, t.rot.z), t.scale);
           instRenderer.writeInterleavedFrom(Yloc);
-          instRenderer.filterEdgesByDimRange(data.verts, N, data.V, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
+          instRenderer.filterEdgesByDimRange(embedded, MAX_N, data.V, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
           instRenderer.setMode(PARAMS.renderMode);
           projectAndRenderAll();
           applySliceFilter();
@@ -1668,6 +1713,7 @@ window.addEventListener('keydown', (ev) => {
         { label: 'Hipercubo', kind: 'hypercube' },
         { label: 'Cross polytope', kind: 'cross' },
         { label: 'Simplex', kind: 'simplex' },
+        { label: 'Prisma de simplex', kind: 'simplexPrism' },
       ];
       const spawnPoint = pickPointOnTargetPlane(new PointerEvent('pointerdown', { clientX: lastPointer.x, clientY: lastPointer.y }));
       opts.forEach(opt => {
@@ -1675,18 +1721,19 @@ window.addEventListener('keydown', (ev) => {
         btn.textContent = `Añadir ${opt.label}`;
         btn.onclick = () => {
           ctxMenu.style.display = 'none';
-          const data = buildPrimitive(opt.kind, N);
+          const data = buildPrimitive(opt.kind, PARAMS.N);
+          const embedded = embedToMax(data.verts, PARAMS.N, axesOrder, axesOffset);
           const instRenderer = new HypercubeRenderer(scene);
           instRenderer.build(data.V, data.edges);
           tmpOffset.copy(spawnPoint);
           const Yloc = new Float32Array(3 * data.V);
           const label = `${opt.label} #${extraInstances.length + 1}`;
           const t = { pos: tmpOffset.clone(), rot: new THREE.Vector3(), scale: new THREE.Vector3(1,1,1) };
-          extraInstances.push({ renderer: instRenderer, Y: Yloc, X: data.verts, E: data.edges, M: data.V, offset: tmpOffset.clone(), label, kind: opt.kind, transform: t });
-          projector.project(data.verts, data.V, Yloc);
+          extraInstances.push({ renderer: instRenderer, Y: Yloc, X: embedded, E: data.edges, M: data.V, offset: tmpOffset.clone(), label, kind: opt.kind, transform: t, originalN: PARAMS.N });
+          projector.project(embedded, data.V, Yloc);
           instRenderer.setTransform(t.pos, new THREE.Euler(t.rot.x, t.rot.y, t.rot.z), t.scale);
           instRenderer.writeInterleavedFrom(Yloc);
-          instRenderer.filterEdgesByDimRange(data.verts, N, data.V, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
+          instRenderer.filterEdgesByDimRange(embedded, MAX_N, data.V, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
           instRenderer.setMode(PARAMS.renderMode);
           projectAndRenderAll();
           applySliceFilter();
@@ -1727,6 +1774,7 @@ window.addEventListener('keydown', (ev) => {
             rot: baseTransform.rot.clone(),
             scale: baseTransform.scale.clone(),
           },
+          baseOrigN: baseOriginalN,
         });
         applySnapshot(snap);
       }
@@ -1744,6 +1792,7 @@ window.addEventListener('keydown', (ev) => {
             rot: baseTransform.rot.clone(),
             scale: baseTransform.scale.clone(),
           },
+          baseOrigN: baseOriginalN,
         });
         applySnapshot(snap);
       }
