@@ -1,20 +1,11 @@
+# ND-Viewer
+
 Visor interactivo de geometría en N dimensiones construido con Three.js y Tweakpane.  
 Permite explorar hipercubos y otros politopos, proyectarlos a 3D, rotarlos en planos N‑D, editar vértices y trabajar con datos externos en formato JSON.
 
-## Requisitos y ejecución
+## Ejecución
 
-- Node.js 18+ recomendado.
-- Instalar dependencias:
-
-```bash
-npm install
-```
-
-- Ejecutar en modo desarrollo:
-
-```bash
-npm run dev
-```
+https://srdz-af.github.io/nd-viewer/
 
 Luego abre la URL que indique Vite (normalmente http://localhost:5173).
 
