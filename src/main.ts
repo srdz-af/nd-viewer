@@ -923,23 +923,30 @@ async function handleImport(file: File) {
 }
 
 function exportProjectionJSON() {
-  projector.project(X, M, Y);
+  // export current N-D data so it can be re‑imported
   const pts = [];
-  const xs = Y.subarray(0, M);
-  const ys = Y.subarray(M, 2 * M);
-  const zs = Y.subarray(2 * M, 3 * M);
-  for (let i = 0; i < M; i++) pts.push({ x: xs[i], y: ys[i], z: zs[i] });
-  downloadText('projection.json', JSON.stringify({ points: pts }, null, 2), 'application/json');
+  for (let r = 0; r < M; r++) {
+    const row: Record<string, number> = {};
+    for (let d = 0; d < N; d++) {
+      row[`d${d}`] = X[d * M + r];
+    }
+    pts.push(row);
+  }
+  downloadText('data.json', JSON.stringify({ points: pts }, null, 2), 'application/json');
 }
 
 function exportProjectionCSV() {
-  projector.project(X, M, Y);
-  const xs = Y.subarray(0, M);
-  const ys = Y.subarray(M, 2 * M);
-  const zs = Y.subarray(2 * M, 3 * M);
-  const lines = ['x,y,z'];
-  for (let i = 0; i < M; i++) lines.push(`${xs[i]},${ys[i]},${zs[i]}`);
-  downloadText('projection.csv', lines.join('\n'), 'text/csv');
+  // export current N-D data so it can be re-imported
+  const headers = Array.from({ length: N }, (_, d) => `d${d}`).join(',');
+  const lines = [headers];
+  for (let r = 0; r < M; r++) {
+    const row: string[] = [];
+    for (let d = 0; d < N; d++) {
+      row.push(`${X[d * M + r]}`);
+    }
+    lines.push(row.join(','));
+  }
+  downloadText('data.csv', lines.join('\n'), 'text/csv');
 }
 
 function formatCoords(Nloc: number, coords: Float32Array, idx: number) {
