@@ -163,6 +163,9 @@ export class HypercubeRenderer {
   private hullNeedsUpdate = false;
   private points: (THREE.Vector3 & { __vertexId: number })[] = [];
   private visibleVertexMask?: Uint8Array;
+  offset: THREE.Vector3 = new THREE.Vector3();
+  private transform = new THREE.Matrix4();
+  private tmp = new THREE.Vector3();
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
@@ -210,6 +213,11 @@ export class HypercubeRenderer {
     this.visibleVertexMask = undefined;
   }
 
+  setTransform(position: THREE.Vector3, rotation: THREE.Euler, scale: THREE.Vector3) {
+    const q = new THREE.Quaternion().setFromEuler(rotation);
+    this.transform.compose(position, q, scale);
+  }
+
   // Convierte Y (3×M) a buffer intercalado (x,y,z)*M
   writeInterleavedFrom(Y: Float32Array) {
     const M = this.M;
@@ -217,18 +225,18 @@ export class HypercubeRenderer {
     const xs = Y.subarray(0, M);
     const ys = Y.subarray(M, 2 * M);
     const zs = Y.subarray(2 * M, 3 * M);
+    const mat = this.transform;
     let p = 0;
     for (let i = 0; i < M; i++) {
-      const x = xs[i];
-      const y = ys[i];
-      const z = zs[i];
-      positions[p++] = x;
-      positions[p++] = y;
-      positions[p++] = z;
-      this.points[i].set(x, y, z);
+      this.tmp.set(xs[i], ys[i], zs[i]).applyMatrix4(mat);
+      positions[p++] = this.tmp.x;
+      positions[p++] = this.tmp.y;
+      positions[p++] = this.tmp.z;
+      this.points[i].copy(this.tmp);
     }
     (this.geometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
     this.geometry.computeBoundingSphere();
+    this.geometry.computeBoundingBox();
     if (this.mode === 'solid') {
       this.hullNeedsUpdate = true;
       this.updateHullGeometry();
@@ -237,7 +245,8 @@ export class HypercubeRenderer {
 
   setMode(mode: 'wireframe' | 'solid') {
     this.mode = mode;
-    if (this.line) this.line.visible = mode === 'wireframe';
+    // Always keep wireframe lines visible to reveal interior structure
+    if (this.line) this.line.visible = true;
     if (this.mesh) this.mesh.visible = mode === 'solid' && this.mesh.geometry.attributes.position !== undefined;
     this.hullNeedsUpdate = mode === 'solid';
     if (mode === 'solid') this.updateHullGeometry();

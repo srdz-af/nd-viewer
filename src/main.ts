@@ -11,10 +11,11 @@ type ProjMode = 'Canonico' | 'PCA';
 type PrimitiveMode = PrimitiveKind;
 
 const app = document.getElementById('app')!;
-const paneContainer = document.getElementById('pane')!;
-const paneToggleBtn = document.getElementById('menu-toggle') as HTMLButtonElement | null;
+const paneContainer = document.getElementById('panel-container')!;
 const fileInput = document.getElementById('file-input') as HTMLInputElement | null;
 const tooltipEl = document.getElementById('tooltip') as HTMLDivElement | null;
+const ctxMenu = document.getElementById('context-menu') as HTMLDivElement | null;
+const viewToggle = document.getElementById('view-toggle') as HTMLDivElement | null;
 
 // --- Three.js setup ---
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -27,7 +28,9 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x10141a);
+const baseBackground = new THREE.Color(0x10141a);
+const editBackground = new THREE.Color(0x141414);
+scene.background = baseBackground.clone();
 renderer.setClearColor(scene.background);
 const pmrem = new THREE.PMREMGenerator(renderer);
 const environmentMap = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
@@ -40,28 +43,530 @@ camera.position.set(2.6, 1.8, 2.6);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 
+const raycaster = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+const clickPlane = new THREE.Plane();
+const clickPoint = new THREE.Vector3();
+
 const light = new THREE.DirectionalLight(0xffffff, 1.0);
 light.position.set(2, 3, 4);
 const ambient = new THREE.AmbientLight(0xffffff, 0.3);
 const hemi = new THREE.HemisphereLight(0x88aaff, 0x090b12, 0.6);
 scene.add(ambient, hemi, light);
-
-const axes = new THREE.AxesHelper(1.0);
+const axes = new THREE.AxesHelper(1000);
+axes.position.set(0, -0.6, 0);
 scene.add(axes);
+const gridMaterial = new THREE.LineBasicMaterial({ color: 0x3a414f, opacity: 0.4, transparent: true });
+const gridGroup = new THREE.Group();
+gridGroup.position.y = -0.6;
+const gridSize = 30;
+const gridDiv = 60;
+const step = (gridSize * 2) / gridDiv;
+for (let i = -gridDiv; i <= gridDiv; i++) {
+  const geomX = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(-gridSize, 0, i * step),
+    new THREE.Vector3(gridSize, 0, i * step),
+  ]);
+  const lineX = new THREE.Line(geomX, gridMaterial);
+  gridGroup.add(lineX);
+  const geomZ = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(i * step, 0, -gridSize),
+    new THREE.Vector3(i * step, 0, gridSize),
+  ]);
+  const lineZ = new THREE.Line(geomZ, gridMaterial);
+  gridGroup.add(lineZ);
+}
+scene.add(gridGroup);
+const vertexMat = new THREE.MeshBasicMaterial({ color: 0xffd166 });
+const vertexGeo = new THREE.SphereGeometry(0.012, 8, 8);
+const axisPalette = ['#ff6b6b', '#4caf50', '#2196f3', '#f0c674', '#9b59b6', '#1abc9c', '#e67e22', '#ecf0f1'];
 
 // --- Estado N‑D ---
 let N = 4;
-let { verts: X, edges: E, V: M } = buildPrimitive('hypercube', N);
+let X = new Float32Array();
+let E = new Uint32Array();
+let M = 0;
 let rot = new RotND(N);
 let projector = new NDProjector(N, rot.matrix, canonicalP(N));
-let Y = new Float32Array(3 * M);
+let Y = new Float32Array();
 let dataSource: 'primitive' | 'custom' = 'primitive';
 const edgesFallback = new Uint32Array([0, 0]);
 const tmpVec = new THREE.Vector3();
+const tmpOffset = new THREE.Vector3();
+const tmpN = new Float32Array(32);
+const tmpCenter = new THREE.Vector3();
+let pcaCache: Float32Array | null = null;
+let projectionDirty = true;
+let setViewMode: (solid: boolean) => void;
+const objList = document.getElementById('object-list') as HTMLDivElement | null;
+const axisLegend = document.getElementById('axis-legend') as HTMLDivElement | null;
+const axisList = document.getElementById('axis-list') as HTMLDivElement | null;
+const statusBar = document.getElementById('status-bar') as HTMLDivElement | null;
+let lastPointer = { x: window.innerWidth - 180, y: window.innerHeight - 80 };
+type SceneSnapshot = {
+  N: number;
+  X: Float32Array;
+  M: number;
+  axes: { x: number; y: number; z: number };
+  baseTransform: { pos: THREE.Vector3; rot: THREE.Vector3; scale: THREE.Vector3 };
+};
+const undoStack: SceneSnapshot[] = [];
+const redoStack: SceneSnapshot[] = [];
+const MAX_HISTORY = 20;
+let baseLabel = 'Hipercubo';
+let selectedInstance: number = -1; // -1 base, >=0 extra
+let selectedVertex: number = -1;
+let selectionOutline: THREE.LineSegments | null = null;
+let vertexMarker: THREE.Mesh | null = null;
+let vertexCloud: THREE.InstancedMesh | null = null;
+let axisGuide: THREE.Line | null = null;
+let wGuide: THREE.Line | null = null;
+let deletePending = false;
+const baseTransform = { pos: new THREE.Vector3(), rot: new THREE.Vector3(), scale: new THREE.Vector3(1,1,1) };
+const transformUI = { posX: 0, posY: 0, posZ: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1 };
+type TransformMode = 'none' | 'move' | 'rotate' | 'scale';
+type ProjectionAxes = { x: number; y: number; z: number };
+const transformOp = {
+  mode: 'none' as TransformMode,
+  instIdx: -1,
+  targetVertex: -1,
+  startPos: new THREE.Vector3(),
+  startRot: new THREE.Vector3(),
+  startScale: 1,
+  startMouse: new THREE.Vector2(),
+  vertexStart: new THREE.Vector3(),
+  axis: new THREE.Vector3(),
+  plane: new THREE.Plane(),
+  planeHitStart: new THREE.Vector3(),
+  lastHit: new THREE.Vector3(),
+  vertexDataStart: null as Float32Array | null,
+  lockAxis: -1 as -1 | 0 | 1 | 2, // 0=x,1=y,2=z in current projected axes
+  objectDataStart: null as Float32Array | null,
+  wPlane: false,
+};
+const playState = {
+  active: false,
+  savedProj: 'Canonico' as ProjMode,
+  savedAxes: { x: 0, y: 1, z: 2 },
+  savedRot: new Float32Array(),
+  button: null as any,
+  buttonEl: null as HTMLButtonElement | null,
+  spinPhase: 0,
+};
+const axisDrag = { active: false, lastX: 0, accum: 0, prevZoom: controls.enableZoom, prevPan: controls.enablePan };
+let axesOrder: number[] = Array.from({ length: N }, (_, i) => i);
+let axesOffset = 0;
+
+function setProjectionAxes({ x, y, z }: ProjectionAxes) {
+  PARAMS.axesX = x;
+  PARAMS.axesY = y;
+  PARAMS.axesZ = z;
+  const idx = axesOrder.indexOf(x);
+  if (idx >= 0) axesOffset = idx;
+  projectionDirty = true;
+  transformOp.lockAxis = -1;
+  clearAxisGuide();
+  updateAxisLegend();
+  renderAxisList();
+  projectAndRenderAll();
+}
+
+function pushUndoSnapshot() {
+  const snap: SceneSnapshot = {
+    N,
+    X: new Float32Array(X),
+    M,
+    axes: { x: PARAMS.axesX, y: PARAMS.axesY, z: PARAMS.axesZ },
+    baseTransform: {
+      pos: baseTransform.pos.clone(),
+      rot: baseTransform.rot.clone(),
+      scale: baseTransform.scale.clone(),
+    },
+  };
+  undoStack.push(snap);
+  if (undoStack.length > MAX_HISTORY) undoStack.shift();
+  redoStack.length = 0;
+}
+
+function applySnapshot(snap: SceneSnapshot) {
+  const rebuiltEdges = edgesFallback;
+  rebuildState(snap.N, snap.X, rebuiltEdges, dataSource);
+  M = snap.M;
+  PARAMS.axesX = snap.axes.x; PARAMS.axesY = snap.axes.y; PARAMS.axesZ = snap.axes.z;
+  baseTransform.pos.copy(snap.baseTransform.pos);
+  baseTransform.rot.copy(snap.baseTransform.rot);
+  baseTransform.scale.copy(snap.baseTransform.scale);
+  projectionDirty = true;
+  projectAndRenderAll();
+  applySliceFilter();
+  pane.refresh();
+}
+function resolvePlayButtonEl() {
+  if (playState.buttonEl && document.body.contains(playState.buttonEl)) return playState.buttonEl;
+  const view = (playState.button as any)?.controller?.view || (playState.button as any)?.controller_?.view;
+  const cand = view?.buttonElement as HTMLButtonElement | undefined;
+  if (cand) playState.buttonEl = cand;
+  if (!playState.buttonEl && paneContainer) {
+    const buttons = Array.from(paneContainer.querySelectorAll('button')) as HTMLButtonElement[];
+    const match = buttons.find(b => b.textContent?.toLowerCase().includes('demo pca') || b.textContent?.toLowerCase().includes('detener'));
+    if (match) playState.buttonEl = match;
+  }
+  return playState.buttonEl;
+}
+function updatePlayButtonLabel() {
+  const el = resolvePlayButtonEl();
+  if (!el) return;
+  el.textContent = playState.active ? 'Detener' : 'Animación 4D (tesseracto)';
+}
+function startPlay() {
+  if (playState.active) return;
+  playState.active = true;
+  playState.savedProj = PARAMS.proyeccion;
+  playState.savedAxes = { x: PARAMS.axesX, y: PARAMS.axesY, z: PARAMS.axesZ };
+  playState.savedRot = new Float32Array(rot.matrix);
+  playState.spinPhase = 0;
+  PARAMS.proyeccion = 'Canonico';
+  projectionDirty = true;
+  pane.refresh();
+  updatePlayButtonLabel();
+  projectAndRenderAll();
+  applySliceFilter();
+}
+function stopPlay() {
+  if (!playState.active) return;
+  playState.active = false;
+  if (playState.savedRot.length) rot.matrix.set(playState.savedRot);
+  projector.R = rot.matrix;
+  PARAMS.proyeccion = 'Canonico';
+  setProjectionAxes(playState.savedAxes);
+  projectionDirty = true;
+  pane.refresh();
+  updatePlayButtonLabel();
+}
+function cycleAxes(step: number) {
+  if (playState.active) return;
+  const n = Math.max(1, N);
+  if (n < 3) return;
+  axesOffset = (((axesOffset + step) % n) + n) % n;
+  if (!playState.active && PARAMS.proyeccion !== 'Canonico') {
+    PARAMS.proyeccion = 'Canonico';
+    projectionDirty = true;
+    pane.refresh();
+  }
+  setProjectionAxes({
+    x: axesOrder[axesOffset % n],
+    y: axesOrder[(axesOffset + 1) % n],
+    z: axesOrder[(axesOffset + 2) % n],
+  });
+}
+const dragState: { active: boolean; instIdx: number; vertex: number; plane: THREE.Plane; lastPoint: THREE.Vector3; } = {
+  active: false,
+  instIdx: -1,
+  vertex: -1,
+  plane: new THREE.Plane(),
+  lastPoint: new THREE.Vector3(),
+};
+
+function updateTransformFromUI() {
+  const degToRad = Math.PI / 180;
+  const rot = new THREE.Vector3(transformUI.rotX * degToRad, transformUI.rotY * degToRad, transformUI.rotZ * degToRad);
+  const scale = new THREE.Vector3(transformUI.scale, transformUI.scale, transformUI.scale);
+  if (selectedInstance === -1) {
+    baseTransform.pos.set(transformUI.posX, transformUI.posY, transformUI.posZ);
+    baseTransform.rot.copy(rot);
+    baseTransform.scale.copy(scale);
+  } else {
+    const inst = extraInstances[selectedInstance];
+    inst.transform.pos.set(transformUI.posX, transformUI.posY, transformUI.posZ);
+    inst.transform.rot.copy(rot);
+    inst.transform.scale.copy(scale);
+  }
+  projectAndRenderAll();
+  applySliceFilter();
+  updateSelectionOutline();
+}
+
+function syncTransformUIFromSelection() {
+  const deg = 180 / Math.PI;
+  const t = selectedInstance === -1 ? baseTransform : extraInstances[selectedInstance]?.transform;
+  if (!t) return;
+  transformUI.posX = t.pos.x;
+  transformUI.posY = t.pos.y;
+  transformUI.posZ = t.pos.z;
+  transformUI.rotX = t.rot.x * deg;
+  transformUI.rotY = t.rot.y * deg;
+  transformUI.rotZ = t.rot.z * deg;
+  transformUI.scale = t.scale.x;
+  pane.refresh();
+}
+
+function updateObjectList() {
+  if (!objList) return;
+  const items = [`${baseLabel} (N=${N})`, ...extraInstances.map(inst => inst.label)];
+  objList.innerHTML = `<h4>Objetos</h4><ul>${items.map((it, idx) => {
+    const active = idx - 1 === selectedInstance;
+    return `<li data-idx="${idx-1}" class="${active ? 'active' : ''}">${it}</li>`;
+  }).join('')}</ul>`;
+  objList.querySelectorAll('li').forEach(li => {
+    li.addEventListener('click', () => {
+      const v = Number((li as HTMLElement).dataset.idx);
+      selectObject(v);
+    });
+  });
+  updateAxisLegend();
+}
+
+function updateAxesHelperColors() {
+  const colorAttr = axes.geometry.getAttribute('color') as THREE.BufferAttribute | undefined;
+  if (!colorAttr) return;
+  const cX = new THREE.Color(axisPalette[PARAMS.axesX % axisPalette.length]);
+  const cY = new THREE.Color(axisPalette[PARAMS.axesY % axisPalette.length]);
+  const cZ = new THREE.Color(axisPalette[PARAMS.axesZ % axisPalette.length]);
+  // AxesHelper stores colors in pairs [origin, tip] for X,Y,Z
+  colorAttr.setXYZ(0, cX.r, cX.g, cX.b);
+  colorAttr.setXYZ(1, cX.r, cX.g, cX.b);
+  colorAttr.setXYZ(2, cY.r, cY.g, cY.b);
+  colorAttr.setXYZ(3, cY.r, cY.g, cY.b);
+  colorAttr.setXYZ(4, cZ.r, cZ.g, cZ.b);
+  colorAttr.setXYZ(5, cZ.r, cZ.g, cZ.b);
+  colorAttr.needsUpdate = true;
+}
+
+function updateAxisLegend() {
+  updateAxesHelperColors();
+  if (!axisLegend) return;
+  const badges = Array.from({ length: N }).map((_, i) => {
+    const color = axisPalette[i % axisPalette.length];
+    return `<span class="badge" style="background:${color};">d${i}</span>`;
+  }).join('');
+  axisLegend.innerHTML = `<h4 style="margin:0 0 6px 0; font-size:12px; color:#e6ecf5;">Ejes</h4><div>${badges}</div>`;
+}
+function renderAxisList() {
+  if (!axisList) return;
+  if (N < 1) { axisList.innerHTML = ''; return; }
+  const activeDims = new Set([
+    axesOrder[(axesOffset + 0) % N],
+    axesOrder[(axesOffset + 1) % N],
+    axesOrder[(axesOffset + 2) % N],
+  ]);
+  const items = axesOrder.map((dim, idx) => {
+    const color = axisPalette[dim % axisPalette.length];
+    const active = activeDims.has(dim);
+    return `<li draggable="true" data-idx="${idx}" class="${active ? 'active' : ''}" style="border-left:4px solid ${color};">${`d${dim}`}</li>`;
+  }).join('');
+  axisList.innerHTML = `<h4>Orden de ejes</h4><ul>${items}</ul>`;
+  axisList.querySelectorAll('li').forEach(li => {
+    li.addEventListener('dragstart', (ev) => {
+      ev.dataTransfer?.setData('text/plain', (li as HTMLElement).dataset.idx || '');
+    });
+    li.addEventListener('dragover', (ev) => ev.preventDefault());
+    li.addEventListener('drop', (ev) => {
+      ev.preventDefault();
+      const from = Number(ev.dataTransfer?.getData('text/plain') ?? -1);
+      const to = Number((li as HTMLElement).dataset.idx ?? -1);
+      if (from < 0 || to < 0 || from === to) return;
+      const moved = axesOrder.splice(from, 1)[0];
+      axesOrder.splice(to, 0, moved);
+      // keep current leading axis if possible
+      const newOffset = axesOrder.indexOf(PARAMS.axesX);
+      axesOffset = newOffset >= 0 ? newOffset : 0;
+      setProjectionAxes({
+        x: axesOrder[axesOffset % N],
+        y: axesOrder[(axesOffset + 1) % N],
+        z: axesOrder[(axesOffset + 2) % N],
+      });
+      renderAxisList();
+    });
+  });
+}
+
+function selectObject(idx: number) {
+  selectedInstance = idx;
+  selectedVertex = -1;
+  deletePending = false;
+  updateObjectList();
+  if (selectionOutline) { scene.remove(selectionOutline); selectionOutline = null; }
+  const buildOutline = (geom: THREE.BufferGeometry) => {
+    const mat = new THREE.LineBasicMaterial({ color: 0xffa64d, transparent: true, opacity: 1, depthTest: false, depthWrite: false });
+    const outline = new THREE.LineSegments(geom, mat);
+    outline.renderOrder = 10;
+    return outline;
+  };
+  if (idx === -1) {
+    if (M > 0) selectionOutline = buildOutline(rendererND.line.geometry);
+  } else {
+    const inst = extraInstances[idx];
+    selectionOutline = buildOutline(inst.renderer.line.geometry);
+  }
+  if (selectionOutline && !PARAMS.editMode) {
+    scene.add(selectionOutline);
+  }
+  if (PARAMS.editMode) {
+    scene.background = editBackground.clone();
+  } else {
+    scene.background = baseBackground.clone();
+  }
+  renderer.setClearColor(scene.background);
+  if (vertexMarker) { scene.remove(vertexMarker); vertexMarker = null; }
+  if (vertexCloud) { scene.remove(vertexCloud); vertexCloud = null; }
+  if (PARAMS.editMode && idx !== null) updateVertexCloud(idx);
+  syncTransformUIFromSelection();
+}
+
+function updateSelectionOutline() {
+  if (!selectionOutline) return;
+  if (PARAMS.editMode) {
+    scene.remove(selectionOutline); selectionOutline = null;
+    return;
+  }
+  if (!scene.children.includes(selectionOutline)) scene.add(selectionOutline);
+}
+
+function clearAxisGuide() {
+  if (axisGuide) { scene.remove(axisGuide); axisGuide.geometry.dispose(); axisGuide = null; }
+  if (wGuide) { scene.remove(wGuide); wGuide.geometry.dispose(); wGuide = null; }
+}
+
+function updateAxisGuide() {
+  clearAxisGuide();
+  if (transformOp.mode === 'none') return;
+  const hasAxis = transformOp.lockAxis !== -1;
+  const axisIdx = hasAxis ? transformOp.lockAxis : 0;
+  const dir = new THREE.Vector3(
+    axisIdx === 0 ? 1 : 0,
+    axisIdx === 1 ? 1 : 0,
+    axisIdx === 2 ? 1 : 0,
+  );
+  if (!hasAxis && !transformOp.wPlane) return;
+
+  const computeCenterFromPositions = (positions: Float32Array, count: number) => {
+    let sumX = 0, sumY = 0, sumZ = 0;
+    for (let i = 0; i < count; i++) {
+      const pIdx = i * 3;
+      sumX += positions[pIdx];
+      sumY += positions[pIdx + 1];
+      sumZ += positions[pIdx + 2];
+    }
+    return new THREE.Vector3(sumX / count, sumY / count, sumZ / count);
+  };
+
+  let center = new THREE.Vector3();
+  if (transformOp.targetVertex >= 0) {
+    const inst = transformOp.instIdx === -1 ? null : extraInstances[transformOp.instIdx];
+    const posArr = inst ? inst.renderer.positions : rendererND.positions;
+    const idx = transformOp.targetVertex * 3;
+    center.set(posArr[idx], posArr[idx+1], posArr[idx+2]);
+  } else {
+    if (transformOp.instIdx === -1 && M > 0) {
+      center = computeCenterFromPositions(rendererND.positions, M);
+    } else if (transformOp.instIdx >= 0) {
+      const inst = extraInstances[transformOp.instIdx];
+      center = computeCenterFromPositions(inst.renderer.positions, inst.M);
+    }
+  }
+  const len = 3;
+  const points = [
+    center.clone().addScaledVector(dir, -len),
+    center.clone().addScaledVector(dir, len),
+  ];
+  if (hasAxis) {
+    const geom = new THREE.BufferGeometry().setFromPoints(points);
+    const mat = new THREE.LineBasicMaterial({ color: 0xffa64d, linewidth: 2, depthTest: false, transparent: true, opacity: 0.9 });
+    axisGuide = new THREE.Line(geom, mat);
+    axisGuide.renderOrder = 30;
+    scene.add(axisGuide);
+  }
+  if (transformOp.wPlane) {
+    const wDir = new THREE.Vector3(0, 0, 0);
+    wDir.copy(dir).cross(camera.getWorldDirection(tmpVec).normalize()).normalize();
+    if (wDir.lengthSq() === 0) wDir.copy(camera.up).normalize();
+    const wLen = 2;
+    const wPoints = [
+      center.clone().addScaledVector(wDir, -wLen),
+      center.clone().addScaledVector(wDir, wLen),
+    ];
+    const wGeom = new THREE.BufferGeometry().setFromPoints(wPoints);
+    const wMat = new THREE.LineBasicMaterial({ color: 0xc084fc, linewidth: 2, depthTest: false, transparent: true, opacity: 0.9 });
+    wGuide = new THREE.Line(wGeom, wMat);
+    wGuide.renderOrder = 31;
+    scene.add(wGuide);
+  }
+}
+
+function updateVertexCloud(instIdx: number) {
+  if (!PARAMS.editMode) {
+    if (vertexCloud) { scene.remove(vertexCloud); vertexCloud = null; }
+    if (vertexMarker) { scene.remove(vertexMarker); vertexMarker = null; }
+    return;
+  }
+  const rendererRef = instIdx === -1 ? rendererND : extraInstances[instIdx].renderer;
+  const count = instIdx === -1 ? M : extraInstances[instIdx].M;
+  if (!rendererRef || count <= 0) return;
+  if (vertexCloud) { scene.remove(vertexCloud); vertexCloud = null; }
+  const mat = new THREE.MeshBasicMaterial({ color: 0xbfc7d5 });
+  vertexCloud = new THREE.InstancedMesh(vertexGeo, mat, count);
+  const dummy = new THREE.Object3D();
+  const posArr = rendererRef.positions;
+  for (let i = 0; i < count; i++) {
+    const pIdx = i * 3;
+    dummy.position.set(posArr[pIdx], posArr[pIdx + 1], posArr[pIdx + 2]);
+    dummy.updateMatrix();
+    vertexCloud.setMatrixAt(i, dummy.matrix);
+  }
+  vertexCloud.instanceMatrix.needsUpdate = true;
+  vertexCloud.renderOrder = 5;
+  scene.add(vertexCloud);
+  if (selectedVertex >= 0) placeVertexMarker(instIdx, selectedVertex);
+}
+
+function placeVertexMarker(instIdx: number, vIdx: number) {
+  if (!vertexMarker) {
+    const mat = new THREE.MeshBasicMaterial({ color: 0xffa64d, depthTest: false });
+    vertexMarker = new THREE.Mesh(vertexGeo, mat);
+    vertexMarker.renderOrder = 20;
+  }
+  vertexMarker.scale.setScalar(1.35);
+  const rendererRef = instIdx === -1 ? rendererND : extraInstances[instIdx].renderer;
+  const posArr = rendererRef.positions;
+  const pIdx = vIdx * 3;
+  vertexMarker.position.set(posArr[pIdx], posArr[pIdx + 1], posArr[pIdx + 2]);
+  scene.add(vertexMarker);
+}
+
+function deleteSelected() {
+  if (selectedInstance === -1) return;
+  pushUndoSnapshot();
+  const inst = extraInstances[selectedInstance];
+  inst.renderer.dispose();
+  extraInstances.splice(selectedInstance, 1);
+  selectedInstance = -1;
+  if (selectionOutline) { scene.remove(selectionOutline); selectionOutline = null; }
+  deletePending = false;
+  projectAndRenderAll();
+  applySliceFilter();
+  updateObjectList();
+  syncTransformUIFromSelection();
+}
+
+type Instance = {
+  renderer: HypercubeRenderer;
+  Y: Float32Array;
+  X: Float32Array;
+  E: Uint32Array;
+  M: number;
+  offset: THREE.Vector3;
+  label: string;
+  kind: PrimitiveKind;
+  transform: { pos: THREE.Vector3; rot: THREE.Vector3; scale: THREE.Vector3; };
+};
+
+const extraInstances: Instance[] = [];
 
 const rendererND = new HypercubeRenderer(scene);
-rendererND.build(M, E);
-rendererND.setMode('wireframe');
+if (M > 0) {
+  rendererND.build(M, E);
+  rendererND.setMode('wireframe');
+}
 let paneVisible = true;
 
 // --- UI (Tweakpane) ---
@@ -69,20 +574,26 @@ const pane = new Pane({ container: paneContainer }) as any;
 const PARAMS = {
   N,
   primitive: 'hypercube' as PrimitiveMode,
-  proyeccion: 'PCA' as ProjMode,
+  proyeccion: 'Canonico' as ProjMode,
   autoReortho: false,
+  perspMode: false,
   // Slicing
   sliceDim: -1,
   sliceMin: -0.5,
   sliceMax: 0.5,
   modoSolido: false,
+  editMode: false,
+  autoSpin: false,
+  axesX: 0,
+  axesY: 1,
+  axesZ: 2,
 };
 
 const clonePlane = (p: Plane) => ({ ...p, _lastTheta: p._lastTheta ?? 0 });
 const DEFAULT_PLANES: Plane[] = [
-  { i: 0, j: 1, theta: 0, auto: true,  speed: 0.7 },
-  { i: 2, j: 3, theta: 0, auto: false, speed: 0.4 },
-  { i: 4, j: 5, theta: 0, auto: false, speed: 0.25 },
+  { i: 0, j: 1, theta: 0, auto: false, speed: 0 },
+  { i: 2, j: 3, theta: 0, auto: false, speed: 0 },
+  { i: 4, j: 5, theta: 0, auto: false, speed: 0 },
 ];
 // Planos (hasta 3)
 const planes: Plane[] = DEFAULT_PLANES.map(clonePlane);
@@ -99,15 +610,205 @@ function refreshPlaneOptions() {
 }
 
 function applyProjectionMatrix() {
-  if (PARAMS.proyeccion === 'Canonico') {
-    projector.setCanonicalP();
-  } else {
-    const { P } = pcaTopK(X, N, M, 3);
+  if (PARAMS.proyeccion === 'Canonico' || M === 0) {
+    const axes = [PARAMS.axesX % N, PARAMS.axesY % N, PARAMS.axesZ % N].map(v => Math.max(0, Math.min(N - 1, v)));
+    const P = new Float32Array(3 * N);
+    P[0 * N + axes[0]] = 1;
+    P[1 * N + axes[1]] = 1;
+    P[2 * N + axes[2]] = 1;
     projector.setCustomP(P);
+    pcaCache = null;
+  } else {
+    if (!pcaCache || projectionDirty) {
+      const { P } = pcaTopK(X, N, M, 3);
+      pcaCache = P;
+      projectionDirty = false;
+    }
+    projector.setCustomP(pcaCache!);
+    if (M > 0) {
+      const chooseMaxDim = (row: number) => {
+        let best = 0, bestVal = -Infinity;
+        for (let k = 0; k < N; k++) {
+          const val = Math.abs(pcaCache![row * N + k]);
+          if (val > bestVal) { bestVal = val; best = k; }
+        }
+        return best;
+      };
+      const newAxes = { x: chooseMaxDim(0), y: chooseMaxDim(1), z: chooseMaxDim(2) };
+      if (newAxes.x !== PARAMS.axesX || newAxes.y !== PARAMS.axesY || newAxes.z !== PARAMS.axesZ) {
+        PARAMS.axesX = newAxes.x; PARAMS.axesY = newAxes.y; PARAMS.axesZ = newAxes.z;
+        axesOffset = axesOrder.indexOf(PARAMS.axesX);
+        updateAxisLegend();
+        renderAxisList();
+      }
+    }
   }
 }
 
+function applySliceFilter() {
+  if (M > 0 && rendererND.geometry) {
+    rendererND.filterEdgesByDimRange(X, N, M, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
+  }
+  extraInstances.forEach(inst => {
+    inst.renderer.filterEdgesByDimRange(inst.X, N, inst.M, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
+  });
+  updateSelectionOutline();
+  if (PARAMS.editMode) {
+    scene.background = editBackground.clone();
+  } else {
+    scene.background = baseBackground.clone();
+  }
+  renderer.setClearColor(scene.background);
+  if (PARAMS.editMode) {
+    updateVertexCloud(selectedInstance);
+  } else {
+    if (vertexCloud) { scene.remove(vertexCloud); vertexCloud = null; }
+  }
+}
+
+function recenterProjected(Yarr: Float32Array, Mloc: number) {
+  if (Mloc === 0) return tmpCenter.set(0,0,0);
+  let sumX = 0, sumY = 0, sumZ = 0;
+  for (let i = 0; i < Mloc; i++) {
+    sumX += Yarr[i];
+    sumY += Yarr[Mloc + i];
+    sumZ += Yarr[2 * Mloc + i];
+  }
+  const cx = sumX / Mloc, cy = sumY / Mloc, cz = sumZ / Mloc;
+  for (let i = 0; i < Mloc; i++) {
+    Yarr[i] -= cx;
+    Yarr[Mloc + i] -= cy;
+    Yarr[2 * Mloc + i] -= cz;
+  }
+  return tmpCenter.set(cx, cy, cz);
+}
+
+function projectAndRenderAll() {
+  const usePerspective = (playState.active || PARAMS.perspMode) && N >= 4;
+  if (usePerspective) {
+    const axes = [PARAMS.axesX % N, PARAMS.axesY % N, PARAMS.axesZ % N].map(v => Math.max(0, Math.min(N - 1, v)));
+    const k = 0.6;
+    const projectOne = (Xsrc: Float32Array, Mloc: number, Ydst: Float32Array, transform: { pos: THREE.Vector3; rot: THREE.Vector3; scale: THREE.Vector3; }, renderer: HypercubeRenderer) => {
+      if (Mloc === 0) return;
+      const n = N;
+      const R = rot.matrix;
+      for (let m = 0; m < Mloc; m++) {
+        // rotate into tmpN
+        for (let d = 0; d < n; d++) {
+          let acc = 0;
+          for (let a = 0; a < n; a++) acc += R[d * n + a] * Xsrc[a * Mloc + m];
+          tmpN[d] = acc;
+        }
+        const w = tmpN[n - 1] ?? 0;
+        const scale = 1 / Math.max(0.05, (1 - k * w));
+        Ydst[0 * Mloc + m] = tmpN[axes[0]] * scale;
+        Ydst[1 * Mloc + m] = tmpN[axes[1]] * scale;
+        Ydst[2 * Mloc + m] = tmpN[axes[2]] * scale;
+      }
+      const center = recenterProjected(Ydst, Mloc);
+      const tpos = tmpVec.set(transform.pos.x + center.x, transform.pos.y + center.y, transform.pos.z + center.z);
+      renderer.setTransform(tpos, new THREE.Euler(transform.rot.x, transform.rot.y, transform.rot.z), transform.scale);
+      renderer.writeInterleavedFrom(Ydst);
+    };
+    if (M > 0 && rendererND.geometry) {
+      projectOne(X, M, Y, baseTransform, rendererND);
+    }
+    extraInstances.forEach(inst => {
+      projectOne(inst.X, inst.M, inst.Y, inst.transform, inst.renderer);
+    });
+  } else {
+    applyProjectionMatrix();
+    if (M > 0 && rendererND.geometry) {
+      projector.project(X, M, Y);
+      const center = recenterProjected(Y, M);
+      const tpos = tmpVec.set(baseTransform.pos.x + center.x, baseTransform.pos.y + center.y, baseTransform.pos.z + center.z);
+      rendererND.setTransform(tpos, new THREE.Euler(baseTransform.rot.x, baseTransform.rot.y, baseTransform.rot.z), baseTransform.scale);
+      rendererND.writeInterleavedFrom(Y);
+    }
+    extraInstances.forEach(inst => {
+      projector.project(inst.X, inst.M, inst.Y);
+      const center = recenterProjected(inst.Y, inst.M);
+      const tpos = tmpVec.set(inst.transform.pos.x + center.x, inst.transform.pos.y + center.y, inst.transform.pos.z + center.z);
+      inst.renderer.setTransform(tpos, new THREE.Euler(inst.transform.rot.x, inst.transform.rot.y, inst.transform.rot.z), inst.transform.scale);
+      inst.renderer.writeInterleavedFrom(inst.Y);
+    });
+  }
+  updateSelectionOutline();
+  if (PARAMS.editMode) updateVertexCloud(selectedInstance);
+  updateAxisGuide();
+}
+
+function showDeleteConfirm(ev?: MouseEvent) {
+  if (!ctxMenu) return;
+  deletePending = true;
+  ctxMenu.innerHTML = '';
+  const title = document.createElement('div');
+  title.textContent = '¿Eliminar?';
+  title.style.padding = '8px 12px';
+  title.style.fontWeight = '700';
+  ctxMenu.appendChild(title);
+  const confirm = document.createElement('button');
+  confirm.textContent = 'Confirmar';
+  confirm.onclick = () => {
+    ctxMenu.style.display = 'none';
+    deletePending = false;
+    deleteSelected();
+  };
+  const cancel = document.createElement('button');
+  cancel.textContent = 'Cancelar';
+  cancel.onclick = () => {
+    deletePending = false;
+    ctxMenu.style.display = 'none';
+  };
+  ctxMenu.appendChild(confirm);
+  ctxMenu.appendChild(cancel);
+  const x = ev?.clientX ?? lastPointer.x;
+  const y = ev?.clientY ?? lastPointer.y;
+  ctxMenu.style.left = `${x}px`;
+  ctxMenu.style.top = `${y}px`;
+  ctxMenu.style.display = 'block';
+}
+
+function clearExtraInstances() {
+  extraInstances.forEach(inst => inst.renderer.dispose());
+  extraInstances.length = 0;
+  selectedInstance = -1;
+}
+
+function addInstanceAt(offset: THREE.Vector3) {
+  const baseData = M > 0 ? { verts: new Float32Array(X), edges: new Uint32Array(E), V: M } : buildPrimitive(PARAMS.primitive, N);
+  const data = baseData;
+  const instRenderer = new HypercubeRenderer(scene);
+  instRenderer.build(data.V, data.edges);
+  const Yloc = new Float32Array(3 * data.V);
+  const label = `${baseLabel} #${extraInstances.length + 1}`;
+  const t = { pos: offset.clone(), rot: new THREE.Vector3(), scale: new THREE.Vector3(1,1,1) };
+  extraInstances.push({ renderer: instRenderer, Y: Yloc, X: data.verts, E: data.edges, M: data.V, offset: offset.clone(), label, kind: PARAMS.primitive, transform: t });
+  projector.project(data.verts, data.V, Yloc);
+  instRenderer.setTransform(t.pos, new THREE.Euler(t.rot.x, t.rot.y, t.rot.z), t.scale);
+  instRenderer.writeInterleavedFrom(Yloc);
+  instRenderer.filterEdgesByDimRange(data.verts, N, data.V, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
+  instRenderer.setMode(PARAMS.modoSolido ? 'solid' : 'wireframe');
+  projectAndRenderAll();
+  applySliceFilter();
+  if (setViewMode) setViewMode(PARAMS.modoSolido);
+  updateObjectList();
+}
+
 function rebuildState(newN: number, newX: Float32Array, newE: Uint32Array, source: 'primitive' | 'custom') {
+  if (playState.active) stopPlay();
+  playState.savedRot = new Float32Array();
+  playState.savedAxes = { x: 0, y: 1, z: 2 };
+  playState.spinPhase = 0;
+  axisDrag.active = false;
+  controls.enableZoom = true;
+  controls.enablePan = true;
+  controls.enableRotate = true;
+  controls.enabled = true;
+  controls.reset();
+  camera.position.set(2.6, 1.8, 2.6);
+  // ensure render mode persists
+  const currentModeSolid = PARAMS.modoSolido;
   dataSource = source;
   N = newN;
   PARAMS.N = newN;
@@ -117,6 +818,17 @@ function rebuildState(newN: number, newX: Float32Array, newE: Uint32Array, sourc
   rot = new RotND(newN);
   projector = new NDProjector(newN, rot.matrix, canonicalP(newN));
   Y = new Float32Array(3 * M);
+  pcaCache = null;
+  projectionDirty = true;
+  clearExtraInstances();
+  baseTransform.pos.set(0,0,0);
+  baseTransform.rot.set(0,0,0);
+  baseTransform.scale.set(1,1,1);
+  axesOrder = Array.from({ length: N }, (_, i) => i);
+  axesOffset = 0;
+  PARAMS.axesX = axesOrder[0] ?? 0;
+  PARAMS.axesY = axesOrder[1] ?? 1;
+  PARAMS.axesZ = axesOrder[2] ?? 2;
   refreshPlaneOptions();
   planeBindings.forEach(({ i, j }, idx) => {
     const plane = planes[idx];
@@ -135,13 +847,22 @@ function rebuildState(newN: number, newX: Float32Array, newE: Uint32Array, sourc
     sliceDimBinding.value = PARAMS.sliceDim;
     sliceDimBinding.refresh();
   }
-  rendererND.build(M, E);
-  rendererND.setMode(PARAMS.modoSolido ? 'solid' : 'wireframe');
-  applyProjectionMatrix();
-  projector.project(X, M, Y);
-  rendererND.writeInterleavedFrom(Y);
-  rendererND.filterEdgesByDimRange(X, N, M, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
+  if (M > 0) {
+    rendererND.build(M, E);
+    rendererND.setMode(PARAMS.modoSolido ? 'solid' : 'wireframe');
+    if (setViewMode) setViewMode(currentModeSolid);
+    projectAndRenderAll();
+    applySliceFilter();
+  } else {
+    // no base geometry
+    rendererND.dispose?.();
+  }
   pane.refresh();
+  baseLabel = source === 'custom' ? 'Custom' : 'Hipercubo';
+  updateObjectList();
+  selectObject(-1);
+  updateAxisLegend();
+  renderAxisList();
 }
 
 function splitNumericLine(line: string) {
@@ -213,6 +934,7 @@ async function handleImport(file: File) {
     const text = await file.text();
     const lower = file.name.toLowerCase();
     const parsed = lower.endsWith('.csv') ? parseCSV(text) : parseJSONData(text);
+    pushUndoSnapshot();
     if (parsed.N < 3 || parsed.N > 8) {
       alert('Solo se admiten datasets de entre 3 y 8 dimensiones para visualizar.');
       return;
@@ -256,6 +978,18 @@ function formatCoords(Nloc: number, coords: Float32Array, idx: number) {
   return parts;
 }
 
+function pickPointOnTargetPlane(ev: PointerEvent) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  ndc.set(
+    ((ev.clientX - rect.left) / rect.width) * 2 - 1,
+    -((ev.clientY - rect.top) / rect.height) * 2 + 1,
+  );
+  clickPlane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(tmpVec).normalize(), controls.target);
+  raycaster.setFromCamera(ndc, camera);
+  const hit = raycaster.ray.intersectPlane(clickPlane, clickPoint);
+  return hit ? clickPoint.clone() : controls.target.clone();
+}
+
 function handleHover(ev: PointerEvent) {
   if (!tooltipEl) return;
   const rect = renderer.domElement.getBoundingClientRect();
@@ -265,11 +999,8 @@ function handleHover(ev: PointerEvent) {
   const h = rect.height;
   let best = -1;
   let bestDist2 = Number.POSITIVE_INFINITY;
-  const xs = Y.subarray(0, M);
-  const ys = Y.subarray(M, 2 * M);
-  const zs = Y.subarray(2 * M, 3 * M);
-  for (let i = 0; i < M; i++) {
-    tmpVec.set(xs[i], ys[i], zs[i]).project(camera);
+  const considerPoint = (px: number, py: number, pz: number, idx: number, instIdx: number) => {
+    tmpVec.set(px, py, pz).project(camera);
     const sx = (tmpVec.x * 0.5 + 0.5) * w;
     const sy = (-tmpVec.y * 0.5 + 0.5) * h;
     const dx = sx - mx;
@@ -277,9 +1008,22 @@ function handleHover(ev: PointerEvent) {
     const d2 = dx * dx + dy * dy;
     if (d2 < bestDist2) {
       bestDist2 = d2;
-      best = i;
+      best = idx;
+      selectedHoverInst = instIdx;
     }
+  };
+  let selectedHoverInst = -1;
+  for (let i = 0; i < M; i++) {
+    const pIdx = i * 3;
+    considerPoint(rendererND.positions[pIdx], rendererND.positions[pIdx + 1], rendererND.positions[pIdx + 2], i, -1);
   }
+  extraInstances.forEach(inst => {
+    const pos = inst.renderer.positions;
+    for (let i = 0; i < inst.M; i++) {
+      const pIdx = i * 3;
+      considerPoint(pos[pIdx], pos[pIdx + 1], pos[pIdx + 2], i, extraInstances.indexOf(inst));
+    }
+  });
   const thresh2 = 30 * 30; // pixels^2
   if (best >= 0 && bestDist2 < thresh2) {
     const lines = formatCoords(N, X, best);
@@ -289,6 +1033,13 @@ function handleHover(ev: PointerEvent) {
     tooltipEl.classList.add('visible');
   } else {
     tooltipEl.classList.remove('visible');
+  }
+
+  // status bar when idle
+  if (statusBar && transformOp.mode === 'none') {
+    const ndcX = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+    const ndcY = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
+    statusBar.textContent = `Cursor NDC: (${ndcX.toFixed(3)}, ${ndcY.toFixed(3)})`;
   }
 }
 function resetToIsometric() {
@@ -315,20 +1066,29 @@ function resetToIsometric() {
   controls.reset();
   camera.position.set(2.6, 1.8, 2.6);
 }
-applyProjectionMatrix();
-projector.project(X, M, Y);
-rendererND.writeInterleavedFrom(Y);
-rendererND.filterEdgesByDimRange(X, N, M, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
+projectAndRenderAll();
+applySliceFilter();
+updateAxisLegend();
+renderAxisList();
+scene.background = PARAMS.editMode ? editBackground.clone() : baseBackground.clone();
+renderer.setClearColor(scene.background);
 
-pane.addButton({ title: 'Reset isométrico' }).on('click', () => resetToIsometric());
-if (paneToggleBtn) {
-  const setPaneVisible = (visible: boolean) => {
-    paneVisible = visible;
-    paneContainer.style.display = visible ? 'block' : 'none';
-    paneToggleBtn.setAttribute('aria-expanded', visible ? 'true' : 'false');
+pane.addBinding(PARAMS, 'editMode', { label: 'Modo edición' });
+if (viewToggle) {
+  const btns = Array.from(viewToggle.querySelectorAll('button')) as HTMLButtonElement[];
+  const syncButtons = () => {
+    btns.forEach(btn => btn.classList.toggle('active', (btn.dataset.mode === 'solid') === PARAMS.modoSolido));
   };
-  paneToggleBtn.addEventListener('click', () => setPaneVisible(!paneVisible));
-  setPaneVisible(paneVisible);
+  setViewMode = (solid: boolean) => {
+    PARAMS.modoSolido = solid;
+    rendererND.setMode(solid ? 'solid' : 'wireframe');
+    extraInstances.forEach(inst => inst.renderer.setMode(solid ? 'solid' : 'wireframe'));
+    syncButtons();
+  };
+  btns.forEach(btn => {
+    btn.addEventListener('click', () => setViewMode(btn.dataset.mode === 'solid'));
+  });
+  syncButtons();
 }
 
 if (fileInput) {
@@ -344,94 +1104,672 @@ fData.addButton({ title: 'Exportar proyección CSV' }).on('click', () => exportP
 fData.addButton({ title: 'Exportar proyección JSON' }).on('click', () => exportProjectionJSON());
 
 const fDims = pane.addFolder({ title: 'Dimensiones' });
-const primitiveOptions = {
-  Hipercubo: 'hypercube',
-  'Cross polytope': 'cross',
-  Simplex: 'simplex',
-} as const;
-fDims.addBinding(PARAMS, 'primitive', { options: primitiveOptions, label: 'Primitiva' }).on('change', () => {
-  const rebuilt = buildPrimitive(PARAMS.primitive, N);
-  rebuildState(N, rebuilt.verts, rebuilt.edges, 'primitive');
-});
+// Primitiva fija; selector eliminado del UI.
 fDims.addBinding(PARAMS, 'N', { min: 3, max: 8, step: 1, label: 'N' }).on('change', (ev: TpChangeEvent<number>) => {
   if (dataSource === 'custom') { PARAMS.N = N; return; }
+  pushUndoSnapshot();
   N = ev.value;
-  const rebuilt = buildPrimitive(PARAMS.primitive, N);
-  rebuildState(N, rebuilt.verts, rebuilt.edges, 'primitive');
+  const emptyVerts = new Float32Array(0);
+  const emptyEdges = new Uint32Array(0);
+  rebuildState(N, emptyVerts, emptyEdges, 'primitive');
 });
 
 const fProj = pane.addFolder({ title: 'Proyección' });
-fProj.addBinding(PARAMS, 'proyeccion', { options: { 'Canónica': 'Canonico', 'PCA (top-3)': 'PCA' } }).on('change', () => {
-  applyProjectionMatrix();
-  projector.project(X, M, Y);
-  rendererND.writeInterleavedFrom(Y);
+fProj.addBinding(PARAMS, 'perspMode', { label: 'Perspectiva' }).on('change', () => {
+  projectAndRenderAll();
 });
-fProj.addBinding(PARAMS, 'modoSolido', { label: 'Sólido' }).on('change', (ev: TpChangeEvent<boolean>) => {
-  rendererND.setMode(ev.value ? 'solid' : 'wireframe');
+const playBtn = fProj.addButton({ title: 'Reproducir rotación en W' });
+playState.button = playBtn;
+playState.buttonEl = (playBtn as any)?.controller?.view?.buttonElement || (playBtn as any)?.controller_?.view?.buttonElement || null;
+playBtn.on('click', () => {
+  if (!playState.active) {
+    startPlay();
+  } else {
+    stopPlay();
+    projectAndRenderAll();
+    applySliceFilter();
+  }
 });
 fProj.addBinding(PARAMS, 'autoReortho', { label: 'Re‑ortonormalizar' }).on('change', () => {
   // nada inmediato; se evalúa en runtime
 });
-
-const fAdvanced = pane.addFolder({ title: 'Avanzado', expanded: false });
-
-const fPlanes = fAdvanced.addFolder({ title: 'Rotaciones (planos i,j)' });
-planes.forEach((pl, idx) => {
-  const f = fPlanes.addFolder({ title: `Plano ${idx+1}` });
-  const iBinding = f.addBinding(planes[idx], 'i', { min: 0, max: N-1, step: 1 }) as SliderInputBindingApi<number>;
-  const jBinding = f.addBinding(planes[idx], 'j', { min: 0, max: N-1, step: 1 }) as SliderInputBindingApi<number>;
-  planeBindings[idx] = { i: iBinding, j: jBinding };
-  f.addBinding(planes[idx], 'theta', { min: -Math.PI, max: Math.PI, step: 0.001, label: 'θ (manual)' })
-   .on('change', (ev: TpChangeEvent<number>) => {
-      const p = planes[idx];
-      const dtheta = (p._lastTheta ?? 0) - ev.last;
-      // revertir la rotación previa y aplicar la nueva incrementalmente:
-      if (Math.abs(dtheta) > 1e-12) rot.applyGivensLeft(p.i, p.j, dtheta);
-      const inc = ev.value - (p._lastTheta ?? 0);
-      if (Math.abs(inc) > 1e-12) rot.applyGivensLeft(p.i, p.j, inc);
-      p._lastTheta = ev.value;
-   });
-  f.addBinding(planes[idx], 'auto', { label: 'auto-spin' });
-  f.addBinding(planes[idx], 'speed', { min: -3.0, max: 3.0, step: 0.01, label: 'vel (rad/s)' });
-});
-
-const fSlice = fAdvanced.addFolder({ title: 'Slicing' });
-sliceDimBinding = fSlice.addBinding(PARAMS, 'sliceDim', { min: -1, max: N-1, step: 1, label: 'dim (−1=off)' }) as SliderInputBindingApi<number>;
-sliceDimBinding.on('change', () => {
-  rendererND.filterEdgesByDimRange(X, N, M, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
-});
-fSlice.addBinding(PARAMS, 'sliceMin', { min: -1, max: 1, step: 0.01, label: 'min' }).on('change', () => {
-  rendererND.filterEdgesByDimRange(X, N, M, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
-});
-fSlice.addBinding(PARAMS, 'sliceMax', { min: -1, max: 1, step: 0.01, label: 'max' }).on('change', () => {
-  rendererND.filterEdgesByDimRange(X, N, M, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
-});
+updatePlayButtonLabel();
 
 // --- Animación ---
 const clock = new THREE.Clock();
 renderer.domElement.addEventListener('pointermove', handleHover);
+renderer.domElement.addEventListener('pointermove', (ev) => {
+  lastPointer = { x: ev.clientX, y: ev.clientY };
+  if (transformOp.mode === 'none') return;
+  ev.preventDefault();
+  const dx = ev.clientX - transformOp.startMouse.x;
+  const dy = ev.clientY - transformOp.startMouse.y;
+  if (transformOp.targetVertex >= 0) {
+    const inst = transformOp.instIdx === -1 ? null : extraInstances[transformOp.instIdx];
+    const posArr = inst ? inst.renderer.positions : rendererND.positions;
+    const idx = transformOp.targetVertex * 3;
+    const rect = renderer.domElement.getBoundingClientRect();
+    ndc.set(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1);
+    raycaster.setFromCamera(ndc, camera);
+    // plane always facing camera through start point to follow cursor
+    transformOp.plane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(tmpVec).normalize(), transformOp.planeHitStart);
+    const hit = raycaster.ray.intersectPlane(transformOp.plane, tmpVec);
+    if (!hit) return;
+    if (transformOp.mode === 'move') {
+      const locked = transformOp.lockAxis;
+      posArr[idx] = locked === 1 || locked === 2 ? transformOp.vertexStart.x : hit.x;
+      posArr[idx+1] = locked === 0 || locked === 2 ? transformOp.vertexStart.y : hit.y;
+      posArr[idx+2] = locked === 0 || locked === 1 ? transformOp.vertexStart.z : hit.z;
+      transformOp.lastHit.copy(hit);
+    } else if (transformOp.mode === 'scale') {
+      const fromOrigin = hit.clone().sub(transformOp.planeHitStart);
+      const base = transformOp.vertexStart.clone().sub(transformOp.planeHitStart);
+      const baseLen = base.length();
+      const newLen = fromOrigin.length();
+      const s = baseLen > 1e-6 ? newLen / baseLen : 1;
+      const scaled = base.multiplyScalar(s).add(transformOp.planeHitStart);
+      posArr[idx] = scaled.x;
+      posArr[idx+1] = scaled.y;
+      posArr[idx+2] = scaled.z;
+      transformOp.lastHit.copy(scaled);
+    } else if (transformOp.mode === 'rotate') {
+      const base = transformOp.vertexStart.clone().sub(transformOp.planeHitStart);
+      const cur = hit.clone().sub(transformOp.planeHitStart);
+      const angle = Math.atan2(cur.y, cur.x) - Math.atan2(base.y, base.x);
+      const q = new THREE.Quaternion().setFromAxisAngle(transformOp.axis, angle);
+      base.applyQuaternion(q).add(transformOp.planeHitStart);
+      posArr[idx] = base.x;
+      posArr[idx+1] = base.y;
+      posArr[idx+2] = base.z;
+      transformOp.lastHit.copy(base);
+    }
+    const targetRenderer = inst ? inst.renderer : rendererND;
+    // Bake back into source data mapped to current projection axes
+    const local = new THREE.Vector3(posArr[idx], posArr[idx+1], posArr[idx+2]);
+    if (inst) {
+      const mat = new THREE.Matrix4().compose(inst.transform.pos, new THREE.Quaternion().setFromEuler(new THREE.Euler(inst.transform.rot.x, inst.transform.rot.y, inst.transform.rot.z)), inst.transform.scale).invert();
+      local.applyMatrix4(mat);
+      const axes = [PARAMS.axesX, PARAMS.axesY, PARAMS.axesZ];
+      for (let c = 0; c < 3; c++) {
+        const dim = axes[c] % N;
+        inst.X[dim * inst.M + transformOp.targetVertex] = local.getComponent(c);
+      }
+      projector.project(inst.X, inst.M, inst.Y);
+      inst.renderer.writeInterleavedFrom(inst.Y);
+      inst.renderer.filterEdgesByDimRange(inst.X, N, inst.M, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
+    } else {
+      const mat = new THREE.Matrix4().compose(baseTransform.pos, new THREE.Quaternion().setFromEuler(new THREE.Euler(baseTransform.rot.x, baseTransform.rot.y, baseTransform.rot.z)), baseTransform.scale).invert();
+      local.applyMatrix4(mat);
+      const axes = [PARAMS.axesX, PARAMS.axesY, PARAMS.axesZ];
+      for (let c = 0; c < 3; c++) {
+        const dim = axes[c] % N;
+        X[dim * M + transformOp.targetVertex] = local.getComponent(c);
+      }
+      projector.project(X, M, Y);
+      rendererND.writeInterleavedFrom(Y);
+      rendererND.filterEdgesByDimRange(X, N, M, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
+    }
+    if (vertexMarker) vertexMarker.position.set(posArr[idx], posArr[idx+1], posArr[idx+2]);
+    if (statusBar) statusBar.textContent = `Vértice (${transformOp.targetVertex}): (${posArr[idx].toFixed(3)}, ${posArr[idx+1].toFixed(3)}, ${posArr[idx+2].toFixed(3)})`;
+    } else {
+      const target = transformOp.instIdx === -1 ? baseTransform : extraInstances[transformOp.instIdx].transform;
+      if (transformOp.mode === 'move') {
+        const src = transformOp.instIdx === -1 ? X : extraInstances[transformOp.instIdx].X;
+        const baseData = transformOp.objectDataStart;
+        const count = transformOp.instIdx === -1 ? M : extraInstances[transformOp.instIdx].M;
+        if (baseData && count > 0) {
+          const delta = new THREE.Vector3(
+          transformOp.lockAxis === 1 || transformOp.lockAxis === 2 ? 0 : dx * 0.01,
+          transformOp.lockAxis === 0 || transformOp.lockAxis === 2 ? 0 : -dy * 0.01,
+          0,
+          );
+          const axes = [PARAMS.axesX, PARAMS.axesY, PARAMS.axesZ];
+          for (let i = 0; i < count; i++) {
+            for (let c = 0; c < 3; c++) {
+              const dim = axes[c] % N;
+            const idxD = dim * count + i;
+            src[idxD] = baseData[idxD] + delta.getComponent(c);
+          }
+        }
+        projectionDirty = true;
+      }
+    } else if (transformOp.mode === 'rotate') {
+      if (transformOp.wPlane && transformOp.objectDataStart) {
+        const src = transformOp.instIdx === -1 ? X : extraInstances[transformOp.instIdx].X;
+        const baseData = transformOp.objectDataStart;
+        const count = transformOp.instIdx === -1 ? M : extraInstances[transformOp.instIdx].M;
+        if (count > 0) {
+          const axes = [PARAMS.axesX, PARAMS.axesY, PARAMS.axesZ];
+          const dimA = axes[Math.max(0, transformOp.lockAxis)] % N;
+          const dimB = N - 1;
+          const angle = (dx - dy) * 0.01;
+          const c = Math.cos(angle), s = Math.sin(angle);
+          for (let i = 0; i < count; i++) {
+            const a0 = baseData[dimA * count + i];
+            const b0 = baseData[dimB * count + i];
+            src[dimA * count + i] = a0 * c - b0 * s;
+            src[dimB * count + i] = a0 * s + b0 * c;
+          }
+          projectionDirty = true;
+        }
+      } else {
+        target.rot.set(
+          transformOp.lockAxis === 1 || transformOp.lockAxis === 2 ? transformOp.startRot.x : transformOp.startRot.x + dy * 0.005,
+          transformOp.lockAxis === 0 || transformOp.lockAxis === 2 ? transformOp.startRot.y : transformOp.startRot.y + dx * 0.005,
+          transformOp.startRot.z,
+        );
+      }
+    } else if (transformOp.mode === 'scale') {
+      const delta = (dx - dy) * 0.005;
+      const s = Math.max(0.1, Math.min(5, transformOp.startScale + delta));
+      target.scale.set(s, s, s);
+    }
+    syncTransformUIFromSelection();
+    if (statusBar) statusBar.textContent = `Objeto: pos(${target.pos.x.toFixed(3)}, ${target.pos.y.toFixed(3)}, ${target.pos.z.toFixed(3)}) rot(${target.rot.x.toFixed(3)}, ${target.rot.y.toFixed(3)}, ${target.rot.z.toFixed(3)})`;
+  }
+  projectAndRenderAll();
+  applySliceFilter();
+  updateSelectionOutline();
+  updateAxisGuide();
+});
 renderer.domElement.addEventListener('pointerleave', () => tooltipEl?.classList.remove('visible'));
+renderer.domElement.addEventListener('contextmenu', (ev) => {
+  if (!ctxMenu) return;
+  ev.preventDefault();
+  lastPointer = { x: ev.clientX, y: ev.clientY };
+  deletePending = false;
+  ctxMenu.innerHTML = '';
+  const spawnPoint = pickPointOnTargetPlane(ev);
+  if (PARAMS.editMode) {
+    if (selectedVertex < 0) return;
+    const actions: { label: string; mode?: TransformMode }[] = [
+      { label: 'Mover vértice', mode: 'move' },
+    ];
+    actions.forEach(action => {
+      const btn = document.createElement('button');
+      btn.textContent = action.label;
+      btn.onclick = () => {
+        ctxMenu.style.display = 'none';
+        startTransform(action.mode! as TransformMode, ev);
+      };
+      ctxMenu.appendChild(btn);
+    });
+  } else {
+    const hasSelection = (selectedInstance === -1 && M > 0) || selectedInstance >= 0;
+    if (!hasSelection) {
+      const opts: { label: string; kind: PrimitiveKind }[] = [
+        { label: 'Hipercubo', kind: 'hypercube' },
+        { label: 'Cross polytope', kind: 'cross' },
+        { label: 'Simplex', kind: 'simplex' },
+      ];
+      opts.forEach(opt => {
+        const btn = document.createElement('button');
+        btn.textContent = `Añadir ${opt.label}`;
+        btn.onclick = () => {
+          ctxMenu.style.display = 'none';
+          const data = buildPrimitive(opt.kind, N);
+          const instRenderer = new HypercubeRenderer(scene);
+          instRenderer.build(data.V, data.edges);
+          tmpOffset.copy(spawnPoint);
+          const Yloc = new Float32Array(3 * data.V);
+          const label = `${opt.label} #${extraInstances.length + 1}`;
+          const t = { pos: tmpOffset.clone(), rot: new THREE.Vector3(), scale: new THREE.Vector3(1,1,1) };
+          extraInstances.push({ renderer: instRenderer, Y: Yloc, X: data.verts, E: data.edges, M: data.V, offset: tmpOffset.clone(), label, kind: opt.kind, transform: t });
+          projector.project(data.verts, data.V, Yloc);
+          instRenderer.setTransform(t.pos, new THREE.Euler(t.rot.x, t.rot.y, t.rot.z), t.scale);
+          instRenderer.writeInterleavedFrom(Yloc);
+          instRenderer.filterEdgesByDimRange(data.verts, N, data.V, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
+          instRenderer.setMode(PARAMS.modoSolido ? 'solid' : 'wireframe');
+          projectAndRenderAll();
+          applySliceFilter();
+          if (setViewMode) setViewMode(PARAMS.modoSolido);
+          updateObjectList();
+        };
+        ctxMenu.appendChild(btn);
+      });
+    } else {
+      const actions: { label: string; mode?: TransformMode; onClick?: () => void }[] = [
+        { label: 'Mover', mode: 'move' },
+        { label: 'Rotar', mode: 'rotate' },
+        { label: 'Escalar', mode: 'scale' },
+        { label: 'Eliminar', onClick: () => showDeleteConfirm(ev) },
+      ];
+      actions.forEach(action => {
+        const btn = document.createElement('button');
+        btn.textContent = action.label;
+        btn.onclick = () => {
+          ctxMenu.style.display = 'none';
+          if (action.onClick) { action.onClick(); return; }
+          startTransform(action.mode! as TransformMode, ev);
+        };
+        ctxMenu.appendChild(btn);
+      });
+    }
+  }
+  const x = Math.min(ev.clientX, window.innerWidth - 180);
+  const y = Math.min(ev.clientY, window.innerHeight - 150);
+  ctxMenu.style.left = `${x}px`;
+  ctxMenu.style.top = `${y}px`;
+  ctxMenu.style.display = ctxMenu.innerHTML ? 'block' : 'none';
+});
+window.addEventListener('click', () => {
+  if (deletePending) return;
+  if (ctxMenu) ctxMenu.style.display = 'none';
+  deletePending = false;
+});
+renderer.domElement.addEventListener('wheel', (ev) => {
+  if (!PARAMS.editMode) return;
+  ev.preventDefault();
+  const dir = ev.deltaY > 0 ? 1 : -1;
+  let v = PARAMS.sliceDim + dir;
+  v = Math.max(-1, Math.min(N - 1, v));
+  PARAMS.sliceDim = v;
+  if (sliceDimBinding) sliceDimBinding.value = v;
+  applySliceFilter();
+});
+renderer.domElement.addEventListener('mousedown', (ev) => {
+  if (ev.button === 1) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    axisDrag.active = true;
+    axisDrag.lastX = ev.clientX;
+    axisDrag.accum = 0;
+    axisDrag.prevZoom = controls.enableZoom;
+    axisDrag.prevPan = controls.enablePan;
+    controls.enableZoom = false;
+    controls.enablePan = false;
+    return;
+  }
+}, { capture: true });
+renderer.domElement.addEventListener('pointerdown', (ev) => {
+  if (axisDrag.active) return;
+  lastPointer = { x: ev.clientX, y: ev.clientY };
+  if (PARAMS.editMode && dragState.active) return;
+  if (transformOp.mode !== 'none') {
+    if (ev.button === 0) {
+      // rebase start point to current click for consistent deltas
+      transformOp.startMouse.set(ev.clientX, ev.clientY);
+      if (transformOp.targetVertex >= 0) {
+        transformOp.planeHitStart.copy(transformOp.vertexStart);
+        transformOp.plane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(tmpVec).normalize(), transformOp.planeHitStart);
+      }
+      if (transformOp.targetVertex >= 0) {
+        const instIdx = transformOp.instIdx;
+        const inst = instIdx === -1 ? null : extraInstances[instIdx];
+        const posArr = inst ? inst.renderer.positions : rendererND.positions;
+        const idx = transformOp.targetVertex * 3;
+        // Bake current indicator position (already locked) back to data
+        const local = new THREE.Vector3(posArr[idx], posArr[idx+1], posArr[idx+2]);
+        if (inst) {
+          const mat = new THREE.Matrix4().compose(inst.transform.pos, new THREE.Quaternion().setFromEuler(new THREE.Euler(inst.transform.rot.x, inst.transform.rot.y, inst.transform.rot.z)), inst.transform.scale).invert();
+          local.applyMatrix4(mat);
+          for (let d = 0; d < Math.min(3, N); d++) inst.X[d * inst.M + transformOp.targetVertex] = local.getComponent(d);
+        } else {
+          const mat = new THREE.Matrix4().compose(baseTransform.pos, new THREE.Quaternion().setFromEuler(new THREE.Euler(baseTransform.rot.x, baseTransform.rot.y, baseTransform.rot.z)), baseTransform.scale).invert();
+          local.applyMatrix4(mat);
+          for (let d = 0; d < Math.min(3, N); d++) X[d * M + transformOp.targetVertex] = local.getComponent(d);
+        }
+      }
+      transformOp.mode = 'none';
+      transformOp.vertexDataStart = null;
+      transformOp.lockAxis = -1;
+      clearAxisGuide();
+      projectAndRenderAll();
+      applySliceFilter();
+      if (PARAMS.editMode && selectedVertex >= 0) placeVertexMarker(selectedInstance, selectedVertex);
+      updateSelectionOutline();
+      if (statusBar) {
+        if (transformOp.targetVertex >= 0) {
+          const inst = transformOp.instIdx === -1 ? null : extraInstances[transformOp.instIdx];
+          const posArr = inst ? inst.renderer.positions : rendererND.positions;
+          const idx = transformOp.targetVertex * 3;
+          statusBar.textContent = `Vértice (${transformOp.targetVertex}) commit: (${posArr[idx].toFixed(3)}, ${posArr[idx+1].toFixed(3)}, ${posArr[idx+2].toFixed(3)})`;
+        } else {
+          const target = transformOp.instIdx === -1 ? baseTransform : extraInstances[transformOp.instIdx].transform;
+          statusBar.textContent = `Objeto commit: pos(${target.pos.x.toFixed(3)}, ${target.pos.y.toFixed(3)}, ${target.pos.z.toFixed(3)})`;
+        }
+      }
+    } else if (ev.button === 2) {
+      // cancel, revert
+      if (transformOp.targetVertex >= 0) {
+        const inst = transformOp.instIdx === -1 ? null : extraInstances[transformOp.instIdx];
+        const posArr = inst ? inst.renderer.positions : rendererND.positions;
+        const idx = transformOp.targetVertex * 3;
+        posArr[idx] = transformOp.vertexStart.x;
+        posArr[idx+1] = transformOp.vertexStart.y;
+        posArr[idx+2] = transformOp.vertexStart.z;
+        const targetRenderer = inst ? inst.renderer : rendererND;
+        if (transformOp.vertexDataStart) {
+          const src = inst ? inst.X : X;
+          const mcount = inst ? inst.M : M;
+          for (let d = 0; d < N; d++) src[d * mcount + transformOp.targetVertex] = transformOp.vertexDataStart[d];
+        }
+        if (inst) {
+          projector.project(inst.X, inst.M, inst.Y);
+          inst.renderer.writeInterleavedFrom(inst.Y);
+          inst.renderer.filterEdgesByDimRange(inst.X, N, inst.M, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
+        } else {
+          projector.project(X, M, Y);
+          rendererND.writeInterleavedFrom(Y);
+          rendererND.filterEdgesByDimRange(X, N, M, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
+        }
+        (targetRenderer.geometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
+        targetRenderer.geometry.computeBoundingBox();
+        targetRenderer.geometry.computeBoundingSphere();
+        if (vertexMarker) vertexMarker.position.set(posArr[idx], posArr[idx+1], posArr[idx+2]);
+      } else {
+        const target = transformOp.instIdx === -1 ? baseTransform : extraInstances[transformOp.instIdx].transform;
+        // revert object translation snapshot if it exists
+        if (transformOp.objectDataStart) {
+          const src = transformOp.instIdx === -1 ? X : extraInstances[transformOp.instIdx].X;
+          src.set(transformOp.objectDataStart);
+          projectionDirty = true;
+        }
+        target.pos.copy(transformOp.startPos);
+        target.rot.copy(transformOp.startRot);
+        target.scale.set(transformOp.startScale, transformOp.startScale, transformOp.startScale);
+      }
+      transformOp.mode = 'none';
+      transformOp.vertexDataStart = null;
+      transformOp.lockAxis = -1;
+      transformOp.objectDataStart = null;
+      clearAxisGuide();
+      syncTransformUIFromSelection();
+      projectAndRenderAll();
+      applySliceFilter();
+      updateSelectionOutline();
+    }
+    ev.preventDefault();
+    return;
+  }
+  if (ev.button !== 0) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  const mx = ev.clientX - rect.left;
+  const my = ev.clientY - rect.top;
+  const w = rect.width;
+  const h = rect.height;
+
+  const screenBounds = (positions: Float32Array, count: number) => {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (let i = 0; i < count; i++) {
+      const pIdx = i * 3;
+      tmpVec.set(positions[pIdx], positions[pIdx + 1], positions[pIdx + 2]).project(camera);
+      const sx = (tmpVec.x * 0.5 + 0.5) * w;
+      const sy = (-tmpVec.y * 0.5 + 0.5) * h;
+      if (sx < minX) minX = sx; if (sx > maxX) maxX = sx;
+      if (sy < minY) minY = sy; if (sy > maxY) maxY = sy;
+    }
+    return { minX, maxX, minY, maxY };
+  };
+
+  const candidates: { instIdx: number; contains: boolean; area: number; nearestDist2: number; }[] = [];
+
+  if (M > 0) {
+    const box = screenBounds(rendererND.positions, M);
+    const contains = mx >= box.minX && mx <= box.maxX && my >= box.minY && my <= box.maxY;
+    const area = (box.maxX - box.minX) * (box.maxY - box.minY);
+    candidates.push({ instIdx: -1, contains, area, nearestDist2: Number.POSITIVE_INFINITY });
+  }
+  extraInstances.forEach((inst, idx) => {
+    const box = screenBounds(inst.renderer.positions, inst.M);
+    const contains = mx >= box.minX && mx <= box.maxX && my >= box.minY && my <= box.maxY;
+    const area = (box.maxX - box.minX) * (box.maxY - box.minY);
+    candidates.push({ instIdx: idx, contains, area, nearestDist2: Number.POSITIVE_INFINITY });
+  });
+
+  let bestInst = -1;
+  // Prefer objects whose screen bbox contains the click; pick the smallest area
+  const containing = candidates.filter(c => c.contains && isFinite(c.area));
+  if (containing.length) {
+    containing.sort((a, b) => a.area - b.area);
+    bestInst = containing[0].instIdx;
+  } else {
+    // fallback to nearest vertex
+    let bestDist2 = Number.POSITIVE_INFINITY;
+    const consider = (px: number, py: number, pz: number, instIdx: number) => {
+      tmpVec.set(px, py, pz).project(camera);
+      const sx = (tmpVec.x * 0.5 + 0.5) * w;
+      const sy = (-tmpVec.y * 0.5 + 0.5) * h;
+      const dx = sx - mx;
+      const dy = sy - my;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestDist2) {
+        bestDist2 = d2;
+        bestInst = instIdx;
+      }
+    };
+    for (let i = 0; i < M; i++) {
+      const pIdx = i * 3;
+      consider(rendererND.positions[pIdx], rendererND.positions[pIdx + 1], rendererND.positions[pIdx + 2], -1);
+    }
+    extraInstances.forEach((inst, idx) => {
+      const pos = inst.renderer.positions;
+      for (let i = 0; i < inst.M; i++) {
+        const pIdx = i * 3;
+        consider(pos[pIdx], pos[pIdx + 1], pos[pIdx + 2], idx);
+      }
+    });
+    const thresh = 35 * 35;
+    if (bestDist2 >= thresh) bestInst = -999; // none
+  }
+
+  if (bestInst !== -999) {
+    selectObject(bestInst);
+    if (PARAMS.editMode && ev.button === 0) {
+      const targetRenderer = bestInst === -1 ? rendererND : extraInstances[bestInst].renderer;
+      const posArr = targetRenderer.positions;
+      let nearest = -1, nearestD2 = Number.POSITIVE_INFINITY;
+      const count = bestInst === -1 ? M : extraInstances[bestInst].M;
+      for (let i = 0; i < count; i++) {
+        const pIdx = i * 3;
+        tmpVec.set(posArr[pIdx], posArr[pIdx + 1], posArr[pIdx + 2]).project(camera);
+        const sx = (tmpVec.x * 0.5 + 0.5) * w;
+        const sy = (-tmpVec.y * 0.5 + 0.5) * h;
+        const dx = sx - mx, dy = sy - my;
+        const d2 = dx*dx + dy*dy;
+        if (d2 < nearestD2) { nearestD2 = d2; nearest = i; }
+      }
+      selectedVertex = nearest;
+      placeVertexMarker(bestInst, nearest);
+    }
+  } else {
+    // click on empty space: clear selections
+    selectObject(-1);
+    selectedVertex = -1;
+    if (vertexMarker) { scene.remove(vertexMarker); vertexMarker = null; }
+    if (selectionOutline) { scene.remove(selectionOutline); selectionOutline = null; }
+  }
+});
+
+window.addEventListener('pointermove', (ev) => {
+  if (!axisDrag.active) return;
+  ev.preventDefault();
+  const dx = ev.clientX - axisDrag.lastX;
+  axisDrag.lastX = ev.clientX;
+  axisDrag.accum += dx;
+  const threshold = 35;
+  let steps = 0;
+  while (axisDrag.accum > threshold) { steps++; axisDrag.accum -= threshold; }
+  while (axisDrag.accum < -threshold) { steps--; axisDrag.accum += threshold; }
+  if (steps !== 0) cycleAxes(steps);
+});
+
+window.addEventListener('pointerup', (ev) => {
+  if (ev.button !== 1 || !axisDrag.active) return;
+  axisDrag.active = false;
+  axisDrag.accum = 0;
+  controls.enableZoom = axisDrag.prevZoom;
+  controls.enablePan = axisDrag.prevPan;
+});
+
+window.addEventListener('keydown', (ev) => {
+  if (transformOp.mode === 'none') return;
+  const key = ev.key.toLowerCase();
+  if (key === 'w') {
+    if (transformOp.mode === 'rotate') {
+      ev.preventDefault();
+      transformOp.wPlane = !transformOp.wPlane;
+      updateAxisGuide();
+    }
+    return;
+  }
+  if (key === 'x' || key === 'y' || key === 'z') {
+    transformOp.lockAxis = key === 'x' ? 0 : key === 'y' ? 1 : 2;
+    updateAxisGuide();
+  }
+});
+
+window.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Tab') {
+    ev.preventDefault();
+    PARAMS.editMode = !PARAMS.editMode;
+    scene.background = PARAMS.editMode ? editBackground.clone() : baseBackground.clone();
+    renderer.setClearColor(scene.background);
+    pane.refresh();
+    // clearing vertex selection on toggle
+    selectedVertex = -1;
+    if (vertexMarker) { scene.remove(vertexMarker); vertexMarker = null; }
+    if (!PARAMS.editMode) {
+      if (vertexCloud) { scene.remove(vertexCloud); vertexCloud = null; }
+    } else {
+      updateVertexCloud(selectedInstance);
+    }
+    updateSelectionOutline();
+  }
+  // Transform hotkeys
+  if (transformOp.mode === 'none') {
+    if (ev.key === 'g' || ev.key === 'r' || ev.key === 's') {
+      ev.preventDefault();
+      const modeMap: Record<string, TransformMode> = { g: 'move', r: 'rotate', s: 'scale' };
+      const fakeEvent = new PointerEvent('pointerdown', { clientX: 0, clientY: 0 });
+      startTransform(modeMap[ev.key], fakeEvent);
+    } else if (ev.key === 'w') {
+      ev.preventDefault();
+      PARAMS.perspMode = !PARAMS.perspMode;
+      projectAndRenderAll();
+      pane.refresh();
+    } else if (ev.key === 'x') {
+      ev.preventDefault();
+      const hasSel = (selectedInstance === -1 && M > 0) || selectedInstance >= 0;
+      if (!hasSel) return;
+      if (deletePending) {
+        deletePending = false;
+        if (ctxMenu) ctxMenu.style.display = 'none';
+        deleteSelected();
+      } else {
+        showDeleteConfirm();
+      }
+    } else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'z') {
+      ev.preventDefault();
+      const snap = undoStack.pop();
+      if (snap) {
+        redoStack.push({
+          N,
+          X: new Float32Array(X),
+          M,
+          axes: { x: PARAMS.axesX, y: PARAMS.axesY, z: PARAMS.axesZ },
+          baseTransform: {
+            pos: baseTransform.pos.clone(),
+            rot: baseTransform.rot.clone(),
+            scale: baseTransform.scale.clone(),
+          },
+        });
+        applySnapshot(snap);
+      }
+    } else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'y') {
+      ev.preventDefault();
+      const snap = redoStack.pop();
+      if (snap) {
+        undoStack.push({
+          N,
+          X: new Float32Array(X),
+          M,
+          axes: { x: PARAMS.axesX, y: PARAMS.axesY, z: PARAMS.axesZ },
+          baseTransform: {
+            pos: baseTransform.pos.clone(),
+            rot: baseTransform.rot.clone(),
+            scale: baseTransform.scale.clone(),
+          },
+        });
+        applySnapshot(snap);
+      }
+    }
+  }
+});
+
+// vertex drag disabled; edit mode uses transform menu
 
 function animate() {
-  const dt = clock.getDelta();
-  // auto‑spin: incrementar θ de cada plano y aplicar incremental
-  for (const p of planes) {
-    if (!p.auto || Math.abs(p.speed) < 1e-6) continue;
-    const d = p.speed * dt;
-    rot.applyGivensLeft(p.i, p.j, d);
-    p.theta = (p.theta ?? 0) + d;
-    p._lastTheta = p.theta;
+  const dt = Math.min(clock.getDelta(), 0.05);
+  if (playState.active && N > 1) {
+    playState.spinPhase += dt;
+    const spinSpeed = Math.min(1.0, 0.3 + 0.05 * N); // faster inside‑out demo spin
+    if (N >= 4) {
+      // rotate over all plane pairs to show full N‑D motion
+      const pairCount = (N * (N - 1)) / 2;
+      const perPairSpeed = spinSpeed / Math.max(1, pairCount * 0.4);
+      for (let i = 0; i < N; i++) {
+        for (let j = i + 1; j < N; j++) {
+          rot.applyGivensLeft(i, j, dt * perPairSpeed);
+        }
+      }
+    } else {
+      // fallback for lower dims
+      rot.applyGivensLeft(0, 1, dt * spinSpeed);
+      if (N > 2) rot.applyGivensLeft(1, 2, dt * spinSpeed * 0.7);
+    }
+    projector.R = rot.matrix;
+    projectionDirty = true;
   }
   if (PARAMS.autoReortho) rot.reorthonormalize();
 
-  projector.project(X, M, Y);
-  rendererND.writeInterleavedFrom(Y);
+  projectAndRenderAll();
 
   controls.update();
   renderer.render(scene, camera);
   requestAnimationFrame(animate);
 }
 animate();
+
+function startTransform(mode: TransformMode, ev: PointerEvent) {
+  transformOp.mode = mode;
+  transformOp.instIdx = selectedInstance;
+  transformOp.targetVertex = PARAMS.editMode ? selectedVertex : -1;
+  transformOp.startMouse.set(ev.clientX, ev.clientY);
+  if (transformOp.targetVertex >= 0) {
+    if (transformOp.targetVertex < 0) { transformOp.mode = 'none'; return; }
+    const inst = transformOp.instIdx === -1 ? null : extraInstances[transformOp.instIdx];
+    const posArr = inst ? inst.renderer.positions : rendererND.positions;
+    const idx = transformOp.targetVertex * 3;
+    transformOp.vertexStart.set(posArr[idx], posArr[idx+1], posArr[idx+2]);
+    const src = inst ? inst.X : X;
+    transformOp.vertexDataStart = new Float32Array(N);
+    for (let d = 0; d < N; d++) transformOp.vertexDataStart[d] = src[d * (inst ? inst.M : M) + transformOp.targetVertex];
+    transformOp.startScale = 1;
+    transformOp.plane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(tmpVec).normalize(), transformOp.vertexStart);
+    transformOp.planeHitStart.copy(transformOp.vertexStart);
+    transformOp.lastHit.copy(transformOp.vertexStart);
+    transformOp.lockAxis = -1;
+    transformOp.wPlane = false;
+  } else {
+    const target = selectedInstance === -1 ? baseTransform : extraInstances[selectedInstance]?.transform;
+    if (!target) return;
+    transformOp.startPos.copy(target.pos);
+    transformOp.startRot.copy(target.rot);
+    transformOp.startScale = target.scale.x;
+    transformOp.lockAxis = -1;
+    transformOp.wPlane = false;
+    if (mode === 'move' || mode === 'rotate') {
+      const src = selectedInstance === -1 ? X : extraInstances[selectedInstance].X;
+      const count = selectedInstance === -1 ? M : extraInstances[selectedInstance].M;
+      transformOp.objectDataStart = new Float32Array(src.length);
+      transformOp.objectDataStart.set(src);
+      transformOp.lastHit.set(0,0,0);
+    } else {
+      transformOp.objectDataStart = null;
+    }
+  }
+}
 
 // --- Resize ---
 window.addEventListener('resize', () => {
