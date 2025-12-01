@@ -246,7 +246,7 @@ fSlice.addBinding(PARAMS, 'sliceMax', { min: -1, max: 1, step: 0.01, label: 'max
   rendererND.filterEdgesByDimRange(X, N, M, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
 });
 
-// --- Animación ---
+// --- Animación xd---
 const clock = new THREE.Clock();
 
 function animate() {
