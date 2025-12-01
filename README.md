@@ -7,8 +7,6 @@ Permite explorar hipercubos y otros politopos, proyectarlos a 3D, rotarlos en pl
 
 https://srdz-af.github.io/nd-viewer/
 
-Luego abre la URL que indique Vite (normalmente http://localhost:5173).
-
 ## Panel principal
 
 En la esquina superior derecha hay un panel con:
