@@ -1,6 +1,7 @@
 # ND-Viewer
 
 `ND-Viewer` is an interactive N-dimensional geometry viewer built with Three.js and Tweakpane.
+![til](preview.gif)
 
 It lets you create, inspect, transform, and edit high-dimensional objects, then project them into 3D for visualization. The project supports hypercubes, simplexes, cross polytopes, simplex prisms, custom JSON data, canonical projection, PCA projection, N-D rotation, vertex editing, and undo/redo.
 
