@@ -47,13 +47,6 @@ npm run build
 npm run preview
 ```
 
-## Core Model
-
-- Internal max dimension is **8** (`MAX_N`).
-- Primitives are generated at the selected dimension and embedded into the internal 8D storage.
-- Rendering projects current selected dimensions into 3D.
-- Axis ordering determines which dimensions appear as X/Y/Z.
-
 ## Main Controls
 
 Camera:
