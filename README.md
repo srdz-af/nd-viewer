@@ -6,7 +6,7 @@
 
 # BleND
 
-BleND is an interactive N-dimensional geometry viewer built with **Three.js**, **TypeScript**, and **Vite**.
+BleND is an interactive N-dimensional geometry viewer built with **Three.js**.
 
 It lets you create, inspect, transform, and edit high-dimensional objects, then project them into 3D.
 
