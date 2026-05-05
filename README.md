@@ -111,7 +111,7 @@ Ctrl+Shift+Z / Cmd+Shift+Z: redo
 
 ## UI Overview
 
-- **View mode buttons**: Wireframe / Transparent / Solid
+- **View mode buttons**: Wireframe / Transparent / Solid / Faceted (shared colors per coplanar outer face region)
 - **Scene actions**: Import JSON, Export JSON, Edit mode
 - **Axis order panel**: drag to reorder active dimensions
 - **Object list**: select, rename, hide/show objects

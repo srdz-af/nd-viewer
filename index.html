@@ -943,6 +943,14 @@
             <path d="M15.5 8.5a5 5 0 0 0-7 7" opacity="0.35"></path>
           </svg>
         </button>
+        <button data-mode="faceted" aria-label="Faceted mode" title="Faceted">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <polygon class="icon-fill" points="12,4.5 5.6,9.3 12,13"></polygon>
+            <polygon class="icon-soft-fill" points="12,4.5 18.4,9.3 12,13"></polygon>
+            <polygon class="icon-fill" points="5.6,9.3 12,13 12,19.5 5.6,14.7"></polygon>
+            <polygon class="icon-soft-fill" points="18.4,9.3 12,13 12,19.5 18.4,14.7"></polygon>
+          </svg>
+        </button>
       </div>
       <div id="scene-actions" aria-label="Scene actions">
         <button id="import-json-button" type="button" aria-label="Import JSON" title="Import JSON">
@@ -1095,6 +1103,7 @@
         <ul id="help-content">
           <li><strong>Orbit:</strong> left drag. <strong>Zoom:</strong> wheel.</li>
           <li><strong>Switch projected axes:</strong> middle drag or click axis cycle button.</li>
+          <li><strong>Faceted mode:</strong> every object uses the same solid multicolor material with one color per coplanar outer face region.</li>
           <li><strong>Add object:</strong> <code>Shift + A</code>.</li>
           <li><strong>Transform selected object:</strong> <code>G</code> move, <code>R</code> rotate, <code>S</code> scale.</li>
           <li><strong>Mobile transforms:</strong> touch and drag the Move/Rotate/Scale toolbar buttons, then release to confirm.</li>

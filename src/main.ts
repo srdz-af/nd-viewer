@@ -1125,7 +1125,7 @@ function updateTexturePanel() {
   if (!texturePanel) return;
 
   const target = getSurfaceTarget(selectedInstance);
-  const editable = !!target;
+  const editable = !!target && PARAMS.renderMode !== 'faceted';
   texturePanel.classList.toggle('empty', !target);
   texturePanel.classList.toggle('disabled', !editable);
   setTextureInputsEnabled(editable);
@@ -1139,6 +1139,7 @@ function updateTexturePanel() {
 }
 
 function applyTextureFromInputs(recordUndo: boolean) {
+  if (PARAMS.renderMode === 'faceted') return;
   if (syncingTextureUI) return;
   const target = getSurfaceTarget(selectedInstance);
   if (!target) return;
