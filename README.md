@@ -17,7 +17,7 @@ https://srdz-af.github.io/BleND/
 
 ## What It Supports
 
-- N-dimensional primitives (3D to 8D)
+- N-dimensional primitives
 - Canonical projection using selected axes
 - Global N-D rotation and auto-rotation
 - Object transforms (move/rotate/scale)
