@@ -140,9 +140,3 @@ Notes:
 - Imported datasets must be between **3 and 8 dimensions** to visualize in the app.
 - Import replaces the base object and clears extra instances.
 - Export writes geometry only (textures/material settings are not serialized).
-
-## Current Scope Notes
-
-- The current UI exposes **canonical axis projection workflow**.
-- PCA projection code exists in the codebase but is not currently exposed as a direct UI mode toggle.
-- No Tweakpane dependency is used in the current app.
