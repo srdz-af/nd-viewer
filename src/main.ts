@@ -2,10 +2,14 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { Pane, type SliderInputBindingApi, type TpChangeEvent } from 'tweakpane';
-import { RotND, Plane } from './RotND';
+import { Pane, type SliderInputBindingApi } from 'tweakpane';
+import { MAX_N, AXIS_PALETTE, VIEW_MODES, type ViewMode } from './constants';
+import { RotND, type Plane } from './RotND';
 import { pcaTopK } from './PCA';
-import { buildPrimitive, NDProjector, canonicalP, HypercubeRenderer, type PrimitiveKind } from './HypercubeScene';
+import { NDProjector, canonicalP } from './geometry/NDProjector';
+import { buildPrimitive, type PrimitiveKind } from './geometry/primitives';
+import { parseGeometryJson, serializeGeometryJson } from './io/geometryJson';
+import { HypercubeRenderer } from './rendering/HypercubeRenderer';
 
 type ProjMode = 'Canonico' | 'PCA';
 type PrimitiveMode = PrimitiveKind;
@@ -36,7 +40,6 @@ const pmrem = new THREE.PMREMGenerator(renderer);
 const environmentMap = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 pmrem.dispose();
 scene.environment = environmentMap;
-(renderer as any).environment = environmentMap;
 
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.01, 100);
 camera.position.set(2.6, 1.8, 2.6);
@@ -77,12 +80,9 @@ for (let i = -gridDiv; i <= gridDiv; i++) {
   gridGroup.add(lineZ);
 }
 scene.add(gridGroup);
-const vertexMat = new THREE.MeshBasicMaterial({ color: 0xffd166 });
 const vertexGeo = new THREE.SphereGeometry(0.012, 8, 8);
-const axisPalette = ['#ff6b6b', '#4caf50', '#2196f3', '#f0c674', '#9b59b6', '#1abc9c', '#e67e22', '#ecf0f1'];
 
 // --- Estado N‑D ---
-const MAX_N = 8;
 let N = MAX_N;
 let X = new Float32Array();
 let E = new Uint32Array();
@@ -98,14 +98,7 @@ const tmpN = new Float32Array(32);
 const tmpCenter = new THREE.Vector3();
 let pcaCache: Float32Array | null = null;
 let projectionDirty = true;
-let setViewMode: (mode: 'wireframe' | 'transparent' | 'solid') => void;
-const setUIEnabled = (enabled: boolean) => {
-  try { (pane as any).disabled = !enabled; } catch {}
-  if (viewToggle) {
-    viewToggle.style.pointerEvents = enabled ? 'auto' : 'none';
-    viewToggle.style.opacity = enabled ? '1' : '0.5';
-  }
-};
+let setViewMode: (mode: ViewMode) => void;
 const objList = document.getElementById('object-list') as HTMLDivElement | null;
 const axisLegend = document.getElementById('axis-legend') as HTMLDivElement | null;
 const axisList = document.getElementById('axis-list') as HTMLDivElement | null;
@@ -114,10 +107,30 @@ let lastPointer = { x: window.innerWidth - 180, y: window.innerHeight - 80 };
 type SceneSnapshot = {
   N: number;
   X: Float32Array;
+  E: Uint32Array;
   M: number;
+  source: 'primitive' | 'custom';
+  label: string;
+  paramsN: number;
+  primitive: PrimitiveMode;
   axes: { x: number; y: number; z: number };
+  axesOrder: number[];
+  axesOffset: number;
   baseTransform: { pos: THREE.Vector3; rot: THREE.Vector3; scale: THREE.Vector3 };
   baseOrigN: number;
+  selectedInstance: number;
+  instances: InstanceSnapshot[];
+};
+type TransformState = { pos: THREE.Vector3; rot: THREE.Vector3; scale: THREE.Vector3; };
+type InstanceSnapshot = {
+  X: Float32Array;
+  E: Uint32Array;
+  M: number;
+  offset: THREE.Vector3;
+  label: string;
+  kind: PrimitiveKind;
+  transform: TransformState;
+  originalN: number;
 };
 const undoStack: SceneSnapshot[] = [];
 const redoStack: SceneSnapshot[] = [];
@@ -200,39 +213,71 @@ function setProjectionAxes({ x, y, z }: ProjectionAxes) {
   projectAndRenderAll();
 }
 
-function pushUndoSnapshot() {
-  const snap: SceneSnapshot = {
+function cloneTransformState(transform: TransformState): TransformState {
+  return {
+    pos: transform.pos.clone(),
+    rot: transform.rot.clone(),
+    scale: transform.scale.clone(),
+  };
+}
+
+function captureSnapshot(): SceneSnapshot {
+  return {
     N,
     X: new Float32Array(X),
+    E: new Uint32Array(E),
     M,
+    source: dataSource,
+    label: baseLabel,
+    paramsN: PARAMS.N,
+    primitive: PARAMS.primitive,
     axes: { x: PARAMS.axesX, y: PARAMS.axesY, z: PARAMS.axesZ },
-    baseTransform: {
-      pos: baseTransform.pos.clone(),
-      rot: baseTransform.rot.clone(),
-      scale: baseTransform.scale.clone(),
-    },
+    axesOrder: [...axesOrder],
+    axesOffset,
+    baseTransform: cloneTransformState(baseTransform),
     baseOrigN: baseOriginalN,
+    selectedInstance,
+    instances: extraInstances.map(inst => ({
+      X: new Float32Array(inst.X),
+      E: new Uint32Array(inst.E),
+      M: inst.M,
+      offset: inst.offset.clone(),
+      label: inst.label,
+      kind: inst.kind,
+      transform: cloneTransformState(inst.transform),
+      originalN: inst.originalN,
+    })),
   };
-  undoStack.push(snap);
+}
+
+function pushUndoSnapshot() {
+  undoStack.push(captureSnapshot());
   if (undoStack.length > MAX_HISTORY) undoStack.shift();
   redoStack.length = 0;
 }
 
 function applySnapshot(snap: SceneSnapshot) {
-  const rebuiltEdges = edgesFallback;
-  rebuildState(snap.N, snap.X, rebuiltEdges, dataSource, snap.baseOrigN);
-  M = snap.M;
+  PARAMS.N = snap.paramsN;
+  PARAMS.primitive = snap.primitive;
+  rebuildState(snap.N, snap.X, snap.E, snap.source, snap.baseOrigN);
+  baseLabel = snap.label;
   PARAMS.axesX = snap.axes.x; PARAMS.axesY = snap.axes.y; PARAMS.axesZ = snap.axes.z;
+  axesOrder = [...snap.axesOrder];
+  axesOffset = snap.axesOffset;
   baseTransform.pos.copy(snap.baseTransform.pos);
   baseTransform.rot.copy(snap.baseTransform.rot);
   baseTransform.scale.copy(snap.baseTransform.scale);
+  extraInstances.push(...snap.instances.map(restoreInstanceSnapshot));
+  selectedInstance = snap.selectedInstance >= 0 && snap.selectedInstance < extraInstances.length
+    ? snap.selectedInstance
+    : -1;
   projectionDirty = true;
   projectAndRenderAll();
   applySliceFilter();
   pane.refresh();
+  updateObjectList();
+  selectObject(selectedInstance);
 }
-function resolvePlayButtonEl() { return null; }
-function updatePlayButtonLabel() {}
 function cycleAxes(step: number) {
   if (playState.active) return;
   const n = visibleDims();
@@ -249,14 +294,6 @@ function cycleAxes(step: number) {
     z: axesOrder[(axesOffset + 2) % n],
   });
 }
-const dragState: { active: boolean; instIdx: number; vertex: number; plane: THREE.Plane; lastPoint: THREE.Vector3; } = {
-  active: false,
-  instIdx: -1,
-  vertex: -1,
-  plane: new THREE.Plane(),
-  lastPoint: new THREE.Vector3(),
-};
-
 function updateTransformFromUI() {
   const degToRad = Math.PI / 180;
   const rot = new THREE.Vector3(transformUI.rotX * degToRad, transformUI.rotY * degToRad, transformUI.rotZ * degToRad);
@@ -312,9 +349,9 @@ function updateObjectList() {
 function updateAxesHelperColors() {
   const colorAttr = axes.geometry.getAttribute('color') as THREE.BufferAttribute | undefined;
   if (!colorAttr) return;
-  const cX = new THREE.Color(axisPalette[PARAMS.axesX % axisPalette.length]);
-  const cY = new THREE.Color(axisPalette[PARAMS.axesY % axisPalette.length]);
-  const cZ = new THREE.Color(axisPalette[PARAMS.axesZ % axisPalette.length]);
+  const cX = new THREE.Color(AXIS_PALETTE[PARAMS.axesX % AXIS_PALETTE.length]);
+  const cY = new THREE.Color(AXIS_PALETTE[PARAMS.axesY % AXIS_PALETTE.length]);
+  const cZ = new THREE.Color(AXIS_PALETTE[PARAMS.axesZ % AXIS_PALETTE.length]);
   // AxesHelper stores colors in pairs [origin, tip] for X,Y,Z
   colorAttr.setXYZ(0, cX.r, cX.g, cX.b);
   colorAttr.setXYZ(1, cX.r, cX.g, cX.b);
@@ -330,7 +367,7 @@ function updateAxisLegend() {
   if (!axisLegend) return;
   const nVis = visibleDims();
   const badges = Array.from({ length: nVis }).map((_, i) => {
-    const color = axisPalette[i % axisPalette.length];
+    const color = AXIS_PALETTE[i % AXIS_PALETTE.length];
     return `<span class="badge" style="background:${color};">d${i}</span>`;
   }).join('');
   axisLegend.innerHTML = `<h4 style="margin:0 0 6px 0; font-size:12px; color:#e6ecf5;">Ejes</h4><div>${badges}</div>`;
@@ -346,7 +383,7 @@ function renderAxisList() {
     list[(axesOffset + 2) % nVis],
   ]);
   const items = list.map((dim, idx) => {
-    const color = axisPalette[dim % axisPalette.length];
+    const color = AXIS_PALETTE[dim % AXIS_PALETTE.length];
     const active = activeDims.has(dim);
     return `<li draggable="true" data-idx="${idx}" class="${active ? 'active' : ''}" style="border-left:4px solid ${color};">${`d${dim}`}</li>`;
   }).join('');
@@ -554,11 +591,30 @@ type Instance = {
   offset: THREE.Vector3;
   label: string;
   kind: PrimitiveKind;
-  transform: { pos: THREE.Vector3; rot: THREE.Vector3; scale: THREE.Vector3; };
+  transform: TransformState;
   originalN: number;
 };
 
 const extraInstances: Instance[] = [];
+
+function restoreInstanceSnapshot(snap: InstanceSnapshot): Instance {
+  const instanceRenderer = new HypercubeRenderer(scene);
+  instanceRenderer.build(snap.M, snap.E);
+  instanceRenderer.setMode(PARAMS.renderMode);
+
+  return {
+    renderer: instanceRenderer,
+    Y: new Float32Array(3 * snap.M),
+    X: new Float32Array(snap.X),
+    E: new Uint32Array(snap.E),
+    M: snap.M,
+    offset: snap.offset.clone(),
+    label: snap.label,
+    kind: snap.kind,
+    transform: cloneTransformState(snap.transform),
+    originalN: snap.originalN,
+  };
+}
 
 const rendererND = new HypercubeRenderer(scene);
 if (M > 0) {
@@ -579,7 +635,7 @@ const PARAMS = {
   sliceDim: -1,
   sliceMin: -0.5,
   sliceMax: 0.5,
-  renderMode: 'wireframe' as 'wireframe' | 'transparent' | 'solid',
+  renderMode: 'wireframe' as ViewMode,
   editMode: false,
   autoSpin: false,
   axesX: 0,
@@ -876,61 +932,6 @@ function rebuildState(newN: number, newX: Float32Array, newE: Uint32Array, sourc
   renderAxisList();
 }
 
-function splitNumericLine(line: string) {
-  return line.split(/[, \t;]+/).filter(Boolean).map(Number);
-}
-
-function parseJSONData(text: string) {
-  const obj = JSON.parse(text);
-  const points: any[] = Array.isArray(obj) ? obj : obj?.points;
-  if (!Array.isArray(points) || !points.length) throw new Error('JSON debe tener un array de puntos');
-  const D = Array.isArray(points[0]) ? points[0].length : Object.keys(points[0]).length;
-  if (D < 3 || D > 32) throw new Error('JSON debe tener entre 3 y 32 dimensiones');
-  const rows: number[][] = [];
-  for (let i = 0; i < points.length; i++) {
-    const p = points[i];
-    const arr = Array.isArray(p) ? p : Object.values(p);
-    if (arr.length !== D) throw new Error(`Punto ${i+1} no coincide en dimensionalidad`);
-    rows.push(arr.map(Number));
-  }
-  const Mloc = rows.length;
-  const flat = new Float32Array(D * Mloc);
-  for (let r = 0; r < Mloc; r++) {
-    for (let d = 0; d < D; d++) {
-      const v = rows[r][d];
-      if (!Number.isFinite(v)) throw new Error(`Valor no numérico en punto ${r+1}, dim ${d+1}`);
-      flat[d * Mloc + r] = v;
-    }
-  }
-  let edges = edgesFallback;
-  const rawEdges: any[] = Array.isArray(obj.edges) ? obj.edges : [];
-  if (rawEdges.length >= 2 && Array.isArray(rawEdges[0])) {
-    const list: number[] = [];
-    for (const pair of rawEdges) {
-      if (!Array.isArray(pair) || pair.length < 2) continue;
-      const [a, b] = pair.map(Number);
-      if (Number.isInteger(a) && Number.isInteger(b)) {
-        list.push(a, b);
-      }
-    }
-    if (list.length >= 2) edges = new Uint32Array(list);
-  } else if (obj.adjacency && typeof obj.adjacency === 'object') {
-    const list: number[] = [];
-    for (const [k, vals] of Object.entries(obj.adjacency)) {
-      const a = Number(k);
-      if (!Number.isInteger(a)) continue;
-      if (Array.isArray(vals)) {
-        for (const bVal of vals) {
-          const b = Number(bVal);
-          if (Number.isInteger(b)) list.push(a, b);
-        }
-      }
-    }
-    if (list.length >= 2) edges = new Uint32Array(list);
-  }
-  return { N: D, X: flat, edges };
-}
-
 function downloadText(name: string, text: string, mime = 'text/plain') {
   const blob = new Blob([text], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -944,15 +945,15 @@ function downloadText(name: string, text: string, mime = 'text/plain') {
 async function handleImport(file: File) {
   try {
     const text = await file.text();
-    const parsed = parseJSONData(text);
-    pushUndoSnapshot();
+    const parsed = parseGeometryJson(text);
     if (parsed.N < 3 || parsed.N > 8) {
       alert('Solo se admiten datasets de entre 3 y 8 dimensiones para visualizar.');
       return;
     }
+    pushUndoSnapshot();
     PARAMS.N = parsed.N;
     const embedded = embedToMax(parsed.X, parsed.N, axesOrder, axesOffset);
-    const edges = parsed.edges ?? edgesFallback;
+    const edges = parsed.edges.length ? parsed.edges : edgesFallback;
     rebuildState(MAX_N, embedded, edges, 'custom', parsed.N);
   } catch (err) {
     console.error(err);
@@ -965,39 +966,7 @@ async function handleImport(file: File) {
 function exportProjectionJSON() {
   const { Xsrc, count, Esrc } = getCurrentExportData();
   if (count === 0) { alert('No hay datos para exportar'); return; }
-  const pts: Record<string, number>[] = [];
-  for (let r = 0; r < count; r++) {
-    const row: Record<string, number> = {};
-    for (let d = 0; d < N; d++) row[`d${d}`] = Xsrc[d * count + r];
-    pts.push(row);
-  }
-  let edges: number[][] = [];
-  if (Esrc && Esrc.length > 1) {
-    edges = [];
-    for (let i = 0; i < Esrc.length; i += 2) {
-      edges.push([Esrc[i], Esrc[i + 1]]);
-    }
-  }
-  // adjacency list
-  const adjacency: Record<number, number[]> = {};
-  edges.forEach(([a, b]) => {
-    (adjacency[a] ??= []).push(b);
-    (adjacency[b] ??= []).push(a);
-  });
-  downloadText('data.json', JSON.stringify({ points: pts, edges, adjacency }, null, 2), 'application/json');
-}
-
-function exportProjectionCSV() {
-  const { Xsrc, count } = getCurrentExportData();
-  if (count === 0) { alert('No hay datos para exportar'); return; }
-  const headers = Array.from({ length: N }, (_, d) => `d${d}`).join(',');
-  const lines = [headers];
-  for (let r = 0; r < count; r++) {
-    const row: string[] = [];
-    for (let d = 0; d < N; d++) row.push(`${Xsrc[d * count + r]}`);
-    lines.push(row.join(','));
-  }
-  downloadText('data.csv', lines.join('\n'), 'text/csv');
+  downloadText('data.json', serializeGeometryJson(Xsrc, count, N, Esrc), 'application/json');
 }
 
 function getCurrentExportData() {
@@ -1009,10 +978,10 @@ function getCurrentExportData() {
   return { Xsrc: new Float32Array(), count: 0, Esrc: new Uint32Array() };
 }
 
-function formatCoords(Nloc: number, coords: Float32Array, idx: number) {
+function formatCoords(Nloc: number, coords: Float32Array, count: number, idx: number) {
   const parts: string[] = [];
   for (let d = 0; d < Nloc; d++) {
-    const v = coords[d * M + idx];
+    const v = coords[d * count + idx];
     parts.push(`d${d}: ${v.toFixed(3)}`);
   }
   return parts;
@@ -1057,16 +1026,19 @@ function handleHover(ev: PointerEvent) {
     const pIdx = i * 3;
     considerPoint(rendererND.positions[pIdx], rendererND.positions[pIdx + 1], rendererND.positions[pIdx + 2], i, -1);
   }
-  extraInstances.forEach(inst => {
+  extraInstances.forEach((inst, instIdx) => {
     const pos = inst.renderer.positions;
     for (let i = 0; i < inst.M; i++) {
       const pIdx = i * 3;
-      considerPoint(pos[pIdx], pos[pIdx + 1], pos[pIdx + 2], i, extraInstances.indexOf(inst));
+      considerPoint(pos[pIdx], pos[pIdx + 1], pos[pIdx + 2], i, instIdx);
     }
   });
   const thresh2 = 30 * 30; // pixels^2
   if (best >= 0 && bestDist2 < thresh2) {
-    const lines = formatCoords(N, X, best);
+    const hoverData = selectedHoverInst >= 0 && extraInstances[selectedHoverInst]
+      ? { coords: extraInstances[selectedHoverInst].X, count: extraInstances[selectedHoverInst].M }
+      : { coords: X, count: M };
+    const lines = formatCoords(N, hoverData.coords, hoverData.count, best);
     tooltipEl.innerHTML = `<div style="font-weight:600;margin-bottom:4px;">v${best}</div><div>${lines.join('<br>')}</div>`;
     tooltipEl.style.left = `${ev.clientX}px`;
     tooltipEl.style.top = `${ev.clientY}px`;
@@ -1117,10 +1089,13 @@ renderer.setClearColor(scene.background);
 pane.addBinding(PARAMS, 'editMode', { label: 'Modo edición' });
 if (viewToggle) {
   const btns = Array.from(viewToggle.querySelectorAll('button')) as HTMLButtonElement[];
+  const isViewMode = (mode: string | undefined): mode is ViewMode => (
+    VIEW_MODES.includes(mode as ViewMode)
+  );
   const syncButtons = () => {
     btns.forEach(btn => btn.classList.toggle('active', (btn.dataset.mode === PARAMS.renderMode)));
   };
-  setViewMode = (mode: 'wireframe' | 'transparent' | 'solid') => {
+  setViewMode = (mode: ViewMode) => {
     if (playState.active) return;
     PARAMS.renderMode = mode;
     rendererND.setMode(mode);
@@ -1132,7 +1107,9 @@ if (viewToggle) {
     syncButtons();
   };
   btns.forEach(btn => {
-    btn.addEventListener('click', () => setViewMode(btn.dataset.mode as any));
+    btn.addEventListener('click', () => {
+      if (isViewMode(btn.dataset.mode)) setViewMode(btn.dataset.mode);
+    });
   });
   syncButtons();
 }
@@ -1443,7 +1420,6 @@ renderer.domElement.addEventListener('mousedown', (ev) => {
 renderer.domElement.addEventListener('pointerdown', (ev) => {
   if (axisDrag.active) return;
   lastPointer = { x: ev.clientX, y: ev.clientY };
-  if (PARAMS.editMode && dragState.active) return;
   if (transformOp.mode !== 'none') {
     if (ev.button === 0) {
       // rebase start point to current click for consistent deltas
@@ -1764,36 +1740,14 @@ window.addEventListener('keydown', (ev) => {
       ev.preventDefault();
       const snap = undoStack.pop();
       if (snap) {
-        redoStack.push({
-          N,
-          X: new Float32Array(X),
-          M,
-          axes: { x: PARAMS.axesX, y: PARAMS.axesY, z: PARAMS.axesZ },
-          baseTransform: {
-            pos: baseTransform.pos.clone(),
-            rot: baseTransform.rot.clone(),
-            scale: baseTransform.scale.clone(),
-          },
-          baseOrigN: baseOriginalN,
-        });
+        redoStack.push(captureSnapshot());
         applySnapshot(snap);
       }
     } else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'y') {
       ev.preventDefault();
       const snap = redoStack.pop();
       if (snap) {
-        undoStack.push({
-          N,
-          X: new Float32Array(X),
-          M,
-          axes: { x: PARAMS.axesX, y: PARAMS.axesY, z: PARAMS.axesZ },
-          baseTransform: {
-            pos: baseTransform.pos.clone(),
-            rot: baseTransform.rot.clone(),
-            scale: baseTransform.scale.clone(),
-          },
-          baseOrigN: baseOriginalN,
-        });
+        undoStack.push(captureSnapshot());
         applySnapshot(snap);
       }
     }

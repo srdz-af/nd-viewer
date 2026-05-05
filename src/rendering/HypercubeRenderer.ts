@@ -1,0 +1,226 @@
+import * as THREE from 'three';
+import { ConvexHull } from 'three/examples/jsm/math/ConvexHull.js';
+import type { ViewMode } from '../constants';
+
+type VertexPoint = THREE.Vector3 & { __vertexId: number };
+
+export class HypercubeRenderer {
+  scene: THREE.Scene;
+  group: THREE.Group;
+  geometry!: THREE.BufferGeometry;
+  line!: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>;
+  mesh?: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>;
+  positions!: Float32Array;
+  M!: number;
+  allEdges!: Uint32Array;
+  visibleEdges!: Uint32Array;
+  offset = new THREE.Vector3();
+  private lineMaterial: THREE.LineBasicMaterial;
+  private solidMaterial: THREE.MeshStandardMaterial;
+  private mode: ViewMode = 'wireframe';
+  private hullNeedsUpdate = false;
+  private points: VertexPoint[] = [];
+  private visibleVertexMask?: Uint8Array;
+  private transform = new THREE.Matrix4();
+  private tmp = new THREE.Vector3();
+
+  constructor(scene: THREE.Scene) {
+    this.scene = scene;
+    this.group = new THREE.Group();
+    this.scene.add(this.group);
+    this.lineMaterial = new THREE.LineBasicMaterial({ color: 0xe5efff, transparent: true, opacity: 0.95 });
+    this.solidMaterial = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      metalness: 1.0,
+      roughness: 0.05,
+      transparent: false,
+      opacity: 1,
+      envMapIntensity: 1.8,
+      side: THREE.DoubleSide,
+      depthWrite: true,
+      vertexColors: false,
+    });
+  }
+
+  build(M: number, edges: Uint32Array): void {
+    this.dispose();
+    this.M = M;
+    this.allEdges = edges;
+    this.visibleEdges = edges;
+    this.geometry = new THREE.BufferGeometry();
+    this.positions = new Float32Array(3 * M);
+    this.geometry.setAttribute('position', new THREE.BufferAttribute(this.positions, 3));
+    this.setIndexAttribute(this.visibleEdges);
+
+    this.line = new THREE.LineSegments(this.geometry, this.lineMaterial);
+    this.line.visible = this.mode === 'wireframe';
+    this.group.add(this.line);
+
+    this.points = Array.from({ length: M }, (_, idx) => {
+      const v = new THREE.Vector3() as VertexPoint;
+      v.__vertexId = idx;
+      return v;
+    });
+
+    this.mesh = new THREE.Mesh(new THREE.BufferGeometry(), this.solidMaterial);
+    this.mesh.visible = this.mode === 'solid';
+    this.group.add(this.mesh);
+
+    this.hullNeedsUpdate = true;
+    this.visibleVertexMask = undefined;
+  }
+
+  setTransform(position: THREE.Vector3, rotation: THREE.Euler, scale: THREE.Vector3): void {
+    const q = new THREE.Quaternion().setFromEuler(rotation);
+    this.transform.compose(position, q, scale);
+  }
+
+  writeInterleavedFrom(Y: Float32Array): void {
+    const M = this.M;
+    const { positions } = this;
+    const xs = Y.subarray(0, M);
+    const ys = Y.subarray(M, 2 * M);
+    const zs = Y.subarray(2 * M, 3 * M);
+    let p = 0;
+
+    for (let i = 0; i < M; i++) {
+      this.tmp.set(xs[i], ys[i], zs[i]).applyMatrix4(this.transform);
+      positions[p++] = this.tmp.x;
+      positions[p++] = this.tmp.y;
+      positions[p++] = this.tmp.z;
+      this.points[i].copy(this.tmp);
+    }
+
+    (this.geometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
+    this.geometry.computeBoundingSphere();
+    this.geometry.computeBoundingBox();
+
+    if (this.mode !== 'wireframe') {
+      this.hullNeedsUpdate = true;
+      this.updateHullGeometry();
+    }
+  }
+
+  setMode(mode: ViewMode): void {
+    this.mode = mode;
+
+    if (this.line) {
+      this.line.visible = mode === 'wireframe' || mode === 'transparent';
+      this.line.material.depthTest = mode !== 'transparent';
+      this.line.renderOrder = mode === 'transparent' ? 5 : 0;
+    }
+
+    if (this.mesh) {
+      this.solidMaterial.transparent = mode === 'transparent';
+      this.solidMaterial.opacity = mode === 'transparent' ? 0.5 : 1;
+      this.solidMaterial.depthWrite = mode !== 'transparent';
+      this.solidMaterial.needsUpdate = true;
+      this.mesh.material = this.solidMaterial;
+      this.mesh.visible = mode !== 'wireframe' && this.mesh.geometry.attributes.position !== undefined;
+    }
+
+    this.hullNeedsUpdate = mode !== 'wireframe';
+    if (mode !== 'wireframe') this.updateHullGeometry();
+  }
+
+  filterEdgesByDimRange(X: Float32Array, N: number, M: number, dim: number, minV: number, maxV: number): void {
+    if (dim < 0 || dim >= N) {
+      this.visibleEdges = this.allEdges;
+      this.visibleVertexMask = undefined;
+      this.setIndexAttribute(this.allEdges);
+      this.refreshSurface();
+      return;
+    }
+
+    const keep = new Uint8Array(M);
+    const base = dim * M;
+    for (let m = 0; m < M; m++) {
+      const v = X[base + m];
+      keep[m] = v >= minV && v <= maxV ? 1 : 0;
+    }
+
+    const arr: number[] = [];
+    for (let e = 0; e < this.allEdges.length; e += 2) {
+      const a = this.allEdges[e];
+      const b = this.allEdges[e + 1];
+      if (keep[a] && keep[b]) arr.push(a, b);
+    }
+
+    this.visibleEdges = new Uint32Array(arr.length ? arr : [0, 0]);
+    this.visibleVertexMask = keep;
+    this.setIndexAttribute(this.visibleEdges);
+    this.geometry.index!.needsUpdate = true;
+    this.refreshSurface();
+  }
+
+  refreshSurface(): void {
+    if (this.mode === 'wireframe' || !this.mesh) return;
+    this.hullNeedsUpdate = true;
+    this.updateHullGeometry();
+  }
+
+  dispose(): void {
+    if (this.line) {
+      this.group.remove(this.line);
+      this.line.geometry.dispose();
+    }
+
+    if (this.mesh) {
+      this.group.remove(this.mesh);
+      this.mesh.geometry.dispose();
+      this.mesh = undefined;
+    }
+
+    this.geometry = undefined as unknown as THREE.BufferGeometry;
+  }
+
+  private setIndexAttribute(array: Uint32Array): void {
+    this.geometry.setIndex(new THREE.BufferAttribute(array, 1));
+  }
+
+  private updateHullGeometry(): void {
+    if (!this.mesh || !this.hullNeedsUpdate || this.mode === 'wireframe') return;
+
+    const indices = this.visibleVertexMask
+      ? this.points.reduce<number[]>((acc, _p, idx) => {
+          if (this.visibleVertexMask![idx] === 1) acc.push(idx);
+          return acc;
+        }, [])
+      : this.points.map((_p, idx) => idx);
+
+    if (indices.length < 4) {
+      this.mesh.visible = false;
+      this.hullNeedsUpdate = false;
+      return;
+    }
+
+    const geometry = this.buildColoredHull(indices.map(idx => this.points[idx]));
+    geometry.computeVertexNormals();
+    geometry.computeBoundingSphere();
+    this.mesh.geometry.dispose();
+    this.mesh.geometry = geometry;
+    this.mesh.visible = true;
+    this.hullNeedsUpdate = false;
+  }
+
+  private buildColoredHull(points: VertexPoint[]): THREE.BufferGeometry {
+    const hull = new ConvexHull().setFromPoints(points);
+    const vertices: number[] = [];
+    const normals: number[] = [];
+
+    for (const face of hull.faces) {
+      let edge = face.edge;
+      do {
+        const point = edge.head().point as VertexPoint;
+        vertices.push(point.x, point.y, point.z);
+        normals.push(face.normal.x, face.normal.y, face.normal.z);
+        edge = edge.next;
+      } while (edge !== face.edge);
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    return geometry;
+  }
+}

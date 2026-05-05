@@ -1,8 +1,6 @@
-
-// RotND.ts — utilidades de rotación N‑dimensional usando rotaciones de Givens.
 export class RotND {
   readonly N: number;
-  private R: Float32Array;  // matriz N×N, row-major
+  private R: Float32Array;
 
   constructor(N: number) {
     this.N = N;
@@ -10,7 +8,7 @@ export class RotND {
     for (let i = 0; i < N; i++) this.R[i * N + i] = 1;
   }
 
-  reset() {
+  reset(): void {
     this.R.fill(0);
     for (let i = 0; i < this.N; i++) this.R[i * this.N + i] = 1;
   }
@@ -19,8 +17,8 @@ export class RotND {
     return this.R;
   }
 
-  // Aplica a la izquierda: R := G(i,j,theta) * R (rota las FILAS i y j).
-  applyGivensLeft(i: number, j: number, theta: number) {
+  // Left-apply a Givens rotation: R := G(i, j, theta) * R.
+  applyGivensLeft(i: number, j: number, theta: number): void {
     if (i === j) return;
     const N = this.N;
     const c = Math.cos(theta), s = Math.sin(theta);
@@ -31,18 +29,15 @@ export class RotND {
     }
   }
 
-  // Opción: re‑ortonormalizar (poco frecuente). Gram-Schmidt modificado.
-  reorthonormalize() {
+  reorthonormalize(): void {
     const N = this.N, R = this.R;
-    // columnas no cambian aquí; trabajamos sobre filas (vectores base).
     for (let i = 0; i < N; i++) {
-      // proyección fuera de filas previas
       for (let j = 0; j < i; j++) {
         let dot = 0;
         for (let k = 0; k < N; k++) dot += R[i * N + k] * R[j * N + k];
         for (let k = 0; k < N; k++) R[i * N + k] -= dot * R[j * N + k];
       }
-      // normalizar
+
       let norm = 0;
       for (let k = 0; k < N; k++) norm += R[i * N + k] * R[i * N + k];
       norm = Math.sqrt(norm);
@@ -52,4 +47,11 @@ export class RotND {
   }
 }
 
-export type Plane = { i: number; j: number; theta: number; auto: boolean; speed: number; _lastTheta?: number; }
+export type Plane = {
+  i: number;
+  j: number;
+  theta: number;
+  auto: boolean;
+  speed: number;
+  _lastTheta?: number;
+};
