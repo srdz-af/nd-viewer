@@ -4,7 +4,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>N-D WebGL Viewer (Three.js)</title>
+    <title>BleND</title>
     <style>
       :root {
         --ui-bg: rgba(34,36,42,0.92);
@@ -80,18 +80,21 @@
         max-width: calc(100vw - 24px);
       }
       #view-toggle,
-      #scene-actions {
+      #scene-actions,
+      #transform-actions {
         display: inline-flex;
         flex-wrap: wrap;
         gap: 2px;
       }
-      #scene-actions {
+      #scene-actions,
+      #transform-actions {
         margin-left: 3px;
         padding-left: 5px;
         border-left: 1px solid var(--ui-border);
       }
       #view-toggle button,
-      #scene-actions button {
+      #scene-actions button,
+      #transform-actions button {
         display: grid;
         place-items: center;
         width: 27px;
@@ -105,16 +108,26 @@
         transition: background 120ms ease, color 120ms ease;
       }
       #view-toggle button.active,
-      #scene-actions button.active {
+      #scene-actions button.active,
+      #transform-actions button.active {
         background: var(--ui-blue);
         color: var(--ui-text-strong);
       }
       #view-toggle button:hover,
-      #scene-actions button:hover { background: var(--ui-bg-hover); color: var(--ui-text-strong); }
+      #scene-actions button:hover,
+      #transform-actions button:hover { background: var(--ui-bg-hover); color: var(--ui-text-strong); }
       #view-toggle button.active:hover,
-      #scene-actions button.active:hover { background: var(--ui-blue-hover); }
+      #scene-actions button.active:hover,
+      #transform-actions button.active:hover { background: var(--ui-blue-hover); }
+      #view-toggle button:disabled,
+      #scene-actions button:disabled,
+      #transform-actions button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
       #view-toggle svg,
-      #scene-actions svg {
+      #scene-actions svg,
+      #transform-actions svg {
         width: 16px;
         height: 16px;
         fill: none;
@@ -182,6 +195,7 @@
         transform: scale(1.08);
       }
       #w-axis-gizmo {
+        --w-axis-color: #9b59b6;
         position: relative;
         width: 86px;
         height: 86px;
@@ -189,6 +203,7 @@
         border-radius: 0;
         background: transparent;
         box-shadow: none;
+        color: var(--w-axis-color);
         cursor: grab;
         touch-action: none;
         user-select: none;
@@ -205,25 +220,27 @@
       }
       #w-axis-gizmo .ring {
         fill: none;
-        stroke: rgba(176,121,255,0.28);
+        stroke: currentColor;
+        opacity: 0.28;
         stroke-width: 1.4;
       }
       #w-axis-gizmo line {
-        stroke: #b079ff;
+        stroke: currentColor;
         stroke-width: 2.4;
+        opacity: 0.9;
         stroke-linecap: round;
       }
       #w-axis-gizmo:hover:not(.disabled) .ring {
-        stroke: rgba(176,121,255,0.42);
+        opacity: 0.42;
       }
       #w-axis-gizmo:hover:not(.disabled) line {
-        stroke: #c292ff;
+        opacity: 1;
       }
       #w-axis-gizmo.dragging .ring {
-        stroke: rgba(176,121,255,0.52);
+        opacity: 0.52;
       }
       #w-axis-gizmo.dragging line {
-        stroke: #d2acff;
+        opacity: 1;
       }
       #w-axis-gizmo button {
         position: absolute;
@@ -234,18 +251,19 @@
         margin: -10px 0 0 -10px;
         padding: 0;
         border-radius: 50%;
-        border: 2px solid #b079ff;
+        border: 2px solid var(--w-axis-color);
         box-shadow: var(--ui-shadow);
         font: 700 9px/1 system-ui, sans-serif;
+        color: var(--w-axis-color);
         pointer-events: auto;
       }
       #w-axis-gizmo button.positive {
-        background: #b079ff;
+        background: var(--w-axis-color);
         color: #11141a;
       }
       #w-axis-gizmo button.negative {
         background: rgba(24, 20, 34, 0.72);
-        color: #b079ff;
+        color: var(--w-axis-color);
       }
       #w-axis-gizmo button.back {
         opacity: 0.45;
@@ -260,7 +278,7 @@
         right: 0;
         bottom: 4px;
         text-align: center;
-        color: #d2b3ff;
+        color: currentColor;
         font: 700 10px/1 system-ui, sans-serif;
         letter-spacing: 0.2px;
       }
@@ -281,7 +299,44 @@
         overflow: visible;
         margin-bottom: 8px;
       }
+      #axis-list .axis-list-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
       #axis-list h4 { margin: 0 0 6px 0; font-size: 12px; font-weight: 700; letter-spacing: 0.2px; color: var(--ui-text-strong); }
+      #axis-list .axis-list-head h4 {
+        margin: 0;
+      }
+      #axis-cycle-button {
+        display: grid;
+        place-items: center;
+        width: 22px;
+        height: 22px;
+        padding: 0;
+        border: 1px solid var(--ui-border-soft);
+        border-radius: 4px;
+        background: var(--ui-bg-soft);
+        color: var(--ui-text);
+        cursor: pointer;
+        transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+      }
+      #axis-cycle-button:hover {
+        background: var(--ui-bg-hover);
+        color: var(--ui-text-strong);
+        border-color: var(--ui-border);
+      }
+      #axis-cycle-button svg {
+        width: 13px;
+        height: 13px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.9;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
       #axis-list ul {
         display: flex;
         flex-wrap: wrap;
@@ -610,7 +665,7 @@
         #github-link { display: none; }
       }
     </style>
-    <script type="module" crossorigin src="/nd-viewer/assets/index-BwcKtTPM.js"></script>
+    <script type="module" crossorigin src="/nd-viewer/assets/index-BtS4iemN.js"></script>
   </head>
   <body>
     <div id="top-left-controls">
@@ -657,6 +712,37 @@
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M4 20l4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10L4 20z"></path>
             <path d="M13.5 6.5l4 4"></path>
+          </svg>
+        </button>
+      </div>
+      <div id="transform-actions" aria-label="Transform actions">
+        <button id="transform-move-button" type="button" aria-label="Move transform" title="Move (G)">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3v18"></path>
+            <path d="M3 12h18"></path>
+            <path d="M12 3l-3 3"></path>
+            <path d="M12 3l3 3"></path>
+            <path d="M12 21l-3-3"></path>
+            <path d="M12 21l3-3"></path>
+            <path d="M3 12l3-3"></path>
+            <path d="M3 12l3 3"></path>
+            <path d="M21 12l-3-3"></path>
+            <path d="M21 12l-3 3"></path>
+          </svg>
+        </button>
+        <button id="transform-rotate-button" type="button" aria-label="Rotate transform" title="Rotate (R)">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M20 12a8 8 0 1 1-2.34-5.66"></path>
+            <path d="M20 4v5h-5"></path>
+          </svg>
+        </button>
+        <button id="transform-scale-button" type="button" aria-label="Scale transform" title="Scale (S)">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="6.5" y="6.5" width="11" height="11" rx="1.4"></rect>
+            <path d="M4 20h6"></path>
+            <path d="M14 20h6"></path>
+            <path d="M20 14v6"></path>
+            <path d="M20 4v6"></path>
           </svg>
         </button>
       </div>
@@ -738,7 +824,7 @@
     </button>
     <a
       id="github-link"
-      href="https://github.com/srdz-af/nd-viewer"
+      href="https://github.com/srdz-af/BleND"
       target="_blank"
       rel="noopener noreferrer"
     >

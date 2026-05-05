@@ -28,6 +28,9 @@ const autoRotateToggle = document.getElementById('auto-rotate-toggle') as HTMLBu
 const importJsonButton = document.getElementById('import-json-button') as HTMLButtonElement | null;
 const exportJsonButton = document.getElementById('export-json-button') as HTMLButtonElement | null;
 const editModeToggle = document.getElementById('edit-mode-toggle') as HTMLButtonElement | null;
+const transformMoveButton = document.getElementById('transform-move-button') as HTMLButtonElement | null;
+const transformRotateButton = document.getElementById('transform-rotate-button') as HTMLButtonElement | null;
+const transformScaleButton = document.getElementById('transform-scale-button') as HTMLButtonElement | null;
 const dimensionControl = document.getElementById('dimension-control') as HTMLDivElement | null;
 const dimensionValue = document.getElementById('dimension-value') as HTMLOutputElement | null;
 const dimensionDownButton = document.getElementById('dimension-down') as HTMLButtonElement | null;
@@ -97,12 +100,26 @@ const wAxisGizmoDrag = {
   planeAxis: -1,
   depthAxis: -1,
 };
+const sceneBackgroundHsl = { h: 0, s: 0, l: 0 };
+const sceneBackgroundColor = new THREE.Color();
 
 function normalizeSignedAngleDelta(value: number) {
   let delta = value;
   while (delta > Math.PI) delta -= Math.PI * 2;
   while (delta < -Math.PI) delta += Math.PI * 2;
   return delta;
+}
+
+function applySceneBackground(useEditMode: boolean) {
+  const source = useEditMode ? editBackground : baseBackground;
+  source.getHSL(sceneBackgroundHsl);
+  let hue = (sceneBackgroundHsl.h + (wGizmoAngle / (Math.PI * 2))) % 1;
+  if (hue < 0) hue += 1;
+  const saturationFloor = useEditMode ? 0.12 : 0.22;
+  const saturation = Math.max(sceneBackgroundHsl.s, saturationFloor);
+  sceneBackgroundColor.setHSL(hue, saturation, sceneBackgroundHsl.l);
+  scene.background = sceneBackgroundColor;
+  renderer.setClearColor(sceneBackgroundColor);
 }
 
 function pointerAngleInWGizmo(ev: PointerEvent) {
@@ -274,6 +291,7 @@ function initAxisGizmo() {
       rot.applyGivensLeft(wAxisGizmoDrag.planeAxis, wAxisGizmoDrag.depthAxis, delta);
       projectionDirty = true;
       wGizmoAngle = normalizeSignedAngleDelta(wGizmoAngle + delta);
+      applySceneBackground(PARAMS.editMode);
     }
   });
   wAxisGizmoEl?.addEventListener('pointerup', endWGizmoDrag);
@@ -358,6 +376,8 @@ function updateWGizmo() {
 
   const plane = currentWGizmoRotationPlane();
   const hasW = !!plane;
+  const wColor = AXIS_PALETTE[(plane?.wDim ?? 3) % AXIS_PALETTE.length];
+  wAxisGizmoEl.style.setProperty('--w-axis-color', wColor);
   wAxisGizmoEl.classList.toggle('disabled', !hasW);
   wAxisGizmoEl.title = hasW
     ? `Rotate global ${axisLabel(plane.wDim)} axis (${axisLabel(plane.planeAxis)}-${axisLabel(plane.wDim)} plane)`
@@ -793,6 +813,12 @@ function cycleAxes(step: number) {
     z: axesOrder[(axesOffset + 2) % n],
   });
 }
+
+function startTransformFromToolbar(mode: TransformMode) {
+  if (transformOp.mode !== 'none') return;
+  const fakeEvent = new PointerEvent('pointerdown', { clientX: lastPointer.x, clientY: lastPointer.y });
+  startTransform(mode, fakeEvent);
+}
 function isTextEntryTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false;
   return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
@@ -816,7 +842,7 @@ function isPlainTextEditTarget(target: EventTarget | null) {
 }
 
 function getObjectVisible(idx: number) {
-  if (idx === BASE_SELECTION) return baseVisible;
+  if (idx === BASE_SELECTION) return M > 0 && baseVisible;
   return extraInstances[idx]?.visible ?? false;
 }
 
@@ -1180,7 +1206,20 @@ function renderAxisList() {
     const active = activeDims.has(dim);
     return `<li draggable="true" data-idx="${idx}" class="${active ? 'active' : ''}" style="--axis-color:${color};border-top:3px solid ${color};">${axisLabel(dim)}</li>`;
   }).join('');
-  axisList.innerHTML = `<h4>Axis order</h4><ul>${items}</ul>`;
+  axisList.innerHTML = `
+    <div class="axis-list-head">
+      <h4>Axis order</h4>
+      <button id="axis-cycle-button" type="button" aria-label="Shift projected axes" title="Shift projected axes">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 12a8 8 0 1 0 2.2-5.5"></path>
+          <path d="M4 4v5h5"></path>
+        </svg>
+      </button>
+    </div>
+    <ul>${items}</ul>
+  `;
+  const axisCycleButton = axisList.querySelector('#axis-cycle-button') as HTMLButtonElement | null;
+  axisCycleButton?.addEventListener('click', () => cycleAxes(1));
   axisList.querySelectorAll('li').forEach(li => {
     li.addEventListener('dragstart', (ev) => {
       ev.dataTransfer?.setData('text/plain', (li as HTMLElement).dataset.idx || '');
@@ -1232,16 +1271,12 @@ function selectObject(idx: number) {
   if (selectionOutline && !PARAMS.editMode && getObjectVisible(normalizedIdx)) {
     scene.add(selectionOutline);
   }
-  if (PARAMS.editMode) {
-    scene.background = editBackground.clone();
-  } else {
-    scene.background = baseBackground.clone();
-  }
-  renderer.setClearColor(scene.background);
+  applySceneBackground(PARAMS.editMode);
   if (vertexMarker) { scene.remove(vertexMarker); vertexMarker = null; }
   if (vertexCloud) { scene.remove(vertexCloud); vertexCloud = null; }
   if (PARAMS.editMode && getObjectVisible(normalizedIdx)) updateVertexCloud(normalizedIdx);
   updateTexturePanel();
+  updateTransformActionButtons();
 }
 
 function updateSelectionOutline() {
@@ -1565,8 +1600,7 @@ function updateEditModeToggle() {
 
 function setEditMode(active: boolean) {
   PARAMS.editMode = active;
-  scene.background = PARAMS.editMode ? editBackground.clone() : baseBackground.clone();
-  renderer.setClearColor(scene.background);
+  applySceneBackground(PARAMS.editMode);
   updateEditModeToggle();
 
   selectedVertex = -1;
@@ -1577,6 +1611,23 @@ function setEditMode(active: boolean) {
     updateVertexCloud(selectedInstance);
   }
   updateSelectionOutline();
+  updateTransformActionButtons();
+}
+
+function updateTransformActionButtons() {
+  const buttons: { mode: TransformMode; el: HTMLButtonElement | null; }[] = [
+    { mode: 'move', el: transformMoveButton },
+    { mode: 'rotate', el: transformRotateButton },
+    { mode: 'scale', el: transformScaleButton },
+  ];
+  const hasTarget = getObjectVisible(selectedInstance);
+  const busy = transformOp.mode !== 'none';
+
+  for (const entry of buttons) {
+    if (!entry.el) continue;
+    entry.el.classList.toggle('active', transformOp.mode === entry.mode);
+    entry.el.disabled = !hasTarget || busy;
+  }
 }
 
 function applyProjectionMatrix() {
@@ -1624,12 +1675,7 @@ function applySliceFilter() {
     inst.renderer.filterEdgesByDimRange(inst.X, N, inst.M, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
   });
   updateSelectionOutline();
-  if (PARAMS.editMode) {
-    scene.background = editBackground.clone();
-  } else {
-    scene.background = baseBackground.clone();
-  }
-  renderer.setClearColor(scene.background);
+  applySceneBackground(PARAMS.editMode);
   if (PARAMS.editMode) {
     updateVertexCloud(selectedInstance);
   } else {
@@ -1806,8 +1852,8 @@ function clearExtraInstances() {
   selectedInstance = NO_SELECTION;
 }
 
-function addInstanceAt(offset: THREE.Vector3) {
-  pushUndoSnapshot();
+function addInstanceAt(offset: THREE.Vector3, recordUndo = true) {
+  if (recordUndo) pushUndoSnapshot();
   let data: { verts: Float32Array; edges: Uint32Array; V: number; kind: PrimitiveKind; axisMap: AxisMap; originalN: number };
   if (M > 0 && baseVisible) {
     data = {
@@ -2071,8 +2117,7 @@ applySliceFilter();
 updateAxisLegend();
 renderAxisList();
 updateObjectList();
-scene.background = PARAMS.editMode ? editBackground.clone() : baseBackground.clone();
-renderer.setClearColor(scene.background);
+applySceneBackground(PARAMS.editMode);
 updateDimensionControl();
 updateEditModeToggle();
 bindTextureControls();
@@ -2105,6 +2150,11 @@ if (viewToggle) {
   syncButtons();
 }
 
+if (M === 0 && extraInstances.length === 0) {
+  addInstanceAt(new THREE.Vector3(0, 0, 0), false);
+  selectObject(0);
+}
+
 if (fileInput) {
   fileInput.addEventListener('change', () => {
     const file = fileInput.files?.[0];
@@ -2115,6 +2165,9 @@ if (fileInput) {
 importJsonButton?.addEventListener('click', () => fileInput?.click());
 exportJsonButton?.addEventListener('click', () => exportProjectionJSON());
 editModeToggle?.addEventListener('click', () => setEditMode(!PARAMS.editMode));
+transformMoveButton?.addEventListener('click', () => startTransformFromToolbar('move'));
+transformRotateButton?.addEventListener('click', () => startTransformFromToolbar('rotate'));
+transformScaleButton?.addEventListener('click', () => startTransformFromToolbar('scale'));
 dimensionDownButton?.addEventListener('click', () => setNewPrimitiveDimension(PARAMS.N - 1));
 dimensionUpButton?.addEventListener('click', () => setNewPrimitiveDimension(PARAMS.N + 1));
 dimensionControl?.addEventListener('keydown', ev => {
@@ -2130,6 +2183,7 @@ dimensionControl?.addEventListener('keydown', ev => {
 
 autoRotateToggle?.addEventListener('click', () => setAutoRotation(!PARAMS.autoSpin));
 updateAutoRotateToggle();
+updateTransformActionButtons();
 
 // --- Animation ---
 const clock = new THREE.Clock();
@@ -2725,6 +2779,7 @@ function animate() {
   projectAndRenderAll();
 
   controls.update();
+  updateTransformActionButtons();
   updateAxisGizmo();
   renderer.render(scene, camera);
   requestAnimationFrame(animate);
