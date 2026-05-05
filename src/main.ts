@@ -31,7 +31,6 @@ const editModeToggle = document.getElementById('edit-mode-toggle') as HTMLButton
 const transformMoveButton = document.getElementById('transform-move-button') as HTMLButtonElement | null;
 const transformRotateButton = document.getElementById('transform-rotate-button') as HTMLButtonElement | null;
 const transformScaleButton = document.getElementById('transform-scale-button') as HTMLButtonElement | null;
-const paneToggleButton = document.getElementById('pane-toggle') as HTMLButtonElement | null;
 const dimensionControl = document.getElementById('dimension-control') as HTMLDivElement | null;
 const dimensionValue = document.getElementById('dimension-value') as HTMLOutputElement | null;
 const dimensionDownButton = document.getElementById('dimension-down') as HTMLButtonElement | null;
@@ -46,6 +45,7 @@ const textureRoughnessInput = document.getElementById('texture-roughness') as HT
 const textureRoughnessValue = document.getElementById('texture-roughness-value') as HTMLOutputElement | null;
 const textureAlphaInput = document.getElementById('texture-alpha') as HTMLInputElement | null;
 const textureAlphaValue = document.getElementById('texture-alpha-value') as HTMLOutputElement | null;
+const getPaneToggleButton = () => document.getElementById('pane-toggle') as HTMLButtonElement | null;
 
 // --- Three.js setup ---
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -104,6 +104,7 @@ const wAxisGizmoDrag = {
 };
 const sceneBackgroundHsl = { h: 0, s: 0, l: 0 };
 const sceneBackgroundColor = new THREE.Color();
+const backgroundBlueHue = 0.61;
 
 function normalizeSignedAngleDelta(value: number) {
   let delta = value;
@@ -115,12 +116,10 @@ function normalizeSignedAngleDelta(value: number) {
 function applySceneBackground(useEditMode: boolean) {
   const source = useEditMode ? editBackground : baseBackground;
   source.getHSL(sceneBackgroundHsl);
-  let hue = (sceneBackgroundHsl.h + (wGizmoAngle / (Math.PI * 2))) % 1;
-  if (hue < 0) hue += 1;
   const saturationFloor = useEditMode ? 0.02 : 0.03;
   const saturationScale = useEditMode ? 0.22 : 0.26;
   const saturation = Math.max(sceneBackgroundHsl.s * saturationScale, saturationFloor);
-  sceneBackgroundColor.setHSL(hue, saturation, sceneBackgroundHsl.l);
+  sceneBackgroundColor.setHSL(backgroundBlueHue, saturation, sceneBackgroundHsl.l);
   scene.background = sceneBackgroundColor;
   renderer.setClearColor(sceneBackgroundColor);
 }
@@ -564,7 +563,7 @@ type AxisMap = number[];
 type SurfaceState = SurfaceMaterial;
 const DEFAULT_SURFACE: SurfaceState = {
   color: 0xbfc7d5,
-  metalness: 1,
+  metalness: 0.2,
   roughness: 0.05,
   alpha: 1,
 };
@@ -1221,17 +1220,30 @@ function renderAxisList() {
   axisList.innerHTML = `
     <div class="axis-list-head">
       <h4>Axis order</h4>
-      <button id="axis-cycle-button" type="button" aria-label="Shift projected axes" title="Shift projected axes">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M4 12a8 8 0 1 0 2.2-5.5"></path>
-          <path d="M4 4v5h5"></path>
-        </svg>
-      </button>
+      <div class="axis-list-actions">
+        <button id="axis-cycle-button" type="button" aria-label="Shift projected axes" title="Shift projected axes">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 12a8 8 0 1 0 2.2-5.5"></path>
+            <path d="M4 4v5h5"></path>
+          </svg>
+        </button>
+        <button id="pane-toggle" type="button" aria-label="Hide panel details" aria-expanded="true" aria-controls="pane" title="Hide panel details">
+          <svg class="hide-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M15 5l-7 7 7 7"></path>
+          </svg>
+          <svg class="show-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M9 5l7 7-7 7"></path>
+          </svg>
+        </button>
+      </div>
     </div>
     <ul>${items}</ul>
   `;
   const axisCycleButton = axisList.querySelector('#axis-cycle-button') as HTMLButtonElement | null;
   axisCycleButton?.addEventListener('click', () => cycleAxes(1));
+  const paneToggleButton = axisList.querySelector('#pane-toggle') as HTMLButtonElement | null;
+  paneToggleButton?.addEventListener('click', () => setPaneCollapsed(!paneCollapsed));
+  setPaneCollapsed(paneCollapsed);
   axisList.querySelectorAll('li').forEach(li => {
     li.addEventListener('dragstart', (ev) => {
       ev.dataTransfer?.setData('text/plain', (li as HTMLElement).dataset.idx || '');
@@ -1645,6 +1657,7 @@ function updateTransformActionButtons() {
 function setPaneCollapsed(collapsed: boolean) {
   paneCollapsed = collapsed;
   document.body.classList.toggle('pane-collapsed', paneCollapsed);
+  const paneToggleButton = getPaneToggleButton();
   if (paneToggleButton) {
     paneToggleButton.setAttribute('aria-expanded', String(!paneCollapsed));
     paneToggleButton.setAttribute('aria-label', paneCollapsed ? 'Show panel details' : 'Hide panel details');
@@ -2201,7 +2214,6 @@ if (fileInput) {
 importJsonButton?.addEventListener('click', () => fileInput?.click());
 exportJsonButton?.addEventListener('click', () => exportProjectionJSON());
 editModeToggle?.addEventListener('click', () => setEditMode(!PARAMS.editMode));
-paneToggleButton?.addEventListener('click', () => setPaneCollapsed(!paneCollapsed));
 [
   { el: transformMoveButton, mode: 'move' as TransformMode },
   { el: transformRotateButton, mode: 'rotate' as TransformMode },

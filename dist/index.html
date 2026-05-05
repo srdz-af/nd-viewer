@@ -68,26 +68,9 @@
         overflow: hidden;
         text-overflow: ellipsis;
       }
-      #pane-toggle {
-        position: absolute;
-        top: 12px;
-        right: 12px;
-        z-index: 20;
-        display: grid;
-        place-items: center;
-        width: 32px;
-        height: 32px;
-        padding: 0;
-        border-radius: 6px;
-        border: 1px solid var(--ui-border);
-        background: var(--ui-bg);
-        color: var(--ui-text);
-        cursor: pointer;
-        transition: background 120ms ease, border-color 120ms ease;
-      }
       #pane-toggle svg {
-        width: 16px;
-        height: 16px;
+        width: 13px;
+        height: 13px;
         fill: none;
         stroke: currentColor;
         stroke-width: 1.9;
@@ -97,8 +80,6 @@
       #pane-toggle .show-icon { display: none; }
       body.pane-collapsed #pane-toggle .show-icon { display: block; }
       body.pane-collapsed #pane-toggle .hide-icon { display: none; }
-      #pane-toggle:hover { background: var(--ui-bg-hover); border-color: var(--ui-border); color: var(--ui-text-strong); }
-      #pane-toggle:active { transform: translateY(1px); }
       body.pane-collapsed #object-list,
       body.pane-collapsed #dimension-control,
       body.pane-collapsed #texture-panel {
@@ -350,11 +331,17 @@
         gap: 8px;
         margin-bottom: 6px;
       }
+      #axis-list .axis-list-actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+      }
       #axis-list h4 { margin: 0 0 6px 0; font-size: 12px; font-weight: 700; letter-spacing: 0.2px; color: var(--ui-text-strong); }
       #axis-list .axis-list-head h4 {
         margin: 0;
       }
-      #axis-cycle-button {
+      #axis-cycle-button,
+      #pane-toggle {
         display: grid;
         place-items: center;
         width: 22px;
@@ -367,12 +354,14 @@
         cursor: pointer;
         transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
       }
-      #axis-cycle-button:hover {
+      #axis-cycle-button:hover,
+      #pane-toggle:hover {
         background: var(--ui-bg-hover);
         color: var(--ui-text-strong);
         border-color: var(--ui-border);
       }
-      #axis-cycle-button svg {
+      #axis-cycle-button svg,
+      #pane-toggle svg {
         width: 13px;
         height: 13px;
         fill: none;
@@ -541,7 +530,7 @@
       }
       #texture-controls .texture-row {
         display: grid;
-        grid-template-columns: 82px 1fr auto;
+        grid-template-columns: 82px minmax(0, 1fr) 66px;
         align-items: center;
         gap: 8px;
       }
@@ -561,10 +550,19 @@
         accent-color: var(--ui-blue-hover);
       }
       #texture-controls output {
-        width: 36px;
+        display: block;
+        width: 100%;
+        min-width: 0;
         text-align: right;
         color: var(--ui-muted);
         font-variant-numeric: tabular-nums;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: clip;
+      }
+      #texture-base-color-value {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+        font-size: 11px;
       }
       #object-list table { width: 100%; border-collapse: collapse; table-layout: fixed; }
       #object-list th {
@@ -706,16 +704,10 @@
         border: 1px solid var(--ui-border);
       }
       @media (max-width: 920px) {
-        #pane-toggle {
-          top: calc(8px + var(--safe-top));
-          right: calc(8px + var(--safe-right));
-          width: 34px;
-          height: 34px;
-        }
         #top-left-controls {
           top: calc(8px + var(--safe-top));
           left: calc(8px + var(--safe-left));
-          right: calc(48px + var(--safe-right));
+          right: calc(8px + var(--safe-right));
           max-width: none;
         }
         #pane {
@@ -762,10 +754,6 @@
         }
       }
       @media (max-width: 680px) {
-        #pane-toggle {
-          width: 36px;
-          height: 36px;
-        }
         #top-left-controls {
           gap: 2px;
           padding: 3px;
@@ -814,7 +802,7 @@
         }
       }
     </style>
-    <script type="module" crossorigin src="/BleND/assets/index-BLut87or.js"></script>
+    <script type="module" crossorigin src="/BleND/assets/index-jqvGlJm1.js"></script>
   </head>
   <body>
     <div id="top-left-controls">
@@ -896,14 +884,6 @@
         </button>
       </div>
     </div>
-    <button id="pane-toggle" type="button" aria-label="Hide panel details" aria-expanded="true" aria-controls="pane" title="Hide panel details">
-      <svg class="hide-icon" viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M15 5l-7 7 7 7"></path>
-      </svg>
-      <svg class="show-icon" viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M9 5l7 7-7 7"></path>
-      </svg>
-    </button>
     <div id="pane">
       <div id="gizmo-dock">
         <div id="axis-gizmo" aria-label="View axis gizmo"></div>
@@ -950,8 +930,8 @@
           </div>
           <div class="texture-row">
             <label for="texture-metallic">Metallic</label>
-            <input id="texture-metallic" type="range" min="0" max="1" step="0.001" value="1" />
-            <output id="texture-metallic-value">1.000</output>
+            <input id="texture-metallic" type="range" min="0" max="1" step="0.001" value="0.2" />
+            <output id="texture-metallic-value">0.200</output>
           </div>
           <div class="texture-row">
             <label for="texture-roughness">Roughness</label>
