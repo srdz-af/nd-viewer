@@ -77,6 +77,13 @@ X: delete selected object (with confirm)
 Right click: context menu (add/transform/delete depending selection)
 ```
 
+Mobile transforms:
+
+```text
+Touch and drag the Move / Rotate / Scale toolbar buttons to transform the selected object
+Release touch to confirm the transform
+```
+
 While a transform is active:
 
 ```text
