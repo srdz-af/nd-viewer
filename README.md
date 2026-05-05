@@ -133,10 +133,3 @@ Accepted import format:
   "adjacency": { "0": [1], "1": [0] }
 }
 ```
-
-Notes:
-- `points` are required and can be arrays or keyed objects (`d0`, `d1`, ...).
-- `edges` and `adjacency` are optional.
-- Imported datasets must be between **3 and 8 dimensions** to visualize in the app.
-- Import replaces the base object and clears extra instances.
-- Export writes geometry only (textures/material settings are not serialized).
