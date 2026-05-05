@@ -25,6 +25,9 @@ const wAxisGizmoNegEl = document.getElementById('w-axis-gizmo-neg') as HTMLButto
 const wAxisGizmoPosEl = document.getElementById('w-axis-gizmo-pos') as HTMLButtonElement | null;
 const wAxisGizmoLabelEl = document.getElementById('w-axis-gizmo-label') as HTMLSpanElement | null;
 const autoRotateToggle = document.getElementById('auto-rotate-toggle') as HTMLButtonElement | null;
+const helpToggleButton = document.getElementById('help-toggle') as HTMLButtonElement | null;
+const helpOverlay = document.getElementById('help-overlay') as HTMLDivElement | null;
+const helpCloseButton = document.getElementById('help-close') as HTMLButtonElement | null;
 const importJsonButton = document.getElementById('import-json-button') as HTMLButtonElement | null;
 const exportJsonButton = document.getElementById('export-json-button') as HTMLButtonElement | null;
 const editModeToggle = document.getElementById('edit-mode-toggle') as HTMLButtonElement | null;
@@ -46,6 +49,21 @@ const textureRoughnessValue = document.getElementById('texture-roughness-value')
 const textureAlphaInput = document.getElementById('texture-alpha') as HTMLInputElement | null;
 const textureAlphaValue = document.getElementById('texture-alpha-value') as HTMLOutputElement | null;
 const getPaneToggleButton = () => document.getElementById('pane-toggle') as HTMLButtonElement | null;
+let helpLastFocusedEl: HTMLElement | null = null;
+
+function setHelpOverlayOpen(open: boolean) {
+  if (!helpOverlay) return;
+  helpOverlay.classList.toggle('open', open);
+  helpOverlay.setAttribute('aria-hidden', open ? 'false' : 'true');
+  if (open) {
+    helpLastFocusedEl = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    helpCloseButton?.focus();
+    return;
+  }
+  if (helpLastFocusedEl && document.contains(helpLastFocusedEl)) {
+    helpLastFocusedEl.focus();
+  }
+}
 
 // --- Three.js setup ---
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -2222,6 +2240,14 @@ if (fileInput) {
 importJsonButton?.addEventListener('click', () => fileInput?.click());
 exportJsonButton?.addEventListener('click', () => exportProjectionJSON());
 editModeToggle?.addEventListener('click', () => setEditMode(!PARAMS.editMode));
+helpToggleButton?.addEventListener('click', ev => {
+  ev.stopPropagation();
+  setHelpOverlayOpen(true);
+});
+helpCloseButton?.addEventListener('click', () => setHelpOverlayOpen(false));
+helpOverlay?.addEventListener('click', ev => {
+  if (ev.target === helpOverlay) setHelpOverlayOpen(false);
+});
 [
   { el: transformMoveButton, mode: 'move' as TransformMode },
   { el: transformRotateButton, mode: 'rotate' as TransformMode },
@@ -2795,6 +2821,13 @@ window.addEventListener('pointercancel', (ev) => {
 });
 window.addEventListener('blur', () => {
   if (axisDrag.active) endAxisShiftDrag();
+});
+
+window.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Escape') return;
+  if (!helpOverlay?.classList.contains('open')) return;
+  ev.preventDefault();
+  setHelpOverlayOpen(false);
 });
 
 window.addEventListener('keydown', (ev) => {

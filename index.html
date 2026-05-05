@@ -690,31 +690,114 @@
       #auto-rotate-toggle .stop-icon { display: none; }
       #auto-rotate-toggle.active .play-icon { display: none; }
       #auto-rotate-toggle.active .stop-icon { display: block; }
-      #github-link {
+      #quick-links {
         position: absolute;
         right: 68px;
         bottom: 12px;
         z-index: 20;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      #quick-links a,
+      #quick-links button {
         display: grid;
         place-items: center;
         width: 44px;
         height: 44px;
+        padding: 0;
         background: var(--ui-bg);
+        color: var(--ui-text);
         border-radius: 50%;
-        text-decoration: none;
         border: 1px solid var(--ui-border);
         box-shadow: var(--ui-shadow);
+        text-decoration: none;
+        cursor: pointer;
         transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
       }
-      #github-link:hover {
+      #quick-links a:hover,
+      #quick-links button:hover {
         background: var(--ui-bg-hover);
         border-color: var(--ui-border);
+        color: var(--ui-text-strong);
         transform: translateY(-1px);
       }
       #github-link img {
         display: block;
         width: 20px;
         height: 20px;
+      }
+      #help-toggle {
+        font: 700 22px/1 ui-sans-serif, system-ui, -apple-system, sans-serif;
+      }
+      #help-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 60;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding-top: calc(18px + var(--safe-top));
+        padding-right: calc(18px + var(--safe-right));
+        padding-bottom: calc(18px + var(--safe-bottom));
+        padding-left: calc(18px + var(--safe-left));
+        background: rgba(8, 11, 17, 0.68);
+        backdrop-filter: blur(3px);
+      }
+      #help-overlay.open {
+        display: flex;
+      }
+      #help-dialog {
+        box-sizing: border-box;
+        width: min(560px, calc(100vw - 24px - var(--safe-left) - var(--safe-right)));
+        max-height: calc(100vh - 30px - var(--safe-top) - var(--safe-bottom));
+        max-height: calc(100dvh - 30px - var(--safe-top) - var(--safe-bottom));
+        overflow-y: auto;
+        border: 1px solid var(--ui-border);
+        border-radius: 10px;
+        background: var(--ui-bg);
+        box-shadow: var(--ui-shadow);
+        padding: 14px 14px 12px;
+      }
+      #help-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 10px;
+      }
+      #help-title {
+        margin: 0;
+        font: 700 17px/1.2 ui-sans-serif, system-ui, -apple-system, sans-serif;
+        color: var(--ui-text-strong);
+      }
+      #help-close {
+        display: grid;
+        place-items: center;
+        width: 32px;
+        height: 32px;
+        border: 1px solid var(--ui-border);
+        border-radius: 50%;
+        background: var(--ui-bg-soft);
+        color: var(--ui-text);
+        font: 600 18px/1 ui-sans-serif, system-ui, -apple-system, sans-serif;
+        cursor: pointer;
+      }
+      #help-close:hover {
+        background: var(--ui-bg-hover);
+        color: var(--ui-text-strong);
+      }
+      #help-content {
+        margin: 0;
+        padding-left: 18px;
+        color: var(--ui-text);
+        font: 13px/1.42 ui-sans-serif, system-ui, -apple-system, sans-serif;
+      }
+      #help-content li {
+        margin-bottom: 6px;
+      }
+      #help-content strong {
+        color: var(--ui-text-strong);
       }
       @media (max-width: 920px) {
         #top-left-controls {
@@ -755,15 +838,26 @@
           width: 18px;
           height: 18px;
         }
+        #quick-links {
+          right: calc(52px + var(--safe-right));
+          bottom: calc(8px + var(--safe-bottom));
+          gap: 6px;
+        }
+        #quick-links a,
+        #quick-links button {
+          width: 40px;
+          height: 40px;
+        }
+        #github-link img {
+          width: 18px;
+          height: 18px;
+        }
         .credit {
           left: calc(8px + var(--safe-left));
-          right: calc(56px + var(--safe-right));
+          right: calc(142px + var(--safe-right));
           bottom: calc(8px + var(--safe-bottom));
           min-width: 0;
           max-width: none;
-        }
-        #github-link {
-          display: none;
         }
       }
       @media (max-width: 680px) {
@@ -812,6 +906,14 @@
         #texture-controls output {
           width: 100%;
           text-align: left;
+        }
+        #help-dialog {
+          width: calc(100vw - 16px - var(--safe-left) - var(--safe-right));
+          padding: 12px;
+          border-radius: 9px;
+        }
+        #help-content {
+          font-size: 12.5px;
         }
       }
     </style>
@@ -971,16 +1073,37 @@
         <path d="M7 7h10v10H7z"></path>
       </svg>
     </button>
-    <a
-      id="github-link"
-      href="https://github.com/srdz-af/BleND"
-      target="_blank"
-      rel="noopener noreferrer"
-      aria-label="GitHub repository"
-      title="GitHub repository"
-    >
-      <img src="./github-white-icon.webp" alt="GitHub" />
-    </a>
+    <div id="quick-links">
+      <a
+        id="github-link"
+        href="https://github.com/srdz-af/BleND"
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="GitHub repository"
+        title="GitHub repository"
+      >
+        <img src="./github-white-icon.webp" alt="GitHub" />
+      </a>
+      <button id="help-toggle" type="button" aria-label="Open controls help" title="Controls help">?</button>
+    </div>
+    <div id="help-overlay" role="dialog" aria-modal="true" aria-labelledby="help-title" aria-hidden="true">
+      <section id="help-dialog">
+        <div id="help-header">
+          <h2 id="help-title">Controls</h2>
+          <button id="help-close" type="button" aria-label="Close controls help" title="Close">&times;</button>
+        </div>
+        <ul id="help-content">
+          <li><strong>Orbit:</strong> left drag. <strong>Zoom:</strong> wheel.</li>
+          <li><strong>Switch projected axes:</strong> middle drag or click axis cycle button.</li>
+          <li><strong>Add object:</strong> <code>Shift + A</code>.</li>
+          <li><strong>Transform selected object:</strong> <code>G</code> move, <code>R</code> rotate, <code>S</code> scale.</li>
+          <li><strong>Delete selected object:</strong> <code>X</code>.</li>
+          <li><strong>Edit mode:</strong> <code>Tab</code>. Select vertex with left click.</li>
+          <li><strong>Undo/Redo:</strong> <code>Ctrl/Cmd + Z</code>, <code>Ctrl/Cmd + Y</code>.</li>
+          <li><strong>Close this panel:</strong> close button, tap outside, or <code>Esc</code>.</li>
+        </ul>
+      </section>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
