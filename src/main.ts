@@ -575,8 +575,11 @@ const objList = document.getElementById('object-list') as HTMLDivElement | null;
 const axisLegend = document.getElementById('axis-legend') as HTMLDivElement | null;
 const axisList = document.getElementById('axis-list') as HTMLDivElement | null;
 const statusBar = document.getElementById('status-bar') as HTMLDivElement | null;
+const PANE_COLLAPSE_BREAKPOINT = 920;
+const isMobilePaneViewport = () => window.innerWidth <= PANE_COLLAPSE_BREAKPOINT;
 let lastPointer = { x: window.innerWidth - 180, y: window.innerHeight - 80 };
-let paneCollapsed = false;
+let paneCollapsed = isMobilePaneViewport();
+let paneViewportWasMobile = isMobilePaneViewport();
 type AxisMap = number[];
 type SurfaceState = SurfaceMaterial;
 const DEFAULT_SURFACE: SurfaceState = {
@@ -1691,6 +1694,13 @@ function setPaneCollapsed(collapsed: boolean) {
   }
 }
 
+function syncPaneCollapsedToViewport(force = false) {
+  const isMobile = isMobilePaneViewport();
+  if (!force && isMobile === paneViewportWasMobile) return;
+  paneViewportWasMobile = isMobile;
+  setPaneCollapsed(isMobile);
+}
+
 function applyProjectionMatrix() {
   if (PARAMS.projection === 'Canonical' || M === 0) {
     const nVis = visibleDims();
@@ -2271,7 +2281,7 @@ dimensionControl?.addEventListener('keydown', ev => {
 autoRotateToggle?.addEventListener('click', () => setAutoRotation(!PARAMS.autoSpin));
 updateAutoRotateToggle();
 updateTransformActionButtons();
-setPaneCollapsed(false);
+syncPaneCollapsedToViewport(true);
 
 function applyTransformPointer(clientX: number, clientY: number) {
   if (transformOp.mode === 'none') return;
@@ -3027,5 +3037,6 @@ window.addEventListener('resize', () => {
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   renderer.setSize(w, h);
+  syncPaneCollapsedToViewport();
   updateTexturePanel();
 });
