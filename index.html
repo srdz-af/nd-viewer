@@ -5,6 +5,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/x-icon" href="./favicon.ico" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded&icon_names=chevron_left,chevron_right,edit,file_download,file_upload,grid_on,help,keyboard_arrow_down,keyboard_arrow_up,opacity,open_with,play_arrow,radio_button_checked,refresh,stop,sync_alt,view_in_ar,visibility,visibility_off,vrpano,zoom_out_map&display=block" />
     <title>BleND</title>
     <style>
       :root {
@@ -25,6 +26,26 @@
         --safe-bottom: env(safe-area-inset-bottom, 0px);
         --safe-left: env(safe-area-inset-left, 0px);
       }
+      .material-symbols-rounded {
+        font-family: "Material Symbols Rounded";
+        font-weight: normal;
+        font-style: normal;
+        font-size: 24px;
+        line-height: 1;
+        letter-spacing: normal;
+        text-transform: none;
+        display: inline-block;
+        white-space: nowrap;
+        word-wrap: normal;
+        direction: ltr;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+        font-variation-settings:
+          "FILL" 0,
+          "wght" 500,
+          "GRAD" 0,
+          "opsz" 24;
+      }
       html, body, #app { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:#0f1117; color:var(--ui-text); }
       #pane {
         position: absolute;
@@ -43,6 +64,18 @@
         flex-direction: column;
         gap: 8px;
         align-items: center;
+      }
+      #extra-axis-gizmos {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        align-items: center;
+        max-height: calc(100vh - 24px);
+        max-height: calc(100dvh - 24px);
+        overflow-y: auto;
+        overflow-x: visible;
+        overscroll-behavior: contain;
+        padding-right: 2px;
       }
       #axis-list,
       #object-list,
@@ -67,15 +100,6 @@
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-      }
-      #pane-toggle svg {
-        width: 13px;
-        height: 13px;
-        fill: none;
-        stroke: currentColor;
-        stroke-width: 1.9;
-        stroke-linecap: round;
-        stroke-linejoin: round;
       }
       #pane-toggle .show-icon { display: none; }
       body.pane-collapsed #pane-toggle .show-icon { display: block; }
@@ -150,25 +174,10 @@
         opacity: 0.45;
         cursor: default;
       }
-      #view-toggle svg,
-      #scene-actions svg,
-      #transform-actions svg {
-        width: 16px;
-        height: 16px;
-        fill: none;
-        stroke: currentColor;
-        stroke-width: 1.8;
-        stroke-linecap: round;
-        stroke-linejoin: round;
-      }
-      #view-toggle .icon-fill {
-        fill: currentColor;
-        stroke: none;
-      }
-      #view-toggle .icon-soft-fill {
-        fill: currentColor;
-        opacity: 0.36;
-        stroke: none;
+      #view-toggle .material-symbols-rounded,
+      #scene-actions .material-symbols-rounded,
+      #transform-actions .material-symbols-rounded {
+        font-size: 18px;
       }
       #axis-gizmo {
         position: relative;
@@ -219,8 +228,8 @@
         filter: brightness(1.18);
         transform: scale(1.08);
       }
-      #w-axis-gizmo {
-        --w-axis-color: #9b59b6;
+      .extra-axis-gizmo {
+        --extra-axis-color: #9b59b6;
         position: relative;
         width: 86px;
         height: 86px;
@@ -228,46 +237,46 @@
         border-radius: 0;
         background: transparent;
         box-shadow: none;
-        color: var(--w-axis-color);
+        color: var(--extra-axis-color);
         cursor: grab;
         touch-action: none;
         user-select: none;
         transition: opacity 120ms ease;
       }
-      #w-axis-gizmo.dragging {
+      .extra-axis-gizmo.dragging {
         cursor: grabbing;
       }
-      #w-axis-gizmo svg {
+      .extra-axis-gizmo svg {
         position: absolute;
         inset: 0;
         width: 100%;
         height: 100%;
       }
-      #w-axis-gizmo .ring {
+      .extra-axis-gizmo .ring {
         fill: none;
         stroke: currentColor;
         opacity: 0.28;
         stroke-width: 1.4;
       }
-      #w-axis-gizmo line {
+      .extra-axis-gizmo line {
         stroke: currentColor;
         stroke-width: 2.4;
         opacity: 0.9;
         stroke-linecap: round;
       }
-      #w-axis-gizmo:hover:not(.disabled) .ring {
+      .extra-axis-gizmo:hover .ring {
         opacity: 0.42;
       }
-      #w-axis-gizmo:hover:not(.disabled) line {
+      .extra-axis-gizmo:hover line {
         opacity: 1;
       }
-      #w-axis-gizmo.dragging .ring {
+      .extra-axis-gizmo.dragging .ring {
         opacity: 0.52;
       }
-      #w-axis-gizmo.dragging line {
+      .extra-axis-gizmo.dragging line {
         opacity: 1;
       }
-      #w-axis-gizmo button {
+      .extra-axis-gizmo button {
         position: absolute;
         display: grid;
         place-items: center;
@@ -276,28 +285,108 @@
         margin: -10px 0 0 -10px;
         padding: 0;
         border-radius: 50%;
-        border: 2px solid var(--w-axis-color);
+        border: 2px solid var(--extra-axis-color);
         box-shadow: var(--ui-shadow);
         font: 700 9px/1 system-ui, sans-serif;
-        color: var(--w-axis-color);
+        color: var(--extra-axis-color);
         pointer-events: auto;
       }
-      #w-axis-gizmo button.positive {
-        background: var(--w-axis-color);
+      .extra-axis-gizmo button.positive {
+        background: var(--extra-axis-color);
         color: #11141a;
       }
-      #w-axis-gizmo button.negative {
+      .extra-axis-gizmo button.negative {
         background: rgba(24, 20, 34, 0.72);
-        color: var(--w-axis-color);
+        color: var(--extra-axis-color);
       }
-      #w-axis-gizmo button.back {
+      .extra-axis-gizmo button.back {
         opacity: 0.45;
       }
-      #w-axis-gizmo button:hover {
+      .extra-axis-gizmo button:hover {
         filter: brightness(1.16);
         transform: scale(1.06);
       }
-      #w-axis-gizmo .w-axis-label {
+      .extra-axis-gizmo button.auto-toggle {
+        left: auto;
+        top: 0;
+        right: 0;
+        margin: 0;
+        width: 17px;
+        height: 17px;
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 0;
+        appearance: none;
+        -webkit-appearance: none;
+        overflow: hidden;
+        border-radius: 50%;
+        border-width: 1px;
+        border-color: var(--extra-axis-color);
+        background: #171c25;
+        color: var(--extra-axis-color);
+        font: 700 8px/1 system-ui, sans-serif;
+        transform: none;
+        z-index: 4;
+      }
+      .extra-axis-gizmo button.auto-toggle:hover {
+        transform: none;
+        filter: brightness(1.2);
+      }
+      .extra-axis-gizmo button.auto-toggle .material-symbols-rounded {
+        font-size: 12px;
+        line-height: 1;
+      }
+      .extra-axis-gizmo button.auto-toggle .stop-icon {
+        display: none;
+      }
+      .extra-axis-gizmo button.auto-toggle.active {
+        background: var(--extra-axis-color);
+        border-color: var(--extra-axis-color);
+        color: #10141a;
+      }
+      .extra-axis-gizmo button.auto-toggle.active .play-icon {
+        display: none;
+      }
+      .extra-axis-gizmo button.auto-toggle.active .stop-icon {
+        display: block;
+      }
+      .extra-axis-gizmo button.perspective-toggle {
+        left: 0;
+        top: 0;
+        margin: 0;
+        width: 17px;
+        height: 17px;
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 0;
+        appearance: none;
+        -webkit-appearance: none;
+        overflow: hidden;
+        border-radius: 50%;
+        border-width: 1px;
+        border-color: var(--extra-axis-color);
+        background: #171c25;
+        color: var(--extra-axis-color);
+        transform: none;
+        z-index: 4;
+      }
+      .extra-axis-gizmo button.perspective-toggle:hover {
+        transform: none;
+        filter: brightness(1.2);
+      }
+      .extra-axis-gizmo button.perspective-toggle .material-symbols-rounded {
+        font-size: 12px;
+        line-height: 1;
+      }
+      .extra-axis-gizmo button.perspective-toggle.active {
+        background: var(--extra-axis-color);
+        color: #10141a;
+      }
+      .extra-axis-gizmo .axis-label {
         position: absolute;
         left: 0;
         right: 0;
@@ -306,13 +395,6 @@
         color: currentColor;
         font: 700 10px/1 system-ui, sans-serif;
         letter-spacing: 0.2px;
-      }
-      #w-axis-gizmo.disabled {
-        opacity: 0.35;
-        cursor: default;
-      }
-      #w-axis-gizmo.disabled button {
-        pointer-events: none;
       }
       #axis-list {
         background: transparent;
@@ -364,15 +446,9 @@
         color: var(--ui-text-strong);
         border-color: var(--ui-border);
       }
-      #axis-cycle-button svg,
-      #pane-toggle svg {
-        width: 13px;
-        height: 13px;
-        fill: none;
-        stroke: currentColor;
-        stroke-width: 1.9;
-        stroke-linecap: round;
-        stroke-linejoin: round;
+      #axis-cycle-button .material-symbols-rounded,
+      #pane-toggle .material-symbols-rounded {
+        font-size: 15px;
       }
       #axis-list ul {
         display: flex;
@@ -407,6 +483,9 @@
         border-color: var(--axis-color);
         color: var(--axis-color);
         box-shadow: inset 0 0 0 1px var(--axis-color);
+      }
+      #axis-list li.has-gizmo {
+        box-shadow: inset 0 -2px 0 0 var(--axis-color);
       }
       #axis-list li.axis-drop-placeholder {
         border: 1px dashed var(--ui-border);
@@ -525,14 +604,8 @@
         cursor: not-allowed;
         opacity: 0.36;
       }
-      #dimension-control button svg {
-        width: 14px;
-        height: 14px;
-        fill: none;
-        stroke: currentColor;
-        stroke-width: 2;
-        stroke-linecap: round;
-        stroke-linejoin: round;
+      #dimension-control button .material-symbols-rounded {
+        font-size: 16px;
       }
       #dimension-value {
         box-sizing: border-box;
@@ -660,7 +733,7 @@
         cursor: pointer;
       }
       #object-list .object-eye:hover { background: var(--ui-bg-hover); border-color: var(--ui-border); color: var(--ui-text-strong); }
-      #object-list .object-eye svg { width: 15px; height: 15px; stroke: currentColor; }
+      #object-list .object-eye .material-symbols-rounded { font-size: 16px; }
       #object-list .object-name {
         box-sizing: border-box;
         display: block;
@@ -727,45 +800,9 @@
         transition: opacity 80ms ease;
       }
       #tooltip.visible { opacity: 1; }
-      #auto-rotate-toggle {
-        position: absolute;
-        right: 12px;
-        bottom: 12px;
-        z-index: 20;
-        display: grid;
-        place-items: center;
-        width: 44px;
-        height: 44px;
-        border: 1px solid var(--ui-border);
-        border-radius: 50%;
-        background: var(--ui-bg);
-        color: var(--ui-text);
-        cursor: pointer;
-        box-shadow: var(--ui-shadow);
-        transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
-      }
-      #auto-rotate-toggle:hover {
-        background: var(--ui-bg-hover);
-        border-color: var(--ui-border);
-        color: var(--ui-text-strong);
-        transform: translateY(-1px);
-      }
-      #auto-rotate-toggle.active {
-        background: var(--ui-blue);
-        border-color: var(--ui-blue-hover);
-        color: var(--ui-text-strong);
-      }
-      #auto-rotate-toggle svg {
-        width: 22px;
-        height: 22px;
-        fill: currentColor;
-      }
-      #auto-rotate-toggle .stop-icon { display: none; }
-      #auto-rotate-toggle.active .play-icon { display: none; }
-      #auto-rotate-toggle.active .stop-icon { display: block; }
       #quick-links {
         position: absolute;
-        right: 68px;
+        right: 12px;
         bottom: 12px;
         z-index: 20;
         display: inline-flex;
@@ -799,6 +836,9 @@
         display: block;
         width: 20px;
         height: 20px;
+      }
+      #help-toggle .material-symbols-rounded {
+        font-size: 22px;
       }
       #help-toggle {
         font: 700 22px/1 ui-sans-serif, system-ui, -apple-system, sans-serif;
@@ -1072,23 +1112,22 @@
           gap: 6px;
           margin: 0 0 8px 0;
         }
+        #extra-axis-gizmos {
+          flex-direction: row;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+          gap: 6px;
+          max-height: none;
+          overflow: visible;
+          padding-right: 0;
+        }
         #axis-gizmo,
-        #w-axis-gizmo {
+        .extra-axis-gizmo {
           width: 74px;
           height: 74px;
         }
-        #auto-rotate-toggle {
-          right: calc(8px + var(--safe-right));
-          bottom: calc(8px + var(--safe-bottom));
-          width: 40px;
-          height: 40px;
-        }
-        #auto-rotate-toggle svg {
-          width: 18px;
-          height: 18px;
-        }
         #quick-links {
-          right: calc(52px + var(--safe-right));
+          right: calc(8px + var(--safe-right));
           bottom: calc(8px + var(--safe-bottom));
           gap: 6px;
         }
@@ -1171,102 +1210,45 @@
     <div id="top-left-controls">
       <div id="view-toggle" aria-label="View mode">
         <button data-mode="wireframe" aria-label="Wireframe mode" title="Wireframe">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <circle cx="12" cy="12" r="7"></circle>
-            <path d="M5.8 9h12.4"></path>
-            <path d="M5.8 15h12.4"></path>
-            <path d="M9 5.8v12.4"></path>
-            <path d="M15 5.8v12.4"></path>
-          </svg>
+          <span class="material-symbols-rounded" aria-hidden="true">grid_on</span>
         </button>
         <button data-mode="transparent" aria-label="Transparent mode" title="Transparent">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <circle class="icon-soft-fill" cx="12" cy="12" r="7"></circle>
-            <circle cx="12" cy="12" r="7"></circle>
-            <path d="M12 5v14"></path>
-          </svg>
+          <span class="material-symbols-rounded" aria-hidden="true">opacity</span>
         </button>
         <button data-mode="solid" aria-label="Solid mode" title="Solid">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <circle class="icon-fill" cx="12" cy="12" r="7"></circle>
-            <path d="M15.5 8.5a5 5 0 0 0-7 7" opacity="0.35"></path>
-          </svg>
+          <span class="material-symbols-rounded" aria-hidden="true">radio_button_checked</span>
         </button>
         <button data-mode="faceted" class="active" aria-label="Faceted mode" title="Faceted">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <polygon class="icon-fill" points="12,4.5 5.6,9.3 12,13"></polygon>
-            <polygon class="icon-soft-fill" points="12,4.5 18.4,9.3 12,13"></polygon>
-            <polygon class="icon-fill" points="5.6,9.3 12,13 12,19.5 5.6,14.7"></polygon>
-            <polygon class="icon-soft-fill" points="18.4,9.3 12,13 12,19.5 18.4,14.7"></polygon>
-          </svg>
+          <span class="material-symbols-rounded" aria-hidden="true">view_in_ar</span>
         </button>
       </div>
       <div id="scene-actions" aria-label="Scene actions">
         <button id="import-json-button" type="button" aria-label="Import JSON" title="Import JSON">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 3v12"></path>
-            <path d="M7 8l5-5 5 5"></path>
-            <path d="M5 15v4h14v-4"></path>
-          </svg>
+          <span class="material-symbols-rounded" aria-hidden="true">file_upload</span>
         </button>
         <button id="export-json-button" type="button" aria-label="Export JSON" title="Export JSON">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 21V9"></path>
-            <path d="M7 16l5 5 5-5"></path>
-            <path d="M5 9V5h14v4"></path>
-          </svg>
+          <span class="material-symbols-rounded" aria-hidden="true">file_download</span>
         </button>
         <button id="edit-mode-toggle" type="button" aria-label="Toggle edit mode" aria-pressed="false" title="Edit mode">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M4 20l4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10L4 20z"></path>
-            <path d="M13.5 6.5l4 4"></path>
-          </svg>
+          <span class="material-symbols-rounded" aria-hidden="true">edit</span>
         </button>
       </div>
       <div id="transform-actions" aria-label="Transform actions">
         <button id="transform-move-button" type="button" aria-label="Move transform" title="Move (G)">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 3v18"></path>
-            <path d="M3 12h18"></path>
-            <path d="M12 3l-3 3"></path>
-            <path d="M12 3l3 3"></path>
-            <path d="M12 21l-3-3"></path>
-            <path d="M12 21l3-3"></path>
-            <path d="M3 12l3-3"></path>
-            <path d="M3 12l3 3"></path>
-            <path d="M21 12l-3-3"></path>
-            <path d="M21 12l-3 3"></path>
-          </svg>
+          <span class="material-symbols-rounded" aria-hidden="true">open_with</span>
         </button>
         <button id="transform-rotate-button" type="button" aria-label="Rotate transform" title="Rotate (R)">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M20 12a8 8 0 1 1-2.34-5.66"></path>
-            <path d="M20 4v5h-5"></path>
-          </svg>
+          <span class="material-symbols-rounded" aria-hidden="true">refresh</span>
         </button>
         <button id="transform-scale-button" type="button" aria-label="Scale transform" title="Scale (S)">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <rect x="6.5" y="6.5" width="11" height="11" rx="1.4"></rect>
-            <path d="M4 20h6"></path>
-            <path d="M14 20h6"></path>
-            <path d="M20 14v6"></path>
-            <path d="M20 4v6"></path>
-          </svg>
+          <span class="material-symbols-rounded" aria-hidden="true">zoom_out_map</span>
         </button>
       </div>
     </div>
     <div id="pane">
       <div id="gizmo-dock">
         <div id="axis-gizmo" aria-label="View axis gizmo"></div>
-        <div id="w-axis-gizmo" aria-label="W axis gizmo">
-          <svg viewBox="0 0 86 86" aria-hidden="true">
-            <circle class="ring" cx="43" cy="43" r="31"></circle>
-            <line id="w-axis-gizmo-line" x1="43" y1="43" x2="43" y2="43"></line>
-          </svg>
-          <button id="w-axis-gizmo-neg" class="negative" type="button" aria-label="Negative W handle"></button>
-          <button id="w-axis-gizmo-pos" class="positive" type="button" aria-label="Positive W handle">W</button>
-          <span id="w-axis-gizmo-label" class="w-axis-label">W</span>
-        </div>
+        <div id="extra-axis-gizmos" aria-label="Extra axis gizmos"></div>
       </div>
       <div id="axis-legend" style="display:none;"></div>
       <div id="axis-list"></div>
@@ -1275,15 +1257,11 @@
         <span class="dimension-label">Dimension</span>
         <div class="dimension-stepper">
           <button id="dimension-down" type="button" aria-label="Dimension down" title="Dimension down">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M6 9l6 6 6-6"></path>
-            </svg>
+            <span class="material-symbols-rounded" aria-hidden="true">keyboard_arrow_down</span>
           </button>
           <output id="dimension-value" aria-live="polite">4D</output>
           <button id="dimension-up" type="button" aria-label="Dimension up" title="Dimension up">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M6 15l6-6 6 6"></path>
-            </svg>
+            <span class="material-symbols-rounded" aria-hidden="true">keyboard_arrow_up</span>
           </button>
         </div>
       </div>
@@ -1322,14 +1300,6 @@
     <div id="tooltip"></div>
     <div id="context-menu"></div>
     <div class="credit" id="status-bar"></div>
-    <button id="auto-rotate-toggle" type="button" aria-label="Start auto rotation" aria-pressed="false" title="Start auto rotation">
-      <svg class="play-icon" viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M8 5v14l11-7z"></path>
-      </svg>
-      <svg class="stop-icon" viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M7 7h10v10H7z"></path>
-      </svg>
-    </button>
     <div id="quick-links">
       <a
         id="github-link"
@@ -1341,7 +1311,7 @@
       >
         <img src="./github-white-icon.webp" alt="GitHub" />
       </a>
-      <button id="help-toggle" type="button" aria-label="Open controls help" title="Controls help">?</button>
+      <button id="help-toggle" type="button" aria-label="Open controls help" title="Controls help"><span class="material-symbols-rounded" aria-hidden="true">help</span></button>
     </div>
     <div id="help-overlay" role="dialog" aria-modal="true" aria-labelledby="help-title" aria-hidden="true">
       <section id="help-dialog">
@@ -1352,8 +1322,11 @@
         <ul id="help-content">
           <li><strong>Orbit:</strong> left drag. <strong>Zoom:</strong> wheel.</li>
           <li><strong>Shift axes button:</strong> click the axis cycle button to shift which dimensions are projected as X/Y/Z.</li>
+          <li><strong>Perspective depth:</strong> use the depth button on an extra-axis gizmo to include/exclude that axis from perspective depth.</li>
           <li><strong>XYZ gizmo:</strong> drag the gizmo to move/orbit the view, or tap an endpoint to snap the camera to that axis.</li>
-          <li><strong>W gizmo:</strong> controls rotation in the plane perpendicular to the 4th dimension (4D+).</li>
+          <li><strong>Extra-axis gizmos:</strong> double click/tap an axis chip to add or remove its gizmo.</li>
+          <li><strong>Axis auto-rotate:</strong> use the tiny play/stop button on a gizmo to toggle continuous rotation for that axis plane.</li>
+          <li><strong>Remove from gizmo dock:</strong> double click/tap a gizmo to remove it directly.</li>
           <li><strong>Faceted mode:</strong> every object uses the same solid multicolor material with one color per coplanar outer face region.</li>
           <li><strong>Add object:</strong> <code>Shift + A</code>.</li>
           <li><strong>Transform selected object:</strong> <code>G</code> move, <code>R</code> rotate, <code>S</code> scale.</li>
@@ -1364,8 +1337,8 @@
           <li><strong>Close this panel:</strong> close button, tap outside, or <code>Esc</code>.</li>
         </ul>
         <div id="help-footer-actions">
-          <button id="mobile-onboarding-open" type="button" aria-label="Open mobile onboarding">
-            Open mobile onboarding guide
+          <button id="mobile-onboarding-open" type="button" aria-label="Open onboarding guide">
+            Open onboarding guide
           </button>
         </div>
       </section>
@@ -1373,43 +1346,45 @@
     <div id="mobile-onboarding-overlay" role="dialog" aria-modal="true" aria-labelledby="mobile-onboarding-title" aria-hidden="true">
       <section id="mobile-onboarding-dialog">
         <div id="mobile-onboarding-header">
-          <h2 id="mobile-onboarding-title">Mobile Controls Guide</h2>
-          <button id="mobile-onboarding-close" type="button" aria-label="Close mobile onboarding" title="Close">&times;</button>
+          <h2 id="mobile-onboarding-title">Controls Onboarding Guide</h2>
+          <button id="mobile-onboarding-close" type="button" aria-label="Close onboarding guide" title="Close">&times;</button>
         </div>
         <div id="mobile-onboarding-track-wrap">
           <div id="mobile-onboarding-track">
             <article class="mobile-onboarding-step" data-step="0">
               <h3>1. Move Through The Scene</h3>
-              <p>Use touch gestures and the XYZ gizmo to orient your camera quickly.</p>
+              <p>Use mouse or touch gestures and the XYZ gizmo to orient your camera quickly.</p>
               <ul>
                 <li><strong>Drag on canvas:</strong> orbit around the model.</li>
-                <li><strong>Pinch:</strong> zoom in or out.</li>
-                <li><strong>XYZ gizmo:</strong> drag it to orbit, or tap an endpoint to snap to that axis.</li>
+                <li><strong>Zoom:</strong> mouse wheel or touch pinch.</li>
+                <li><strong>XYZ gizmo:</strong> drag it to orbit, or click/tap an endpoint to snap to that axis.</li>
               </ul>
             </article>
             <article class="mobile-onboarding-step" data-step="1">
-              <h3>2. Understand N-D Gizmos</h3>
-              <p>The two gizmos in the panel control projected and high-dimensional orientation.</p>
+              <h3>2. Manage Extra Axis Gizmos</h3>
+              <p>Axis chips let you add and remove high-dimensional gizmos and control perspective on visible axes.</p>
               <ul>
-                <li><strong>Axis order row:</strong> shift which dimensions are projected as X/Y/Z.</li>
-                <li><strong>W gizmo ring:</strong> rotate through the 4th dimension and beyond (only in 4D+).</li>
-                <li><strong>Purple W handle:</strong> drag to sweep the active W plane.</li>
+                <li><strong>Axis order row:</strong> drag chips to reorder projected axes.</li>
+                <li><strong>Add/remove by chip:</strong> double click/tap a chip to toggle its gizmo.</li>
+                <li><strong>Remove by gizmo:</strong> double click/tap a gizmo in the dock.</li>
+                <li><strong>Gizmo use:</strong> drag a gizmo to rotate through that axis plane.</li>
+                <li><strong>Auto rotate by axis:</strong> tap the small play/stop button on a gizmo to animate that axis plane.</li>
+                <li><strong>Depth button:</strong> tap the depth icon on a gizmo to toggle that axis in perspective depth.</li>
               </ul>
             </article>
             <article class="mobile-onboarding-step" data-step="2">
-              <h3>3. Transform Objects On Touch</h3>
-              <p>Tap an object, then use toolbar transform buttons with a drag gesture.</p>
+              <h3>3. Transform Objects</h3>
+              <p>Select an object, then use toolbar transform buttons to move, rotate, or scale.</p>
               <ul>
-                <li><strong>Move / Rotate / Scale buttons:</strong> touch, drag, and release to commit.</li>
-                <li><strong>Edit mode:</strong> toggle with the pencil button, then tap vertices.</li>
+                <li><strong>Move / Rotate / Scale buttons:</strong> drag after pressing to apply, release to commit.</li>
+                <li><strong>Edit mode:</strong> toggle with the pencil button, then select vertices.</li>
                 <li><strong>Dimension stepper:</strong> sets dimension for newly created primitives.</li>
               </ul>
             </article>
             <article class="mobile-onboarding-step" data-step="3">
               <h3>4. Quick Actions</h3>
-              <p>Use the bottom-right controls for playback and help.</p>
+              <p>Use the quick controls for reference.</p>
               <ul>
-                <li><strong>Play button:</strong> starts/stops global auto-rotation.</li>
                 <li><strong>Question button:</strong> opens the full controls reference.</li>
                 <li><strong>You can reopen this guide anytime:</strong> from the Controls help panel.</li>
               </ul>

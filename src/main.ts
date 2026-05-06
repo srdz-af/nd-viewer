@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { MAX_N, AXIS_PALETTE, VIEW_MODES, type ViewMode } from './constants';
-import { RotND, type Plane } from './RotND';
+import { RotND } from './RotND';
 import { pcaTopK } from './PCA';
 import { NDProjector, canonicalP } from './geometry/NDProjector';
 import { buildPrimitive, type PrimitiveKind } from './geometry/primitives';
@@ -19,12 +19,7 @@ const tooltipEl = document.getElementById('tooltip') as HTMLDivElement | null;
 const ctxMenu = document.getElementById('context-menu') as HTMLDivElement | null;
 const viewToggle = document.getElementById('view-toggle') as HTMLDivElement | null;
 const axisGizmoEl = document.getElementById('axis-gizmo') as HTMLDivElement | null;
-const wAxisGizmoEl = document.getElementById('w-axis-gizmo') as HTMLDivElement | null;
-const wAxisGizmoLineEl = document.getElementById('w-axis-gizmo-line') as SVGLineElement | null;
-const wAxisGizmoNegEl = document.getElementById('w-axis-gizmo-neg') as HTMLButtonElement | null;
-const wAxisGizmoPosEl = document.getElementById('w-axis-gizmo-pos') as HTMLButtonElement | null;
-const wAxisGizmoLabelEl = document.getElementById('w-axis-gizmo-label') as HTMLSpanElement | null;
-const autoRotateToggle = document.getElementById('auto-rotate-toggle') as HTMLButtonElement | null;
+const extraAxisGizmosEl = document.getElementById('extra-axis-gizmos') as HTMLDivElement | null;
 const helpToggleButton = document.getElementById('help-toggle') as HTMLButtonElement | null;
 const helpOverlay = document.getElementById('help-overlay') as HTMLDivElement | null;
 const helpCloseButton = document.getElementById('help-close') as HTMLButtonElement | null;
@@ -60,7 +55,6 @@ const textureAlphaInput = document.getElementById('texture-alpha') as HTMLInputE
 const textureAlphaValue = document.getElementById('texture-alpha-value') as HTMLOutputElement | null;
 const getPaneToggleButton = () => document.getElementById('pane-toggle') as HTMLButtonElement | null;
 const MOBILE_ONBOARDING_SEEN_KEY = 'blend.mobileOnboardingSeen.v1';
-const MOBILE_ONBOARDING_BREAKPOINT = 920;
 let helpLastFocusedEl: HTMLElement | null = null;
 let mobileOnboardingLastFocusedEl: HTMLElement | null = null;
 let mobileOnboardingStep = 0;
@@ -84,10 +78,6 @@ function setHelpOverlayOpen(open: boolean) {
   if (helpLastFocusedEl && document.contains(helpLastFocusedEl)) {
     helpLastFocusedEl.focus();
   }
-}
-
-function isMobileOnboardingViewport() {
-  return window.innerWidth <= MOBILE_ONBOARDING_BREAKPOINT || window.matchMedia('(pointer: coarse)').matches;
 }
 
 function hasSeenMobileOnboarding() {
@@ -159,7 +149,6 @@ function openMobileOnboarding(step = 0) {
 
 function maybeOpenMobileOnboarding() {
   if (!mobileOnboardingOverlay || mobileOnboardingSteps.length === 0) return;
-  if (!isMobileOnboardingViewport()) return;
   if (hasSeenMobileOnboarding()) return;
   openMobileOnboarding(0);
 }
@@ -197,13 +186,34 @@ type AxisGizmoPart = {
   button: HTMLButtonElement;
   line: SVGLineElement;
 };
+type ExtraAxisGizmoPlane = {
+  planeAxis: number;
+  depthDim: number;
+};
+type ExtraAxisGizmoUI = {
+  root: HTMLDivElement;
+  line: SVGLineElement;
+  negButton: HTMLButtonElement;
+  posButton: HTMLButtonElement;
+  autoToggleButton: HTMLButtonElement;
+  perspectiveToggleButton: HTMLButtonElement;
+  label: HTMLSpanElement;
+};
 const axisGizmoParts: AxisGizmoPart[] = [];
 const GIZMO_VIEWBOX_SIZE = 86;
 const axisGizmoCenter = GIZMO_VIEWBOX_SIZE * 0.5;
 const axisGizmoRadius = 28;
 const wGizmoCenter = GIZMO_VIEWBOX_SIZE * 0.5;
 const wGizmoRadius = 28;
-let wGizmoAngle = -Math.PI / 4;
+const EXTRA_GIZMO_BASE_ANGLE = -Math.PI / 4;
+const extraAxisGizmoUIs = new Map<number, ExtraAxisGizmoUI>();
+const extraAxisGizmoAngles = new Map<number, number>();
+const selectedExtraAxisGizmoDims = new Set<number>([3]);
+const selectedPerspectiveDims = new Set<number>([3]);
+const autoRotateExtraAxisDims = new Set<number>();
+const EXTRA_AXIS_AUTO_ROTATE_SPEED = 0.45;
+const axisChipDoubleTapState = { dim: -1, ts: 0, x: 0, y: 0 };
+const gizmoDoubleTapState = { dim: -1, ts: 0, x: 0, y: 0 };
 const axisGizmoDrag = {
   active: false,
   moved: false,
@@ -212,13 +222,14 @@ const axisGizmoDrag = {
   lastY: 0,
   snapVector: null as THREE.Vector3 | null,
 };
-const wAxisGizmoDrag = {
+const extraAxisGizmoDrag = {
   active: false,
   moved: false,
   pointerId: -1,
   lastAngle: 0,
   planeAxis: -1,
   depthAxis: -1,
+  target: null as HTMLDivElement | null,
 };
 const sceneBackgroundHsl = { h: 0, s: 0, l: 0 };
 const sceneBackgroundColor = new THREE.Color();
@@ -242,9 +253,8 @@ function applySceneBackground(useEditMode: boolean) {
   renderer.setClearColor(sceneBackgroundColor);
 }
 
-function pointerAngleInWGizmo(ev: PointerEvent) {
-  if (!wAxisGizmoEl) return null;
-  const rect = wAxisGizmoEl.getBoundingClientRect();
+function pointerAngleInExtraAxisGizmo(ev: PointerEvent, gizmoEl: HTMLDivElement) {
+  const rect = gizmoEl.getBoundingClientRect();
   const cx = rect.left + rect.width * 0.5;
   const cy = rect.top + rect.height * 0.5;
   const dx = ev.clientX - cx;
@@ -253,49 +263,376 @@ function pointerAngleInWGizmo(ev: PointerEvent) {
   return Math.atan2(dy, dx);
 }
 
-function currentWGizmoRotationPlane() {
+function currentExtraAxisGizmoPlanes(): ExtraAxisGizmoPlane[] {
   const nVis = visibleDims();
-  if (nVis < 4) return null;
-  const wDim = axesOrder[(axesOffset + 3) % nVis];
-  if (wDim == null) return null;
-  const planeAxis = wRotationPlaneAxis(-1, wDim);
-  if (planeAxis < 0 || planeAxis === wDim) return null;
-  return { planeAxis, wDim };
+  if (nVis < 2) return [];
+  const ordered = axesOrder.slice(0, nVis);
+  const activeAxes = [PARAMS.axesX, PARAMS.axesY, PARAMS.axesZ];
+  const planes: ExtraAxisGizmoPlane[] = [];
+  const usedPairs = new Set<string>();
+  const pairKey = (a: number, b: number) => (a < b ? `${a}:${b}` : `${b}:${a}`);
+
+  for (let depthSlot = 0; depthSlot < ordered.length; depthSlot++) {
+    const depthDim = ordered[depthSlot];
+    if (!selectedExtraAxisGizmoDims.has(depthDim)) continue;
+
+    const baseSlot = ((depthSlot % activeAxes.length) + activeAxes.length) % activeAxes.length;
+    const candidates: number[] = [];
+    for (let offset = 0; offset < activeAxes.length; offset++) {
+      const candidate = activeAxes[(baseSlot + offset) % activeAxes.length];
+      if (!candidates.includes(candidate)) candidates.push(candidate);
+    }
+    for (const candidate of ordered) {
+      if (!candidates.includes(candidate)) candidates.push(candidate);
+    }
+
+    let planeAxis = -1;
+    for (const candidate of candidates) {
+      if (candidate < 0 || candidate === depthDim) continue;
+      const key = pairKey(candidate, depthDim);
+      if (usedPairs.has(key)) continue;
+      planeAxis = candidate;
+      usedPairs.add(key);
+      break;
+    }
+
+    if (planeAxis < 0) {
+      planeAxis = candidates.find(candidate => candidate >= 0 && candidate !== depthDim) ?? -1;
+    }
+    if (planeAxis < 0 || planeAxis === depthDim) continue;
+    usedPairs.add(pairKey(planeAxis, depthDim));
+    planes.push({ planeAxis, depthDim });
+  }
+  return planes;
 }
 
-function beginWGizmoDrag(ev: PointerEvent) {
-  if (!wAxisGizmoEl || wAxisGizmoEl.classList.contains('disabled')) return;
-  const angle = pointerAngleInWGizmo(ev);
-  const plane = currentWGizmoRotationPlane();
-  if (angle == null || !plane) return;
+function getExtraAxisGizmoAngle(depthDim: number) {
+  const existing = extraAxisGizmoAngles.get(depthDim);
+  if (typeof existing === 'number') return existing;
+  extraAxisGizmoAngles.set(depthDim, EXTRA_GIZMO_BASE_ANGLE);
+  return EXTRA_GIZMO_BASE_ANGLE;
+}
 
-  wAxisGizmoDrag.active = true;
-  wAxisGizmoDrag.moved = false;
-  wAxisGizmoDrag.pointerId = ev.pointerId;
-  wAxisGizmoDrag.lastAngle = angle;
-  wAxisGizmoDrag.planeAxis = plane.planeAxis;
-  wAxisGizmoDrag.depthAxis = plane.wDim;
+function addExtraAxisGizmo(depthDim: number) {
+  if (!Number.isInteger(depthDim) || depthDim < 0 || depthDim >= MAX_N) return;
+  if (selectedExtraAxisGizmoDims.has(depthDim)) return;
+  selectedExtraAxisGizmoDims.add(depthDim);
+  getExtraAxisGizmoAngle(depthDim);
+  renderAxisList();
+  syncExtraAxisGizmos();
+}
+
+function removeExtraAxisGizmo(depthDim: number) {
+  if (!selectedExtraAxisGizmoDims.has(depthDim)) return;
+  if (extraAxisGizmoDrag.active && extraAxisGizmoDrag.depthAxis === depthDim) {
+    resetExtraAxisGizmoDragState();
+  }
+  selectedExtraAxisGizmoDims.delete(depthDim);
+  selectedPerspectiveDims.delete(depthDim);
+  autoRotateExtraAxisDims.delete(depthDim);
+  extraAxisGizmoAngles.delete(depthDim);
+  const ui = extraAxisGizmoUIs.get(depthDim);
+  if (ui) {
+    ui.root.remove();
+    extraAxisGizmoUIs.delete(depthDim);
+  }
+  renderAxisList();
+  syncExtraAxisGizmos();
+}
+
+function toggleExtraAxisGizmo(depthDim: number) {
+  if (selectedExtraAxisGizmoDims.has(depthDim)) removeExtraAxisGizmo(depthDim);
+  else addExtraAxisGizmo(depthDim);
+}
+
+function setExtraAxisAutoRotate(depthDim: number, active: boolean) {
+  if (active) autoRotateExtraAxisDims.add(depthDim);
+  else autoRotateExtraAxisDims.delete(depthDim);
+  const ui = extraAxisGizmoUIs.get(depthDim);
+  if (ui) {
+    ui.autoToggleButton.classList.toggle('active', active);
+    const label = axisLabel(depthDim);
+    const action = active ? 'Stop auto-rotate' : 'Start auto-rotate';
+    const title = `${action} ${label} axis`;
+    ui.autoToggleButton.title = title;
+    ui.autoToggleButton.setAttribute('aria-label', title);
+    ui.autoToggleButton.setAttribute('aria-pressed', String(active));
+  }
+}
+
+function setExtraAxisPerspectiveDepth(depthDim: number, active: boolean) {
+  if (active) selectedPerspectiveDims.add(depthDim);
+  else selectedPerspectiveDims.delete(depthDim);
+  const ui = extraAxisGizmoUIs.get(depthDim);
+  if (ui) {
+    ui.perspectiveToggleButton.classList.toggle('active', active);
+    const label = axisLabel(depthDim);
+    const action = active ? 'Disable perspective depth' : 'Enable perspective depth';
+    const title = `${action} for ${label} axis`;
+    ui.perspectiveToggleButton.title = title;
+    ui.perspectiveToggleButton.setAttribute('aria-label', title);
+    ui.perspectiveToggleButton.setAttribute('aria-pressed', String(active));
+  }
+}
+
+function isDoubleTapOnDim(
+  state: { dim: number; ts: number; x: number; y: number; },
+  depthDim: number,
+  ev: PointerEvent,
+) {
+  const now = performance.now();
+  const dt = now - state.ts;
+  const dx = ev.clientX - state.x;
+  const dy = ev.clientY - state.y;
+  const sameTarget = state.dim === depthDim;
+  const closeEnough = (dx * dx) + (dy * dy) < (16 * 16);
+  state.dim = depthDim;
+  state.ts = now;
+  state.x = ev.clientX;
+  state.y = ev.clientY;
+  return sameTarget && dt < 320 && closeEnough;
+}
+
+function resetExtraAxisGizmoDragState() {
+  const target = extraAxisGizmoDrag.target;
+  if (target && extraAxisGizmoDrag.pointerId >= 0 && target.hasPointerCapture(extraAxisGizmoDrag.pointerId)) {
+    target.releasePointerCapture(extraAxisGizmoDrag.pointerId);
+  }
+  target?.classList.remove('dragging');
+  extraAxisGizmoDrag.active = false;
+  extraAxisGizmoDrag.moved = false;
+  extraAxisGizmoDrag.pointerId = -1;
+  extraAxisGizmoDrag.lastAngle = 0;
+  extraAxisGizmoDrag.planeAxis = -1;
+  extraAxisGizmoDrag.depthAxis = -1;
+  extraAxisGizmoDrag.target = null;
+}
+
+function beginExtraAxisGizmoDrag(ev: PointerEvent, plane: ExtraAxisGizmoPlane, gizmoEl: HTMLDivElement) {
+  const angle = pointerAngleInExtraAxisGizmo(ev, gizmoEl);
+  if (angle == null) return;
+
+  extraAxisGizmoDrag.active = true;
+  extraAxisGizmoDrag.moved = false;
+  extraAxisGizmoDrag.pointerId = ev.pointerId;
+  extraAxisGizmoDrag.lastAngle = angle;
+  extraAxisGizmoDrag.planeAxis = plane.planeAxis;
+  extraAxisGizmoDrag.depthAxis = plane.depthDim;
+  extraAxisGizmoDrag.target = gizmoEl;
   try {
-    wAxisGizmoEl.setPointerCapture(ev.pointerId);
+    gizmoEl.setPointerCapture(ev.pointerId);
   } catch {
     // Some browsers are strict about capture when pointerdown starts on a child.
   }
-  wAxisGizmoEl.classList.add('dragging');
+  gizmoEl.classList.add('dragging');
 }
 
-function endWGizmoDrag(ev: PointerEvent) {
-  if (!wAxisGizmoEl) return;
-  if (ev.pointerId !== wAxisGizmoDrag.pointerId) return;
-  wAxisGizmoDrag.active = false;
-  wAxisGizmoDrag.moved = false;
-  wAxisGizmoDrag.pointerId = -1;
-  wAxisGizmoDrag.lastAngle = 0;
-  wAxisGizmoDrag.planeAxis = -1;
-  wAxisGizmoDrag.depthAxis = -1;
-  if (wAxisGizmoEl.hasPointerCapture(ev.pointerId)) {
-    wAxisGizmoEl.releasePointerCapture(ev.pointerId);
+function endExtraAxisGizmoDrag(ev: PointerEvent) {
+  if (ev.pointerId !== extraAxisGizmoDrag.pointerId) return;
+  resetExtraAxisGizmoDragState();
+}
+
+function createExtraAxisGizmoUI(depthDim: number): ExtraAxisGizmoUI {
+  const root = document.createElement('div');
+  root.className = 'extra-axis-gizmo';
+  root.dataset.depthDim = String(depthDim);
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', `0 0 ${GIZMO_VIEWBOX_SIZE} ${GIZMO_VIEWBOX_SIZE}`);
+  svg.setAttribute('aria-hidden', 'true');
+  const ring = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  ring.setAttribute('class', 'ring');
+  ring.setAttribute('cx', `${wGizmoCenter}`);
+  ring.setAttribute('cy', `${wGizmoCenter}`);
+  ring.setAttribute('r', `${wGizmoRadius + 3}`);
+  const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  line.setAttribute('x1', `${wGizmoCenter}`);
+  line.setAttribute('y1', `${wGizmoCenter}`);
+  line.setAttribute('x2', `${wGizmoCenter}`);
+  line.setAttribute('y2', `${wGizmoCenter}`);
+  svg.append(ring, line);
+
+  const negButton = document.createElement('button');
+  negButton.type = 'button';
+  negButton.className = 'negative';
+  const posButton = document.createElement('button');
+  posButton.type = 'button';
+  posButton.className = 'positive';
+  const autoToggleButton = document.createElement('button');
+  autoToggleButton.type = 'button';
+  autoToggleButton.className = 'auto-toggle';
+  autoToggleButton.innerHTML = `
+    <span class="material-symbols-rounded play-icon" aria-hidden="true">play_arrow</span>
+    <span class="material-symbols-rounded stop-icon" aria-hidden="true">stop</span>
+  `;
+  const perspectiveToggleButton = document.createElement('button');
+  perspectiveToggleButton.type = 'button';
+  perspectiveToggleButton.className = 'perspective-toggle';
+  perspectiveToggleButton.innerHTML = `
+    <span class="material-symbols-rounded depth-icon" aria-hidden="true">vrpano</span>
+  `;
+  const label = document.createElement('span');
+  label.className = 'axis-label';
+
+  const onPointerDown = (ev: PointerEvent) => {
+    if (ev.pointerType !== 'mouse') ev.preventDefault();
+    ev.stopPropagation();
+    const plane = currentExtraAxisGizmoPlanes().find(candidate => candidate.depthDim === depthDim);
+    if (!plane) return;
+    beginExtraAxisGizmoDrag(ev, plane, root);
+  };
+  root.addEventListener('pointerdown', onPointerDown);
+  negButton.addEventListener('pointerdown', onPointerDown);
+  posButton.addEventListener('pointerdown', onPointerDown);
+  autoToggleButton.addEventListener('pointerdown', ev => {
+    if (ev.pointerType !== 'mouse') ev.preventDefault();
+    ev.stopPropagation();
+    if (ev.button !== 0) return;
+    setExtraAxisAutoRotate(depthDim, !autoRotateExtraAxisDims.has(depthDim));
+  });
+  autoToggleButton.addEventListener('keydown', ev => {
+    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+    ev.preventDefault();
+    setExtraAxisAutoRotate(depthDim, !autoRotateExtraAxisDims.has(depthDim));
+  });
+  autoToggleButton.addEventListener('pointerup', ev => {
+    ev.preventDefault();
+    ev.stopPropagation();
+  });
+  autoToggleButton.addEventListener('dblclick', ev => {
+    ev.preventDefault();
+    ev.stopPropagation();
+  });
+  perspectiveToggleButton.addEventListener('pointerdown', ev => {
+    if (ev.pointerType !== 'mouse') ev.preventDefault();
+    ev.stopPropagation();
+    if (ev.button !== 0) return;
+    setExtraAxisPerspectiveDepth(depthDim, !selectedPerspectiveDims.has(depthDim));
+    projectAndRenderAll();
+  });
+  perspectiveToggleButton.addEventListener('keydown', ev => {
+    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+    ev.preventDefault();
+    setExtraAxisPerspectiveDepth(depthDim, !selectedPerspectiveDims.has(depthDim));
+    projectAndRenderAll();
+  });
+  perspectiveToggleButton.addEventListener('pointerup', ev => {
+    ev.preventDefault();
+    ev.stopPropagation();
+  });
+  perspectiveToggleButton.addEventListener('dblclick', ev => {
+    ev.preventDefault();
+    ev.stopPropagation();
+  });
+
+  root.addEventListener('pointermove', ev => {
+    if (!extraAxisGizmoDrag.active || ev.pointerId !== extraAxisGizmoDrag.pointerId || extraAxisGizmoDrag.target !== root) return;
+    ev.preventDefault();
+    const angle = pointerAngleInExtraAxisGizmo(ev, root);
+    if (angle == null) return;
+    const delta = normalizeSignedAngleDelta(angle - extraAxisGizmoDrag.lastAngle);
+    extraAxisGizmoDrag.lastAngle = angle;
+    if (Math.abs(delta) < 1e-4) return;
+    extraAxisGizmoDrag.moved = true;
+    if (
+      extraAxisGizmoDrag.planeAxis >= 0
+      && extraAxisGizmoDrag.depthAxis >= 0
+      && extraAxisGizmoDrag.planeAxis !== extraAxisGizmoDrag.depthAxis
+    ) {
+      rot.applyGivensLeft(extraAxisGizmoDrag.planeAxis, extraAxisGizmoDrag.depthAxis, delta);
+      projectionDirty = true;
+      const prev = getExtraAxisGizmoAngle(extraAxisGizmoDrag.depthAxis);
+      extraAxisGizmoAngles.set(extraAxisGizmoDrag.depthAxis, normalizeSignedAngleDelta(prev + delta));
+      applySceneBackground(PARAMS.editMode);
+    }
+  });
+  root.addEventListener('dblclick', ev => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    removeExtraAxisGizmo(depthDim);
+  });
+  root.addEventListener('pointerup', ev => {
+    const wasDraggingThisGizmo = extraAxisGizmoDrag.active
+      && ev.pointerId === extraAxisGizmoDrag.pointerId
+      && extraAxisGizmoDrag.target === root;
+    const movedWhileDragging = wasDraggingThisGizmo && extraAxisGizmoDrag.moved;
+    endExtraAxisGizmoDrag(ev);
+    if (movedWhileDragging) return;
+    if (!isDoubleTapOnDim(gizmoDoubleTapState, depthDim, ev)) return;
+    removeExtraAxisGizmo(depthDim);
+  });
+  root.addEventListener('pointercancel', endExtraAxisGizmoDrag);
+
+  root.append(svg, negButton, posButton, autoToggleButton, perspectiveToggleButton, label);
+  return { root, line, negButton, posButton, autoToggleButton, perspectiveToggleButton, label };
+}
+
+function syncExtraAxisGizmos() {
+  if (!extraAxisGizmosEl) return;
+  const planes = currentExtraAxisGizmoPlanes();
+  const activeDepthDims = new Set(planes.map(plane => plane.depthDim));
+
+  for (const [depthDim, ui] of extraAxisGizmoUIs) {
+    if (!activeDepthDims.has(depthDim)) {
+      if (extraAxisGizmoDrag.active && extraAxisGizmoDrag.depthAxis === depthDim) {
+        resetExtraAxisGizmoDragState();
+      }
+      ui.root.remove();
+      extraAxisGizmoUIs.delete(depthDim);
+      extraAxisGizmoAngles.delete(depthDim);
+    }
   }
-  wAxisGizmoEl.classList.remove('dragging');
+
+  for (const plane of planes) {
+    let ui = extraAxisGizmoUIs.get(plane.depthDim);
+    if (!ui) {
+      ui = createExtraAxisGizmoUI(plane.depthDim);
+      extraAxisGizmoUIs.set(plane.depthDim, ui);
+    }
+    extraAxisGizmosEl.appendChild(ui.root);
+
+    const color = AXIS_PALETTE[plane.depthDim % AXIS_PALETTE.length];
+    const depthLabel = axisLabel(plane.depthDim);
+    const planeLabel = axisLabel(plane.planeAxis);
+    const buttonScale = (ui.root.clientWidth || GIZMO_VIEWBOX_SIZE) / GIZMO_VIEWBOX_SIZE;
+    const angle = getExtraAxisGizmoAngle(plane.depthDim);
+    const dx = Math.cos(angle);
+    const dy = Math.sin(angle);
+    const startX = wGizmoCenter - dx * wGizmoRadius;
+    const startY = wGizmoCenter - dy * wGizmoRadius;
+    const endX = wGizmoCenter + dx * wGizmoRadius;
+    const endY = wGizmoCenter + dy * wGizmoRadius;
+
+    ui.root.style.setProperty('--extra-axis-color', color);
+    ui.root.title = `Rotate global ${depthLabel} axis (${planeLabel}-${depthLabel} plane)`;
+    ui.root.setAttribute('aria-label', ui.root.title);
+    ui.root.classList.remove('disabled');
+    ui.posButton.disabled = false;
+    ui.negButton.disabled = false;
+    ui.label.textContent = depthLabel;
+    ui.posButton.textContent = depthLabel;
+    ui.posButton.title = `Rotate ${planeLabel}-${depthLabel}`;
+    ui.negButton.title = `Rotate ${planeLabel}-${depthLabel}`;
+    ui.posButton.setAttribute('aria-label', ui.posButton.title);
+    ui.negButton.setAttribute('aria-label', ui.negButton.title);
+
+    ui.line.setAttribute('x1', `${startX}`);
+    ui.line.setAttribute('y1', `${startY}`);
+    ui.line.setAttribute('x2', `${endX}`);
+    ui.line.setAttribute('y2', `${endY}`);
+    ui.line.style.opacity = '0.9';
+
+    ui.negButton.style.left = `${startX * buttonScale}px`;
+    ui.negButton.style.top = `${startY * buttonScale}px`;
+    ui.posButton.style.left = `${endX * buttonScale}px`;
+    ui.posButton.style.top = `${endY * buttonScale}px`;
+    ui.posButton.classList.remove('back');
+    ui.negButton.classList.remove('back');
+    ui.posButton.style.zIndex = '2';
+    ui.negButton.style.zIndex = '1';
+    setExtraAxisAutoRotate(plane.depthDim, autoRotateExtraAxisDims.has(plane.depthDim));
+    setExtraAxisPerspectiveDepth(plane.depthDim, selectedPerspectiveDims.has(plane.depthDim));
+  }
 }
 
 function snapCameraToAxis(axis: THREE.Vector3) {
@@ -390,33 +727,6 @@ function initAxisGizmo() {
     axisGizmoEl.classList.remove('dragging');
   });
 
-  const onWGizmoPointerDown = (ev: PointerEvent) => {
-    ev.preventDefault();
-    ev.stopPropagation();
-    beginWGizmoDrag(ev);
-  };
-  wAxisGizmoEl?.addEventListener('pointerdown', onWGizmoPointerDown);
-  wAxisGizmoNegEl?.addEventListener('pointerdown', onWGizmoPointerDown);
-  wAxisGizmoPosEl?.addEventListener('pointerdown', onWGizmoPointerDown);
-  wAxisGizmoEl?.addEventListener('pointermove', ev => {
-    if (!wAxisGizmoDrag.active || ev.pointerId !== wAxisGizmoDrag.pointerId) return;
-    ev.preventDefault();
-    const angle = pointerAngleInWGizmo(ev);
-    if (angle == null) return;
-    const delta = normalizeSignedAngleDelta(angle - wAxisGizmoDrag.lastAngle);
-    wAxisGizmoDrag.lastAngle = angle;
-    if (Math.abs(delta) < 1e-4) return;
-    wAxisGizmoDrag.moved = true;
-    if (wAxisGizmoDrag.planeAxis >= 0 && wAxisGizmoDrag.depthAxis >= 0 && wAxisGizmoDrag.planeAxis !== wAxisGizmoDrag.depthAxis) {
-      rot.applyGivensLeft(wAxisGizmoDrag.planeAxis, wAxisGizmoDrag.depthAxis, delta);
-      projectionDirty = true;
-      wGizmoAngle = normalizeSignedAngleDelta(wGizmoAngle + delta);
-      applySceneBackground(PARAMS.editMode);
-    }
-  });
-  wAxisGizmoEl?.addEventListener('pointerup', endWGizmoDrag);
-  wAxisGizmoEl?.addEventListener('pointercancel', endWGizmoDrag);
-
   updateAxisGizmo();
 }
 
@@ -491,76 +801,7 @@ function updateAxisGizmo() {
     part.line.style.opacity = isBack ? '0.2' : '0.64';
   }
 
-  updateWGizmo();
-}
-
-function updateWGizmo() {
-  if (!wAxisGizmoEl || !wAxisGizmoLineEl || !wAxisGizmoLabelEl || !wAxisGizmoNegEl || !wAxisGizmoPosEl) return;
-
-  const wButtonScale = (wAxisGizmoEl.clientWidth || GIZMO_VIEWBOX_SIZE) / GIZMO_VIEWBOX_SIZE;
-  const plane = currentWGizmoRotationPlane();
-  const hasW = !!plane;
-  const wColor = AXIS_PALETTE[(plane?.wDim ?? 3) % AXIS_PALETTE.length];
-  wAxisGizmoEl.style.setProperty('--w-axis-color', wColor);
-  wAxisGizmoEl.classList.toggle('disabled', !hasW);
-  wAxisGizmoEl.title = hasW
-    ? `Rotate global ${axisLabel(plane.wDim)} axis (${axisLabel(plane.planeAxis)}-${axisLabel(plane.wDim)} plane)`
-    : 'W axis available in 4D+';
-  wAxisGizmoEl.setAttribute('aria-label', wAxisGizmoEl.title);
-  wAxisGizmoPosEl.disabled = !hasW;
-  wAxisGizmoNegEl.disabled = !hasW;
-
-  if (!plane) {
-    const startX = wGizmoCenter - wGizmoRadius * 0.7;
-    const startY = wGizmoCenter + wGizmoRadius * 0.7;
-    const endX = wGizmoCenter + wGizmoRadius * 0.7;
-    const endY = wGizmoCenter - wGizmoRadius * 0.7;
-    wAxisGizmoLabelEl.textContent = 'W';
-    wAxisGizmoLineEl.setAttribute('x1', `${startX}`);
-    wAxisGizmoLineEl.setAttribute('y1', `${startY}`);
-    wAxisGizmoLineEl.setAttribute('x2', `${endX}`);
-    wAxisGizmoLineEl.setAttribute('y2', `${endY}`);
-    wAxisGizmoLineEl.style.opacity = '0.35';
-    wAxisGizmoNegEl.style.left = `${startX * wButtonScale}px`;
-    wAxisGizmoNegEl.style.top = `${startY * wButtonScale}px`;
-    wAxisGizmoPosEl.style.left = `${endX * wButtonScale}px`;
-    wAxisGizmoPosEl.style.top = `${endY * wButtonScale}px`;
-    wAxisGizmoPosEl.textContent = 'W';
-    wAxisGizmoPosEl.classList.add('back');
-    wAxisGizmoNegEl.classList.add('back');
-    return;
-  }
-
-  const wLabel = axisLabel(plane.wDim);
-  wAxisGizmoLabelEl.textContent = wLabel;
-  wAxisGizmoPosEl.textContent = wLabel;
-  wAxisGizmoPosEl.title = `Rotate ${axisLabel(plane.planeAxis)}-${wLabel}`;
-  wAxisGizmoPosEl.setAttribute('aria-label', wAxisGizmoPosEl.title);
-  wAxisGizmoNegEl.title = `Rotate ${axisLabel(plane.planeAxis)}-${wLabel}`;
-  wAxisGizmoNegEl.setAttribute('aria-label', wAxisGizmoNegEl.title);
-
-  const dx = Math.cos(wGizmoAngle);
-  const dy = Math.sin(wGizmoAngle);
-
-  const startX = wGizmoCenter - dx * wGizmoRadius;
-  const startY = wGizmoCenter - dy * wGizmoRadius;
-  const endX = wGizmoCenter + dx * wGizmoRadius;
-  const endY = wGizmoCenter + dy * wGizmoRadius;
-
-  wAxisGizmoLineEl.setAttribute('x1', `${startX}`);
-  wAxisGizmoLineEl.setAttribute('y1', `${startY}`);
-  wAxisGizmoLineEl.setAttribute('x2', `${endX}`);
-  wAxisGizmoLineEl.setAttribute('y2', `${endY}`);
-  wAxisGizmoLineEl.style.opacity = '0.9';
-
-  wAxisGizmoNegEl.style.left = `${startX * wButtonScale}px`;
-  wAxisGizmoNegEl.style.top = `${startY * wButtonScale}px`;
-  wAxisGizmoPosEl.style.left = `${endX * wButtonScale}px`;
-  wAxisGizmoPosEl.style.top = `${endY * wButtonScale}px`;
-  wAxisGizmoPosEl.classList.remove('back');
-  wAxisGizmoNegEl.classList.remove('back');
-  wAxisGizmoPosEl.style.zIndex = '2';
-  wAxisGizmoNegEl.style.zIndex = '1';
+  syncExtraAxisGizmos();
 }
 
 const raycaster = new THREE.Raycaster();
@@ -835,6 +1076,28 @@ function perspectiveDepthDim(localN: number, axisMap: AxisMap) {
   return localN >= 4 ? axisMap[localN - 1] ?? -1 : -1;
 }
 
+function perspectiveDimsFor(localN: number, axisMap: AxisMap): number[] {
+  if (localN < 4) return [];
+  const nVis = visibleDims();
+  const visibleSet = new Set(axesOrder.slice(0, nVis));
+  const available = new Set<number>(axisMap.slice(0, localN));
+  return Array.from(selectedPerspectiveDims).filter(
+    dim => visibleSet.has(dim) && available.has(dim),
+  );
+}
+
+function perspectiveScaleFrom(rotated: ArrayLike<number>, perspectiveDims: number[]) {
+  if (perspectiveDims.length === 0) return 1;
+  const k = 0.6;
+  let scale = 1;
+  for (const dim of perspectiveDims) {
+    const value = rotated[dim] ?? 0;
+    const denom = Math.max(0.05, 1 - (k * value));
+    scale /= denom;
+  }
+  return Math.min(80, Math.max(0.01, scale));
+}
+
 function wRotationPlaneAxis(lockAxis: -1 | 0 | 1 | 2, depthDim: number) {
   const axes = [PARAMS.axesX, PARAMS.axesY, PARAMS.axesZ].map(dim => Math.max(0, Math.min(N - 1, dim % N)));
   const preferred = axes[lockAxis >= 0 ? lockAxis : 0];
@@ -1034,14 +1297,7 @@ function renameObject(idx: number, value: string) {
 }
 
 function eyeIcon(visible: boolean) {
-  const slash = visible ? '' : '<path d="M4 20L20 4"/>';
-  return `
-    <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/>
-      <circle cx="12" cy="12" r="2.6"/>
-      ${slash}
-    </svg>
-  `;
+  return `<span class="material-symbols-rounded" aria-hidden="true">${visible ? 'visibility' : 'visibility_off'}</span>`;
 }
 
 function updateObjectList() {
@@ -1345,25 +1601,20 @@ function renderAxisList() {
   const items = list.map((dim, idx) => {
     const color = AXIS_PALETTE[dim % AXIS_PALETTE.length];
     const active = activeDims.has(dim);
-    return `<li data-idx="${idx}" data-dim="${dim}" class="${active ? 'active' : ''}" style="--axis-color:${color};border-top:3px solid ${color};">${axisLabel(dim)}</li>`;
+    const hasGizmo = selectedExtraAxisGizmoDims.has(dim);
+    const classes = `${active ? 'active' : ''}${hasGizmo ? ' has-gizmo' : ''}`.trim();
+    return `<li data-idx="${idx}" data-dim="${dim}" class="${classes}" style="--axis-color:${color};border-top:3px solid ${color};">${axisLabel(dim)}</li>`;
   }).join('');
   axisList.innerHTML = `
     <div class="axis-list-head">
       <h4>Axis order</h4>
       <div class="axis-list-actions">
         <button id="axis-cycle-button" type="button" aria-label="Shift projected axes" title="Shift projected axes">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M4 12a8 8 0 1 0 2.2-5.5"></path>
-            <path d="M4 4v5h5"></path>
-          </svg>
+          <span class="material-symbols-rounded" aria-hidden="true">sync_alt</span>
         </button>
         <button id="pane-toggle" type="button" aria-label="Hide panel details" aria-expanded="true" aria-controls="pane" title="Hide panel details">
-          <svg class="hide-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M15 5l-7 7 7 7"></path>
-          </svg>
-          <svg class="show-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M9 5l7 7-7 7"></path>
-          </svg>
+          <span class="material-symbols-rounded hide-icon" aria-hidden="true">chevron_left</span>
+          <span class="material-symbols-rounded show-icon" aria-hidden="true">chevron_right</span>
         </button>
       </div>
     </div>
@@ -1538,7 +1789,9 @@ function renderAxisList() {
   };
 
   axisUl.querySelectorAll('li').forEach(li => {
+    const depthDim = Number((li as HTMLElement).dataset.dim ?? -1);
     li.addEventListener('pointerdown', (ev) => {
+      if (ev.pointerType === 'mouse' && ev.detail > 1) return;
       if (ev.button !== 0 || dragState.pointerId !== -1) return;
       ev.preventDefault();
       dragState.pointerId = ev.pointerId;
@@ -1549,6 +1802,18 @@ function renderAxisList() {
       window.addEventListener('pointermove', onPointerMove, { passive: false });
       window.addEventListener('pointerup', onPointerUp);
       window.addEventListener('pointercancel', onPointerCancel);
+    });
+    li.addEventListener('dblclick', ev => {
+      if (depthDim < 0) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      toggleExtraAxisGizmo(depthDim);
+    });
+    li.addEventListener('pointerup', ev => {
+      if (depthDim < 0) return;
+      if (ev.pointerType === 'mouse') return;
+      if (!isDoubleTapOnDim(axisChipDoubleTapState, depthDim, ev)) return;
+      toggleExtraAxisGizmo(depthDim);
     });
   });
 }
@@ -1648,27 +1913,24 @@ function setDraggedVertexFromWorldPosition(instIdx: number, vertexIdx: number, w
   }
 
   const axes = [PARAMS.axesX % N, PARAMS.axesY % N, PARAMS.axesZ % N].map(v => Math.max(0, Math.min(N - 1, v)));
-  const depthDim = perspectiveDepthDim(originalN, axisMap);
-  const k = 0.6;
+  const perspectiveDims = perspectiveDimsFor(originalN, axisMap);
+  const projectedTargets = [dragTargetY.x, dragTargetY.y, dragTargetY.z] as const;
 
-  let w = depthDim >= 0 ? dragRotated[depthDim] ?? 0 : 0;
-  const depthSlot = depthDim >= 0 ? axes.indexOf(depthDim) : -1;
-  if (depthSlot >= 0) {
-    const depthProjected = depthSlot === 0 ? dragTargetY.x : depthSlot === 1 ? dragTargetY.y : dragTargetY.z;
-    const denom = 1 + k * depthProjected;
-    if (Math.abs(denom) > 1e-6) w = depthProjected / denom;
+  let scale = 1;
+  const iterations = perspectiveDims.length > 0 ? 6 : 1;
+  for (let iter = 0; iter < iterations; iter++) {
+    scale = perspectiveScaleFrom(dragRotatedNext, perspectiveDims);
+    for (let c = 0; c < 3; c++) {
+      const dim = axes[c];
+      dragRotatedNext[dim] = projectedTargets[c] / scale;
+    }
   }
-
-  const scale = depthDim >= 0 ? 1 / Math.max(0.05, (1 - k * w)) : 1;
+  scale = perspectiveScaleFrom(dragRotatedNext, perspectiveDims);
 
   for (let c = 0; c < 3; c++) {
     const dim = axes[c];
-    const projected = c === 0 ? dragTargetY.x : c === 1 ? dragTargetY.y : dragTargetY.z;
-    if (depthDim >= 0 && dim === depthDim) {
-      dragRotatedNext[dim] = w;
-    } else {
-      dragRotatedNext[dim] = projected / scale;
-    }
+    const projected = projectedTargets[c];
+    dragRotatedNext[dim] = projected / scale;
   }
 
   for (let a = 0; a < N; a++) {
@@ -1851,30 +2113,11 @@ const PARAMS = {
   sliceMax: 0.5,
   renderMode: 'faceted' as ViewMode,
   editMode: false,
-  autoSpin: false,
   axesX: 0,
   axesY: 1,
   axesZ: 2,
 };
 initAxisGizmo();
-
-const clonePlane = (p: Plane) => ({ ...p, _lastTheta: p._lastTheta ?? 0 });
-const DEFAULT_PLANES: Plane[] = [
-  { i: 0, j: 1, theta: 0, auto: true, speed: 0.45 },
-  { i: 2, j: 3, theta: 0, auto: true, speed: 0.31 },
-  { i: 4, j: 5, theta: 0, auto: true, speed: 0.18 },
-];
-// Planes (up to 3)
-const planes: Plane[] = DEFAULT_PLANES.map(clonePlane);
-function refreshPlaneOptions() {
-  // Keep i,j indices inside [0, N-1].
-  planes.forEach(p => {
-    p.i = Math.min(p.i, N-1);
-    p.j = Math.min(p.j, N-1);
-    p.theta = 0;
-    p._lastTheta = 0;
-  });
-}
 
 function updateDimensionControl() {
   if (dimensionValue) dimensionValue.textContent = `${PARAMS.N}D`;
@@ -2030,7 +2273,6 @@ function projectAndRenderAll() {
   const usePerspective = N >= 4;
   if (usePerspective) {
     const axes = [PARAMS.axesX % N, PARAMS.axesY % N, PARAMS.axesZ % N].map(v => Math.max(0, Math.min(N - 1, v)));
-    const k = 0.6;
     const projectOne = (
       Xsrc: Float32Array,
       Mloc: number,
@@ -2043,7 +2285,7 @@ function projectAndRenderAll() {
       if (Mloc === 0) return;
       const n = N;
       const R = rot.matrix;
-      const depthDim = perspectiveDepthDim(originalN, axisMap);
+      const perspectiveDims = perspectiveDimsFor(originalN, axisMap);
       for (let m = 0; m < Mloc; m++) {
         // rotate into tmpN
         for (let d = 0; d < n; d++) {
@@ -2051,8 +2293,7 @@ function projectAndRenderAll() {
           for (let a = 0; a < n; a++) acc += R[d * n + a] * Xsrc[a * Mloc + m];
           tmpN[d] = acc;
         }
-        const w = depthDim >= 0 ? tmpN[depthDim] ?? 0 : 0;
-        const scale = depthDim >= 0 ? 1 / Math.max(0.05, (1 - k * w)) : 1;
+        const scale = perspectiveScaleFrom(tmpN, perspectiveDims);
         Ydst[0 * Mloc + m] = tmpN[axes[0]] * scale;
         Ydst[1 * Mloc + m] = tmpN[axes[1]] * scale;
         Ydst[2 * Mloc + m] = tmpN[axes[2]] * scale;
@@ -2094,65 +2335,24 @@ function projectAndRenderAll() {
   updateAxisGuide();
 }
 
-function updateAutoRotateToggle() {
-  if (!autoRotateToggle) return;
-  const active = PARAMS.autoSpin;
-  autoRotateToggle.classList.toggle('active', active);
-  autoRotateToggle.setAttribute('aria-pressed', String(active));
-  autoRotateToggle.setAttribute('aria-label', active ? 'Stop auto rotation' : 'Start auto rotation');
-  autoRotateToggle.title = active ? 'Stop auto rotation' : 'Start auto rotation';
-}
-
-function resetAutoRotationState() {
-  rot.reset();
-  planes.forEach(plane => {
-    plane.theta = 0;
-    plane._lastTheta = 0;
-  });
-  wGizmoAngle = -Math.PI / 4;
-  applySceneBackground(PARAMS.editMode);
-  projectionDirty = true;
-}
-
-function setAutoRotation(active: boolean) {
-  const wasActive = PARAMS.autoSpin;
-  PARAMS.autoSpin = active;
-  if (wasActive && !active) {
-    resetAutoRotationState();
-    projectAndRenderAll();
-    applySliceFilter();
-  }
-  updateAutoRotateToggle();
-}
-
 function applyAutoRotation(dt: number) {
-  if (!PARAMS.autoSpin) return;
+  const gizmoPlanes = currentExtraAxisGizmoPlanes();
+  if (!gizmoPlanes.length || autoRotateExtraAxisDims.size === 0) return;
 
-  const nVis = visibleDims();
   let rotated = false;
-  let wDelta = 0;
-  const wPlane = currentWGizmoRotationPlane();
-  for (const plane of planes) {
-    if (!plane.auto || plane.speed === 0 || plane.i === plane.j) continue;
-    if (plane.i >= nVis || plane.j >= nVis) continue;
-
-    const delta = plane.speed * dt;
-    plane.theta += delta;
-    rot.applyGivensLeft(plane.i, plane.j, delta);
-    if (wPlane && (plane.i === wPlane.wDim || plane.j === wPlane.wDim)) {
-      // Keep gizmo/hue in sync whenever auto-rotation spins through W.
-      wDelta += plane.i === wPlane.wDim ? -delta : delta;
-    }
+  for (const plane of gizmoPlanes) {
+    if (!autoRotateExtraAxisDims.has(plane.depthDim)) continue;
+    if (plane.planeAxis < 0 || plane.planeAxis === plane.depthDim) continue;
+    const delta = EXTRA_AXIS_AUTO_ROTATE_SPEED * dt;
+    rot.applyGivensLeft(plane.planeAxis, plane.depthDim, delta);
+    const prev = getExtraAxisGizmoAngle(plane.depthDim);
+    extraAxisGizmoAngles.set(plane.depthDim, normalizeSignedAngleDelta(prev + delta));
     rotated = true;
   }
 
-  if (rotated) {
-    projectionDirty = true;
-    if (Math.abs(wDelta) > 1e-6) {
-      wGizmoAngle = normalizeSignedAngleDelta(wGizmoAngle + wDelta);
-      applySceneBackground(PARAMS.editMode);
-    }
-  }
+  if (!rotated) return;
+  projectionDirty = true;
+  applySceneBackground(PARAMS.editMode);
 }
 
 function showDeleteConfirm(ev?: MouseEvent) {
@@ -2244,7 +2444,8 @@ function addInstanceAt(offset: THREE.Vector3, recordUndo = true) {
 }
 
 function rebuildState(newN: number, newX: Float32Array, newE: Uint32Array, source: 'primitive' | 'custom', localN?: number, axisMap?: AxisMap) {
-  setAutoRotation(false);
+  autoRotateExtraAxisDims.clear();
+  extraAxisGizmoAngles.clear();
   endAxisShiftDrag();
   controls.enableZoom = true;
   controls.enablePan = true;
@@ -2279,7 +2480,6 @@ function rebuildState(newN: number, newX: Float32Array, newE: Uint32Array, sourc
   PARAMS.axesX = axesOrder[0] ?? 0;
   PARAMS.axesY = axesOrder[1] ?? 1;
   PARAMS.axesZ = axesOrder[2] ?? 2;
-  refreshPlaneOptions();
   if (PARAMS.sliceDim >= ambientN) PARAMS.sliceDim = ambientN - 1;
   if (M > 0) {
     rendererND.build(M, E);
@@ -2431,7 +2631,8 @@ function resetToIsometric() {
   PARAMS.N = targetN;
   PARAMS.primitive = 'hypercube';
   PARAMS.projection = 'PCA';
-  setAutoRotation(false);
+  autoRotateExtraAxisDims.clear();
+  extraAxisGizmoAngles.clear();
   PARAMS.renderMode = 'faceted';
   PARAMS.sliceDim = -1;
   PARAMS.sliceMin = -0.5;
@@ -2441,13 +2642,6 @@ function resetToIsometric() {
   const axisMap = canonicalAxisMap(targetN);
   const embedded = embedToMax(rebuilt.verts, targetN, axisMap);
   rebuildState(MAX_N, embedded, rebuilt.edges, 'primitive', targetN, axisMap);
-
-  DEFAULT_PLANES.forEach((base, idx) => {
-    const clone = clonePlane(base);
-    clone.i = Math.min(clone.i, targetN - 1);
-    clone.j = Math.min(clone.j, targetN - 1);
-    Object.assign(planes[idx], clone, { _lastTheta: clone.theta });
-  });
 
   controls.reset();
   camera.position.copy(DEFAULT_CAMERA_POSITION);
@@ -2553,8 +2747,6 @@ dimensionControl?.addEventListener('keydown', ev => {
   }
 });
 
-autoRotateToggle?.addEventListener('click', () => setAutoRotation(!PARAMS.autoSpin));
-updateAutoRotateToggle();
 updateTransformActionButtons();
 syncPaneCollapsedToViewport(true);
 setMobileOnboardingStep(0);
@@ -2654,7 +2846,8 @@ function applyTransformPointer(clientX: number, clientY: number) {
         if (count > 0) {
           const originalN = inst ? inst.originalN : baseOriginalN || visibleDims();
           const axisMap = inst ? inst.axisMap : baseAxisMap;
-          const dimB = perspectiveDepthDim(originalN, axisMap);
+          const perspectiveDims = perspectiveDimsFor(originalN, axisMap);
+          const dimB = perspectiveDims[0] ?? perspectiveDepthDim(originalN, axisMap);
           const dimA = wRotationPlaneAxis(transformOp.lockAxis, dimB);
           if (dimA < 0 || dimB < 0 || dimA === dimB) return;
           const angle = (dx - dy) * 0.01;
