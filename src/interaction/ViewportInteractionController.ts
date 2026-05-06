@@ -24,7 +24,6 @@ type ViewportInteractionControllerOptions = {
   ndc: THREE.Vector2;
   tooltipEl: HTMLDivElement | null;
   contextMenuEl: HTMLDivElement | null;
-  statusBar: HTMLDivElement | null;
   keyboardCamera: KeyboardCameraController;
   transformController: TransformController;
   primitiveMenuOptions: PrimitiveMenuOption[];
@@ -221,12 +220,6 @@ export class ViewportInteractionController {
       tooltipEl.classList.remove('visible');
     }
 
-    const statusBar = this.options.statusBar;
-    if (statusBar && !this.options.transformController.isActive()) {
-      const ndcX = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
-      const ndcY = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
-      statusBar.textContent = `Cursor NDC: (${ndcX.toFixed(3)}, ${ndcY.toFixed(3)})`;
-    }
   }
 
   private handleTransformPointerMove(ev: PointerEvent) {
@@ -319,7 +312,7 @@ export class ViewportInteractionController {
   }
 
   private handleWindowPointerMove(ev: PointerEvent) {
-    if (this.options.transformController.handleToolbarPointerMove(ev, point => { this.lastPointer = point; })) return;
+    if (this.options.transformController.handleControlPointerMove(ev, point => { this.lastPointer = point; })) return;
     if (!this.axisDrag.active) return;
     if ((ev.buttons & 4) === 0) {
       this.endAxisShiftDrag();
@@ -344,12 +337,12 @@ export class ViewportInteractionController {
   }
 
   private handleWindowPointerUp(ev: PointerEvent) {
-    if (this.options.transformController.handleToolbarPointerEnd(ev, true)) return;
+    if (this.options.transformController.handleControlPointerEnd(ev, true)) return;
     if (this.axisDrag.active) this.endAxisShiftDrag();
   }
 
   private handleWindowPointerCancel(ev: PointerEvent) {
-    this.options.transformController.handleToolbarPointerEnd(ev, false);
+    this.options.transformController.handleControlPointerEnd(ev, false);
     if (this.axisDrag.active) this.endAxisShiftDrag();
   }
 

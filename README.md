@@ -24,7 +24,7 @@ https://srdz-af.github.io/BleND/
 - Vertex edit mode (move vertex)
 - Multiple objects, per-object visibility, rename, delete
 - Per-object surface settings (base color, metallic, roughness, alpha)
-- View modes: wireframe, transparent, solid
+- View modes: wireframe, transparent, solid, faceted
 - Undo/redo
 
 ## Quick Start
@@ -73,13 +73,13 @@ Object operations:
 
 Mobile transforms:
 
-- Touch and drag the Move / Rotate / Scale toolbar buttons to transform the selected object
+- Touch and drag the Move / Rotate / Scale Transformation Controls to transform the selected object
 - Release touch to confirm the transform
 
 While a transform is active:
 
 - X / Y / Z: lock transform axis
-- Extra dimension key (during rotate): toggle that extra dimension's rotation plane
+- Extra-axis plane toggle: W during rotate switches to the active extra-dimension rotation plane
 - Left click: confirm
 - Right click: cancel
 
@@ -100,7 +100,7 @@ History:
 Use these names when referring to the main UI groups:
 
 - **Projection Controls**: the gizmo panel. It controls which dimensions are projected, how extra dimensions rotate, and how projection axes are arranged.
-- **Scene Controls**: the right-side boxes. They control objects, background, and per-object texture/material settings.
+- **Scene Controls**: the right-side panel. It controls objects, background, and per-object texture/material settings.
 - **Transformation Controls**: the circular bottom controls. They toggle edit mode and activate move, rotate, and scale.
 - **Render Options**: the rectangular bottom toolbar. It controls viewport render mode, recording, and screenshots.
 
@@ -121,7 +121,7 @@ Projection Controls contain the XYZ gizmo, dimension stepper, and extra-axis giz
 
 ## Scene Controls
 
-Scene Controls are the right-side panels.
+Scene Controls are the right-side panel.
 
 - Object list: select, rename, hide/show, and manage scene objects
 - Background: choose the plain background or a studio/HDRI background and tune its settings

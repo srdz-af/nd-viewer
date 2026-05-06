@@ -22,7 +22,6 @@ type TransformControllerOptions = {
   raycaster: THREE.Raycaster;
   ndc: THREE.Vector2;
   vertexGeo: THREE.BufferGeometry;
-  statusBar: HTMLDivElement | null;
   moveButton: HTMLButtonElement | null;
   rotateButton: HTMLButtonElement | null;
   scaleButton: HTMLButtonElement | null;
@@ -42,7 +41,7 @@ type TransformControllerOptions = {
   getObjectVisible: (idx: number) => boolean;
   visibleDims: () => number;
   perspectiveDimsFor: (localN: number, axisMap: AxisMap) => number[];
-  wRotationPlaneAxis: (lockAxis: -1 | 0 | 1 | 2, depthDim: number) => number;
+  extraRotationPlaneAxis: (lockAxis: -1 | 0 | 1 | 2, depthDim: number) => number;
   setProjectionDirty: (dirty: boolean) => void;
   projectAndRenderAll: () => void;
   applySliceFilter: () => void;
@@ -66,7 +65,7 @@ type TransformOperation = {
   vertexDataStart: Float32Array | null;
   lockAxis: -1 | 0 | 1 | 2;
   objectDataStart: Float32Array | null;
-  wPlane: boolean;
+  extraPlane: boolean;
   moveOffset: THREE.Vector3;
 };
 
@@ -89,7 +88,7 @@ export class TransformController {
   private selectionVertexMarker: THREE.Mesh | null = null;
   private vertexCloud: THREE.InstancedMesh | null = null;
   private axisGuide: THREE.Line | null = null;
-  private wGuide: THREE.Line | null = null;
+  private extraPlaneGuide: THREE.Line | null = null;
   private readonly tmpVec = new THREE.Vector3();
   private readonly dragRotated = new Float32Array(32);
   private readonly dragRotatedNext = new Float32Array(32);
@@ -121,11 +120,11 @@ export class TransformController {
     vertexDataStart: null,
     lockAxis: -1,
     objectDataStart: null,
-    wPlane: false,
+    extraPlane: false,
     moveOffset: new THREE.Vector3(),
   };
 
-  private readonly toolbarTransformDrag = {
+  private readonly controlTransformDrag = {
     active: false,
     started: false,
     pointerId: -1,
@@ -179,10 +178,10 @@ export class TransformController {
       this.axisGuide.geometry.dispose();
       this.axisGuide = null;
     }
-    if (this.wGuide) {
-      this.options.scene.remove(this.wGuide);
-      this.wGuide.geometry.dispose();
-      this.wGuide = null;
+    if (this.extraPlaneGuide) {
+      this.options.scene.remove(this.extraPlaneGuide);
+      this.extraPlaneGuide.geometry.dispose();
+      this.extraPlaneGuide = null;
     }
   }
 
@@ -252,7 +251,7 @@ export class TransformController {
   handleConstraintKey(key: string) {
     if (key === 'w') {
       if (this.transformOp.mode === 'rotate') {
-        this.transformOp.wPlane = !this.transformOp.wPlane;
+        this.transformOp.extraPlane = !this.transformOp.extraPlane;
         this.updateAxisGuide();
         return true;
       }
@@ -294,7 +293,7 @@ export class TransformController {
       this.transformOp.planeHitStart.copy(this.transformOp.vertexStart);
       this.transformOp.lastHit.copy(this.transformOp.vertexStart);
       this.transformOp.lockAxis = -1;
-      this.transformOp.wPlane = false;
+      this.transformOp.extraPlane = false;
       return;
     }
 
@@ -310,7 +309,7 @@ export class TransformController {
     this.transformOp.startRot.copy(target.rot);
     this.transformOp.startScale = target.scale.x;
     this.transformOp.lockAxis = -1;
-    this.transformOp.wPlane = false;
+    this.transformOp.extraPlane = false;
 
     if (mode === 'move' || mode === 'rotate') {
       const src = selectedInstance === -1 ? this.options.getX() : this.options.getExtraInstances()[selectedInstance].X;
@@ -342,40 +341,40 @@ export class TransformController {
     }
   }
 
-  beginToolbarDrag(mode: TransformMode, ev: PointerEvent) {
+  beginControlDrag(mode: TransformMode, ev: PointerEvent) {
     if (mode === 'none') return;
     if (this.transformOp.mode !== 'none') return;
     if (!this.options.getObjectVisible(this.options.getSelectedInstance())) return;
 
     ev.preventDefault();
     ev.stopPropagation();
-    this.toolbarTransformDrag.active = true;
-    this.toolbarTransformDrag.started = false;
-    this.toolbarTransformDrag.pointerId = ev.pointerId;
-    this.toolbarTransformDrag.mode = mode;
-    this.toolbarTransformDrag.startX = ev.clientX;
-    this.toolbarTransformDrag.startY = ev.clientY;
-    this.toolbarTransformDrag.sourceButton = ev.currentTarget as HTMLButtonElement | null;
+    this.controlTransformDrag.active = true;
+    this.controlTransformDrag.started = false;
+    this.controlTransformDrag.pointerId = ev.pointerId;
+    this.controlTransformDrag.mode = mode;
+    this.controlTransformDrag.startX = ev.clientX;
+    this.controlTransformDrag.startY = ev.clientY;
+    this.controlTransformDrag.sourceButton = ev.currentTarget as HTMLButtonElement | null;
     try {
-      this.toolbarTransformDrag.sourceButton?.setPointerCapture(ev.pointerId);
+      this.controlTransformDrag.sourceButton?.setPointerCapture(ev.pointerId);
     } catch {
       // Some browsers may reject capture when pointerdown starts from nested SVG nodes.
     }
   }
 
-  handleToolbarPointerMove(ev: PointerEvent, setLastPointer: (point: { x: number; y: number }) => void) {
-    if (!this.toolbarTransformDrag.active || ev.pointerId !== this.toolbarTransformDrag.pointerId) return false;
+  handleControlPointerMove(ev: PointerEvent, setLastPointer: (point: { x: number; y: number }) => void) {
+    if (!this.controlTransformDrag.active || ev.pointerId !== this.controlTransformDrag.pointerId) return false;
 
     ev.preventDefault();
     setLastPointer({ x: ev.clientX, y: ev.clientY });
-    if (!this.toolbarTransformDrag.started) {
-      const moved = Math.hypot(ev.clientX - this.toolbarTransformDrag.startX, ev.clientY - this.toolbarTransformDrag.startY);
+    if (!this.controlTransformDrag.started) {
+      const moved = Math.hypot(ev.clientX - this.controlTransformDrag.startX, ev.clientY - this.controlTransformDrag.startY);
       if (moved < 3) return true;
       this.options.pushUndoSnapshot();
-      this.start(this.toolbarTransformDrag.mode, ev);
-      this.toolbarTransformDrag.started = this.transformOp.mode !== 'none';
-      if (!this.toolbarTransformDrag.started) {
-        this.resetToolbarDrag();
+      this.start(this.controlTransformDrag.mode, ev);
+      this.controlTransformDrag.started = this.transformOp.mode !== 'none';
+      if (!this.controlTransformDrag.started) {
+        this.resetControlDrag();
         return true;
       }
       this.updateActionButtons();
@@ -384,15 +383,15 @@ export class TransformController {
     return true;
   }
 
-  handleToolbarPointerEnd(ev: PointerEvent, commit: boolean) {
-    if (!this.toolbarTransformDrag.active || ev.pointerId !== this.toolbarTransformDrag.pointerId) return false;
+  handleControlPointerEnd(ev: PointerEvent, commit: boolean) {
+    if (!this.controlTransformDrag.active || ev.pointerId !== this.controlTransformDrag.pointerId) return false;
 
-    if (this.toolbarTransformDrag.sourceButton?.hasPointerCapture(ev.pointerId)) {
-      this.toolbarTransformDrag.sourceButton.releasePointerCapture(ev.pointerId);
+    if (this.controlTransformDrag.sourceButton?.hasPointerCapture(ev.pointerId)) {
+      this.controlTransformDrag.sourceButton.releasePointerCapture(ev.pointerId);
     }
-    const shouldFinish = this.toolbarTransformDrag.started && this.transformOp.mode !== 'none';
+    const shouldFinish = this.controlTransformDrag.started && this.transformOp.mode !== 'none';
     if (shouldFinish) this.finish(commit);
-    this.resetToolbarDrag();
+    this.resetControlDrag();
     ev.preventDefault();
     return true;
   }
@@ -454,9 +453,6 @@ export class TransformController {
       this.options.applySliceFilter();
       const refreshed = inst ? inst.renderer.positions : rendererND.positions;
       if (this.selectionVertexMarker) this.selectionVertexMarker.position.set(refreshed[idx], refreshed[idx + 1], refreshed[idx + 2]);
-      if (this.options.statusBar) {
-        this.options.statusBar.textContent = `Vertex (${this.transformOp.targetVertex}): (${refreshed[idx].toFixed(3)}, ${refreshed[idx + 1].toFixed(3)}, ${refreshed[idx + 2].toFixed(3)})`;
-      }
     } else {
       const target = this.transformOp.instIdx === -1
         ? this.options.getBaseTransform()
@@ -495,7 +491,7 @@ export class TransformController {
           this.options.setProjectionDirty(true);
         }
       } else if (this.transformOp.mode === 'rotate') {
-        if (this.transformOp.wPlane && this.transformOp.objectDataStart) {
+        if (this.transformOp.extraPlane && this.transformOp.objectDataStart) {
           const inst = this.transformOp.instIdx === -1 ? null : extraInstances[this.transformOp.instIdx];
           const src = inst ? inst.X : this.options.getX();
           const baseData = this.transformOp.objectDataStart;
@@ -505,7 +501,7 @@ export class TransformController {
             const axisMap = inst ? inst.axisMap : this.options.getBaseAxisMap();
             const perspectiveDims = this.options.perspectiveDimsFor(originalN, axisMap);
             const dimB = perspectiveDims[0] ?? perspectiveDepthDim(originalN, axisMap);
-            const dimA = this.options.wRotationPlaneAxis(this.transformOp.lockAxis, dimB);
+            const dimA = this.options.extraRotationPlaneAxis(this.transformOp.lockAxis, dimB);
             if (dimA < 0 || dimB < 0 || dimA === dimB) return;
             const angle = (dx - dy) * 0.01;
             const c = Math.cos(angle);
@@ -540,9 +536,6 @@ export class TransformController {
         target.scale.set(s, s, s);
       }
 
-      if (this.options.statusBar) {
-        this.options.statusBar.textContent = `Object: pos(${target.pos.x.toFixed(3)}, ${target.pos.y.toFixed(3)}, ${target.pos.z.toFixed(3)}) rot(${target.rot.x.toFixed(3)}, ${target.rot.y.toFixed(3)}, ${target.rot.z.toFixed(3)})`;
-      }
     }
 
     this.options.projectAndRenderAll();
@@ -567,17 +560,6 @@ export class TransformController {
         const idx = this.transformOp.targetVertex * 3;
         this.dragWorldTarget.set(posArr[idx], posArr[idx + 1], posArr[idx + 2]);
         this.setDraggedVertexFromWorldPosition(this.transformOp.instIdx, this.transformOp.targetVertex, this.dragWorldTarget);
-      }
-      if (this.options.statusBar) {
-        if (this.transformOp.targetVertex >= 0) {
-          const inst = this.transformOp.instIdx === -1 ? null : extraInstances[this.transformOp.instIdx];
-          const posArr = inst ? inst.renderer.positions : rendererND.positions;
-          const idx = this.transformOp.targetVertex * 3;
-          this.options.statusBar.textContent = `Vertex (${this.transformOp.targetVertex}) commit: (${posArr[idx].toFixed(3)}, ${posArr[idx + 1].toFixed(3)}, ${posArr[idx + 2].toFixed(3)})`;
-        } else {
-          const target = this.transformOp.instIdx === -1 ? this.options.getBaseTransform() : extraInstances[this.transformOp.instIdx].transform;
-          this.options.statusBar.textContent = `Object commit: pos(${target.pos.x.toFixed(3)}, ${target.pos.y.toFixed(3)}, ${target.pos.z.toFixed(3)})`;
-        }
       }
     } else {
       if (this.transformOp.targetVertex >= 0) {
@@ -623,7 +605,7 @@ export class TransformController {
     this.transformOp.vertexDataStart = null;
     this.transformOp.lockAxis = -1;
     this.transformOp.objectDataStart = null;
-    this.transformOp.wPlane = false;
+    this.transformOp.extraPlane = false;
     this.clearAxisGuide();
     this.transformOp.moveOffset.set(0, 0, 0);
     this.options.projectAndRenderAll();
@@ -643,7 +625,7 @@ export class TransformController {
       axisIdx === 1 ? 1 : 0,
       axisIdx === 2 ? 1 : 0,
     );
-    if (!hasAxis && !this.transformOp.wPlane) return;
+    if (!hasAxis && !this.transformOp.extraPlane) return;
 
     let center = new THREE.Vector3();
     if (this.transformOp.targetVertex >= 0) {
@@ -672,20 +654,20 @@ export class TransformController {
       this.axisGuide.renderOrder = 30;
       this.options.scene.add(this.axisGuide);
     }
-    if (this.transformOp.wPlane) {
-      const wDir = new THREE.Vector3(0, 0, 0);
-      wDir.copy(dir).cross(this.options.camera.getWorldDirection(this.tmpVec).normalize()).normalize();
-      if (wDir.lengthSq() === 0) wDir.copy(this.options.camera.up).normalize();
-      const wLen = 2;
-      const wPoints = [
-        center.clone().addScaledVector(wDir, -wLen),
-        center.clone().addScaledVector(wDir, wLen),
+    if (this.transformOp.extraPlane) {
+      const extraDir = new THREE.Vector3(0, 0, 0);
+      extraDir.copy(dir).cross(this.options.camera.getWorldDirection(this.tmpVec).normalize()).normalize();
+      if (extraDir.lengthSq() === 0) extraDir.copy(this.options.camera.up).normalize();
+      const extraLen = 2;
+      const extraPoints = [
+        center.clone().addScaledVector(extraDir, -extraLen),
+        center.clone().addScaledVector(extraDir, extraLen),
       ];
-      const wGeom = new THREE.BufferGeometry().setFromPoints(wPoints);
-      const wMat = new THREE.LineBasicMaterial({ color: 0xc084fc, linewidth: 2, depthTest: false, transparent: true, opacity: 0.9 });
-      this.wGuide = new THREE.Line(wGeom, wMat);
-      this.wGuide.renderOrder = 31;
-      this.options.scene.add(this.wGuide);
+      const extraGeom = new THREE.BufferGeometry().setFromPoints(extraPoints);
+      const extraMat = new THREE.LineBasicMaterial({ color: 0xc084fc, linewidth: 2, depthTest: false, transparent: true, opacity: 0.9 });
+      this.extraPlaneGuide = new THREE.Line(extraGeom, extraMat);
+      this.extraPlaneGuide.renderOrder = 31;
+      this.options.scene.add(this.extraPlaneGuide);
     }
   }
 
@@ -756,11 +738,11 @@ export class TransformController {
     return true;
   }
 
-  private resetToolbarDrag() {
-    this.toolbarTransformDrag.active = false;
-    this.toolbarTransformDrag.started = false;
-    this.toolbarTransformDrag.pointerId = -1;
-    this.toolbarTransformDrag.mode = 'none';
-    this.toolbarTransformDrag.sourceButton = null;
+  private resetControlDrag() {
+    this.controlTransformDrag.active = false;
+    this.controlTransformDrag.started = false;
+    this.controlTransformDrag.pointerId = -1;
+    this.controlTransformDrag.mode = 'none';
+    this.controlTransformDrag.sourceButton = null;
   }
 }

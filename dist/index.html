@@ -58,7 +58,7 @@
       #bottom-controls {
         display: contents;
       }
-      #top-left-controls,
+      #render-options,
       #gizmo-dock,
       #scene-controls,
       #context-menu,
@@ -245,7 +245,7 @@
       body.pane-collapsed #pane-header {
         margin-bottom: 0;
       }
-      #top-left-controls {
+      #render-options {
         box-sizing: border-box;
         position: fixed;
         top: auto;
@@ -270,28 +270,28 @@
         scrollbar-width: none;
         transform: translateX(-50%);
       }
-      #top-left-controls::-webkit-scrollbar {
+      #render-options::-webkit-scrollbar {
         display: none;
       }
       #view-toggle,
-      #scene-actions,
+      #render-actions,
       #transform-actions {
         display: inline-flex;
         flex-wrap: nowrap;
         align-items: center;
         gap: 2px;
       }
-      #scene-actions,
+      #render-actions,
       #transform-actions {
         margin-left: 3px;
         padding-left: 5px;
         border-left: 1px solid var(--ui-border);
       }
-      #scene-actions {
+      #render-actions {
         align-items: center;
       }
       #view-toggle button,
-      #scene-actions button,
+      #render-actions button,
       #transform-actions button {
         display: grid;
         place-items: center;
@@ -309,19 +309,19 @@
         touch-action: none;
       }
       #view-toggle button.active,
-      #scene-actions button.active,
+      #render-actions button.active,
       #transform-actions button.active {
         background: var(--ui-blue);
         color: var(--ui-text-strong);
       }
       #view-toggle button:hover,
-      #scene-actions button:hover,
+      #render-actions button:hover,
       #transform-actions button:hover { background: var(--ui-bg-hover); color: var(--ui-text-strong); }
       #view-toggle button.active:hover,
-      #scene-actions button.active:hover,
+      #render-actions button.active:hover,
       #transform-actions button.active:hover { background: var(--ui-blue-hover); }
-      #scene-actions button.recording,
-      #scene-actions button.recording:hover {
+      #render-actions button.recording,
+      #render-actions button.recording:hover {
         background: rgba(201, 56, 56, 0.86);
         color: #fff;
       }
@@ -344,13 +344,13 @@
         display: inline-block;
       }
       #view-toggle button:disabled,
-      #scene-actions button:disabled,
+      #render-actions button:disabled,
       #transform-actions button:disabled {
         opacity: 0.45;
         cursor: default;
       }
       #view-toggle .material-symbols-rounded,
-      #scene-actions .material-symbols-rounded,
+      #render-actions .material-symbols-rounded,
       #transform-actions .material-symbols-rounded {
         font-size: 18px;
       }
@@ -741,7 +741,6 @@
       #background-controls output,
       #texture-panel,
       #texture-panel h4,
-      #texture-empty,
       #texture-controls label,
       #texture-controls output,
       #texture-preset-controls label,
@@ -997,18 +996,6 @@
         display: block;
         width: 100%;
         height: 100%;
-      }
-      #texture-empty {
-        display: none;
-        margin: 0;
-        padding: 0 0 12px 0;
-        color: var(--ui-muted);
-        font-size: 11px;
-        line-height: 1.45;
-        text-align: left;
-      }
-      #texture-panel.empty #texture-empty {
-        display: block;
       }
       #texture-panel.empty #texture-controls,
       #texture-panel.empty #texture-preview-wrap {
@@ -1559,7 +1546,7 @@
         #bottom-controls > * {
           pointer-events: auto;
         }
-        #bottom-controls #top-left-controls,
+        #bottom-controls #render-options,
         #bottom-controls #transform-actions,
         #bottom-controls #quick-links {
           position: static;
@@ -1569,7 +1556,7 @@
           left: auto;
           transform: none;
         }
-        #top-left-controls {
+        #render-options {
           box-sizing: border-box;
           height: 38px;
           flex: 0 1 auto;
@@ -1583,7 +1570,7 @@
           scrollbar-width: none;
           order: 2;
         }
-        #top-left-controls::-webkit-scrollbar {
+        #render-options::-webkit-scrollbar {
           display: none;
         }
         #pane {
@@ -1699,18 +1686,18 @@
           margin: 0 24px 0 22px;
         }
         #view-toggle,
-        #scene-actions {
+        #render-actions {
           flex-wrap: nowrap;
           align-items: center;
           gap: 1px;
         }
         #view-toggle button,
-        #scene-actions button {
+        #render-actions button {
           width: 26px;
           height: 26px;
         }
         #view-toggle .material-symbols-rounded,
-        #scene-actions .material-symbols-rounded,
+        #render-actions .material-symbols-rounded,
         #transform-actions .material-symbols-rounded {
           font-size: 16px;
         }
@@ -1765,12 +1752,12 @@
         border: 0 !important;
       }
     </style>
-    <script type="module" crossorigin src="/BleND/assets/index-CDQckZL8.js"></script>
+    <script type="module" crossorigin src="/BleND/assets/index-DQJf14BS.js"></script>
   </head>
   <body>
     <div id="bottom-controls">
-      <div id="top-left-controls">
-        <div id="view-toggle" aria-label="View mode">
+      <div id="render-options">
+        <div id="view-toggle" aria-label="Render modes">
           <button data-mode="wireframe" aria-label="Wireframe mode" title="Wireframe">
             <span class="material-symbols-rounded" aria-hidden="true">grid_on</span>
           </button>
@@ -1784,7 +1771,7 @@
             <span class="material-symbols-rounded" aria-hidden="true">view_in_ar</span>
           </button>
         </div>
-        <div id="scene-actions" aria-label="Scene actions">
+        <div id="render-actions" aria-label="Render capture actions">
           <button id="record-viewport-button" type="button" aria-label="Record viewport (Shift+R)" title="Record viewport (Shift+R)">
             <span class="material-symbols-rounded" aria-hidden="true">movie</span>
           </button>
@@ -1794,7 +1781,7 @@
           </button>
         </div>
       </div>
-      <div id="transform-actions" aria-label="Transform actions">
+      <div id="transform-actions" aria-label="Transformation controls">
         <button id="edit-mode-toggle" type="button" aria-label="Toggle edit mode" aria-pressed="false" title="Edit mode">
           <span class="material-symbols-rounded" aria-hidden="true">edit</span>
         </button>
@@ -1823,7 +1810,7 @@
       </div>
     </div>
     <div id="pane">
-      <div id="gizmo-dock">
+      <div id="gizmo-dock" aria-label="Projection controls">
         <div id="axis-gizmo-row">
           <div id="dimension-control" role="group" aria-label="New object dimension">
             <div class="dimension-stepper">
@@ -1920,7 +1907,6 @@
           <div id="texture-preview-wrap">
             <canvas id="texture-preview" aria-label="Texture preview"></canvas>
           </div>
-          <p id="texture-empty">No object selected</p>
           <div id="texture-controls">
             <div class="texture-row">
               <label for="texture-base-color">Base color</label>
@@ -1969,13 +1955,14 @@
           <li><strong>Shift axes button:</strong> click the axis cycle button to shift which dimensions are projected as X/Y/Z.</li>
           <li><strong>Perspective depth:</strong> use the depth button on an extra-axis gizmo to include/exclude that axis from perspective depth.</li>
           <li><strong>XYZ gizmo:</strong> drag the gizmo to move/orbit the view, or tap an endpoint to snap the camera to that axis.</li>
-          <li><strong>Extra-axis gizmos:</strong> double click/tap an axis chip to add or remove its gizmo.</li>
+          <li><strong>Extra-axis gizmos:</strong> drag a gizmo to rotate through that extra dimension's projection plane.</li>
           <li><strong>Axis auto-rotate:</strong> use the tiny play button on a gizmo to cycle 1x, 2x, 3x, then stop for that axis plane.</li>
-          <li><strong>Remove from gizmo dock:</strong> double click/tap a gizmo to remove it directly.</li>
+          <li><strong>Axis order handles:</strong> drag the handle beside an extra-axis gizmo to reorder extra dimensions.</li>
+          <li><strong>Axis swapping:</strong> drag an extra-axis gizmo over an XYZ tip to swap it with that projected axis.</li>
           <li><strong>Faceted mode:</strong> every object uses the same solid multicolor material with one color per coplanar outer face region.</li>
           <li><strong>Add object:</strong> <code>Shift + A</code>.</li>
           <li><strong>Transform selected object:</strong> <code>G</code> move, <code>R</code> rotate, <code>S</code> scale.</li>
-          <li><strong>Mobile transforms:</strong> touch and drag the Move/Rotate/Scale toolbar buttons, then release to confirm.</li>
+          <li><strong>Mobile transforms:</strong> touch and drag the Move/Rotate/Scale Transformation Controls, then release to confirm.</li>
           <li><strong>Delete selected object:</strong> <code>X</code>.</li>
           <li><strong>Edit mode:</strong> <code>Tab</code>. Select vertex with left click.</li>
           <li><strong>Undo/Redo:</strong> <code>Ctrl/Cmd + Z</code>, <code>Ctrl/Cmd + Y</code>.</li>
@@ -2007,11 +1994,10 @@
             </article>
             <article class="mobile-onboarding-step" data-step="1">
               <h3>2. Manage Extra Axis Gizmos</h3>
-              <p>Axis chips let you add and remove high-dimensional gizmos and control perspective on visible axes.</p>
+              <p>Projection Controls show the XYZ gizmo plus one gizmo for each extra dimension.</p>
               <ul>
-                <li><strong>Axis order row:</strong> drag chips to reorder projected axes.</li>
-                <li><strong>Add/remove by chip:</strong> double click/tap a chip to toggle its gizmo.</li>
-                <li><strong>Remove by gizmo:</strong> double click/tap a gizmo in the dock.</li>
+                <li><strong>Axis order handles:</strong> drag the handle beside an extra-axis gizmo to reorder extra dimensions.</li>
+                <li><strong>Axis swapping:</strong> drag an extra-axis gizmo over an XYZ tip to swap it with that projected axis.</li>
                 <li><strong>Gizmo use:</strong> drag a gizmo to rotate through that axis plane.</li>
                 <li><strong>Auto rotate by axis:</strong> tap the small play button on a gizmo to cycle 1x, 2x, 3x, then stop.</li>
                 <li><strong>Depth button:</strong> tap the depth icon on a gizmo to toggle that axis in perspective depth.</li>
@@ -2019,7 +2005,7 @@
             </article>
             <article class="mobile-onboarding-step" data-step="2">
               <h3>3. Transform Objects</h3>
-              <p>Select an object, then use toolbar transform buttons to move, rotate, or scale.</p>
+              <p>Select an object, then use Transformation Controls to move, rotate, or scale.</p>
               <ul>
                 <li><strong>Move / Rotate / Scale buttons:</strong> drag after pressing to apply, release to commit.</li>
                 <li><strong>Edit mode:</strong> toggle with the pencil button, then select vertices.</li>
@@ -2027,11 +2013,11 @@
               </ul>
             </article>
             <article class="mobile-onboarding-step" data-step="3">
-              <h3>4. Quick Actions</h3>
-              <p>Use the quick controls for reference.</p>
+              <h3>4. Render And Scene Controls</h3>
+              <p>Use the bottom Render Options and the Scene Controls panel for the rest of the workflow.</p>
               <ul>
-                <li><strong>Question button:</strong> opens the full controls reference.</li>
-                <li><strong>You can reopen this guide anytime:</strong> from the Controls help panel.</li>
+                <li><strong>Render Options:</strong> switch render mode, record the viewport, or capture a screenshot.</li>
+                <li><strong>Scene Controls:</strong> manage objects, backgrounds, and texture settings.</li>
               </ul>
             </article>
           </div>

@@ -138,7 +138,7 @@ export class AxisGizmoController {
     return this.extraAxisGizmos.perspectiveDimsFor(localN, axisMap);
   }
 
-  wRotationPlaneAxis(lockAxis: -1 | 0 | 1 | 2, depthDim: number, n: number) {
+  extraRotationPlaneAxis(lockAxis: -1 | 0 | 1 | 2, depthDim: number, n: number) {
     const params = this.options.getParams();
     const axes = [params.axesX, params.axesY, params.axesZ].map(dim => Math.max(0, Math.min(n - 1, dim % n)));
     const preferred = axes[lockAxis >= 0 ? lockAxis : 0];

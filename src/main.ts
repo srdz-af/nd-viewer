@@ -106,7 +106,7 @@ let axisController: AxisGizmoController;
 const visibleDims = () => axisController.visibleDims();
 const currentAxisMap = (localN: number) => axisController.currentAxisMap(localN);
 const perspectiveDimsFor = (localN: number, axisMap: AxisMap) => axisController.perspectiveDimsFor(localN, axisMap);
-const wRotationPlaneAxis = (lockAxis: -1 | 0 | 1 | 2, depthDim: number) => axisController.wRotationPlaneAxis(lockAxis, depthDim, N);
+const extraRotationPlaneAxis = (lockAxis: -1 | 0 | 1 | 2, depthDim: number) => axisController.extraRotationPlaneAxis(lockAxis, depthDim, N);
 const setProjectionAxes = (axes: ProjectionAxes) => axisController.setProjectionAxes(axes);
 const cycleAxes = (step: number) => axisController.cycleAxes(step);
 const renderAxisList = () => axisController.renderAxisList();
@@ -503,7 +503,6 @@ transformController = new TransformController({
   raycaster,
   ndc,
   vertexGeo,
-  statusBar: null,
   moveButton: transformMoveButton,
   rotateButton: transformRotateButton,
   scaleButton: transformScaleButton,
@@ -523,7 +522,7 @@ transformController = new TransformController({
   getObjectVisible,
   visibleDims,
   perspectiveDimsFor,
-  wRotationPlaneAxis,
+  extraRotationPlaneAxis,
   setProjectionDirty: dirty => { projectionDirty = dirty; },
   projectAndRenderAll,
   applySliceFilter,
@@ -657,7 +656,6 @@ viewportInteraction = new ViewportInteractionController({
   ndc,
   tooltipEl,
   contextMenuEl: ctxMenu,
-  statusBar: null,
   keyboardCamera,
   transformController,
   primitiveMenuOptions,
@@ -863,7 +861,7 @@ editModeToggle?.addEventListener('click', () => setEditMode(!PARAMS.editMode));
   { el: transformRotateButton, mode: 'rotate' as TransformMode },
   { el: transformScaleButton, mode: 'scale' as TransformMode },
 ].forEach(entry => {
-  entry.el?.addEventListener('pointerdown', ev => transformController.beginToolbarDrag(entry.mode, ev));
+  entry.el?.addEventListener('pointerdown', ev => transformController.beginControlDrag(entry.mode, ev));
 });
 dimensionDownButton?.addEventListener('click', () => setNewPrimitiveDimension(PARAMS.N - 1));
 dimensionUpButton?.addEventListener('click', () => setNewPrimitiveDimension(PARAMS.N + 1));
