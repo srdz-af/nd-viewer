@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 import { MAX_N, AXIS_PALETTE, VIEW_MODES, type ViewMode } from './constants';
 import { RotND } from './RotND';
 import { pcaTopK } from './PCA';
@@ -43,6 +44,12 @@ const dimensionControl = document.getElementById('dimension-control') as HTMLDiv
 const dimensionValue = document.getElementById('dimension-value') as HTMLOutputElement | null;
 const dimensionDownButton = document.getElementById('dimension-down') as HTMLButtonElement | null;
 const dimensionUpButton = document.getElementById('dimension-up') as HTMLButtonElement | null;
+const backgroundSelectorEl = document.getElementById('background-selector') as HTMLDivElement | null;
+const backgroundSwatchButtons = Array.from(document.querySelectorAll('#background-swatches .background-swatch[data-hdri]')) as HTMLButtonElement[];
+const backgroundBlurInput = document.getElementById('background-blur') as HTMLInputElement | null;
+const backgroundBlurValue = document.getElementById('background-blur-value') as HTMLOutputElement | null;
+const backgroundLightnessInput = document.getElementById('background-lightness') as HTMLInputElement | null;
+const backgroundLightnessValue = document.getElementById('background-lightness-value') as HTMLOutputElement | null;
 const texturePanel = document.getElementById('texture-panel') as HTMLDivElement | null;
 const texturePreviewCanvas = document.getElementById('texture-preview') as HTMLCanvasElement | null;
 const textureBaseColorInput = document.getElementById('texture-base-color') as HTMLInputElement | null;
@@ -55,6 +62,9 @@ const textureAlphaInput = document.getElementById('texture-alpha') as HTMLInputE
 const textureAlphaValue = document.getElementById('texture-alpha-value') as HTMLOutputElement | null;
 const getPaneToggleButton = () => document.getElementById('pane-toggle') as HTMLButtonElement | null;
 const MOBILE_ONBOARDING_SEEN_KEY = 'blend.mobileOnboardingSeen.v1';
+const HDR_BACKGROUND_SELECTION_KEY = 'blend.hdriSelection.v1';
+const HDR_BACKGROUND_BLUR_KEY = 'blend.hdriBlur.v1';
+const HDR_BACKGROUND_LIGHTNESS_KEY = 'blend.hdriLightness.v1';
 let helpLastFocusedEl: HTMLElement | null = null;
 let mobileOnboardingLastFocusedEl: HTMLElement | null = null;
 let mobileOnboardingStep = 0;
@@ -159,7 +169,6 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 app.appendChild(renderer.domElement);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.1;
-renderer.useLegacyLights = false;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
@@ -169,9 +178,81 @@ const editBackground = new THREE.Color(0x141414);
 scene.background = baseBackground.clone();
 renderer.setClearColor(scene.background);
 const pmrem = new THREE.PMREMGenerator(renderer);
-const environmentMap = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-pmrem.dispose();
-scene.environment = environmentMap;
+const fallbackEnvironmentTarget = pmrem.fromScene(new RoomEnvironment(), 0.04);
+let activeEnvironmentTarget: THREE.WebGLRenderTarget = fallbackEnvironmentTarget;
+scene.environment = fallbackEnvironmentTarget.texture;
+const HDR_BACKGROUND_BLUR_DEFAULT = 0.35;
+const HDR_BACKGROUND_LIGHTNESS_DEFAULT = 1.0;
+const APP_BASE_URL = (() => {
+  try {
+    const path = new URL('.', document.baseURI).pathname;
+    return path.endsWith('/') ? path : `${path}/`;
+  } catch {
+    return '/';
+  }
+})();
+const HDR_BACKGROUND_OPTIONS = [
+  {
+    key: 'ferndale',
+    label: 'Ferndale studio',
+    preview: 'hdri/previews/ferndale_studio_12_1k.webp',
+    urls: [
+      '/hdri/ferndale_studio_12_1k.hdr',
+      '/ferndale_studio_12_1k.hdr',
+      '/hdri/ferndale-studio-12-1k.hdr',
+      '/ferndale-studio-12-1k.hdr',
+    ],
+  },
+  {
+    key: 'monochrome',
+    label: 'Monochrome studio',
+    preview: 'hdri/previews/monochrome_studio_02_1k.webp',
+    urls: [
+      '/hdri/monochrome_studio_02_1k.hdr',
+      '/monochrome_studio_02_1k.hdr',
+      '/hdri/monochrome-studio-02-1k.hdr',
+      '/monochrome-studio-02-1k.hdr',
+    ],
+  },
+  {
+    key: 'sundowner',
+    label: 'Sundowner deck',
+    preview: 'hdri/previews/sundowner_deck_1k.webp',
+    urls: [
+      '/hdri/sundowner_deck_1k.hdr',
+      '/sundowner_deck_1k.hdr',
+      '/hdri/sundowner-deck-1k.hdr',
+      '/sundowner-deck-1k.hdr',
+    ],
+  },
+  {
+    key: 'grasslands',
+    label: 'Grasslands sunset',
+    preview: 'hdri/previews/grasslands_sunset_1k.webp',
+    urls: [
+      '/hdri/grasslands_sunset_1k.hdr',
+      '/grasslands_sunset_1k.hdr',
+      '/hdri/grasslands-sunset-1k.hdr',
+      '/grasslands-sunset-1k.hdr',
+    ],
+  },
+] as const;
+type HdriBackgroundOption = (typeof HDR_BACKGROUND_OPTIONS)[number];
+type HdriBackgroundKey = HdriBackgroundOption['key'];
+const hdrBackgroundOptionByKey = new Map<HdriBackgroundKey, HdriBackgroundOption>(
+  HDR_BACKGROUND_OPTIONS.map(option => [option.key, option]),
+);
+const hdrLoader = new RGBELoader();
+const hdrBackgroundTextureCache = new Map<HdriBackgroundKey, THREE.Texture>();
+const hdrEnvironmentTargetCache = new Map<HdriBackgroundKey, THREE.WebGLRenderTarget>();
+let hdrBackgroundTexture: THREE.Texture | null = null;
+let activeHdrBackgroundKey: HdriBackgroundKey | null = null;
+let hdrBackgroundLoadingKey: HdriBackgroundKey | null = null;
+let hdrBackgroundBlur = HDR_BACKGROUND_BLUR_DEFAULT;
+let hdrBackgroundLightness = HDR_BACKGROUND_LIGHTNESS_DEFAULT;
+hdrBackgroundBlur = Math.max(0, Math.min(1, readStoredNumber(HDR_BACKGROUND_BLUR_KEY, hdrBackgroundBlur)));
+hdrBackgroundLightness = clampHdrLightness(readStoredNumber(HDR_BACKGROUND_LIGHTNESS_KEY, hdrBackgroundLightness));
+syncBackgroundRenderControls();
 
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.01, 100);
 const DEFAULT_CAMERA_POSITION = new THREE.Vector3(3.9, 2.7, 3.9);
@@ -242,7 +323,45 @@ function normalizeSignedAngleDelta(value: number) {
   return delta;
 }
 
+function clampHdrLightness(value: number) {
+  return Math.max(0.2, Math.min(2.0, value));
+}
+
+function readStoredNumber(key: string, fallback: number) {
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (raw == null) return fallback;
+    const parsed = Number.parseFloat(raw);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function storeBackgroundRenderSettings() {
+  try {
+    window.localStorage.setItem(HDR_BACKGROUND_BLUR_KEY, String(hdrBackgroundBlur));
+    window.localStorage.setItem(HDR_BACKGROUND_LIGHTNESS_KEY, String(hdrBackgroundLightness));
+  } catch {
+    // Storage may be unavailable in private sessions.
+  }
+}
+
+function syncBackgroundRenderControls() {
+  if (backgroundBlurInput) backgroundBlurInput.value = hdrBackgroundBlur.toFixed(2);
+  if (backgroundBlurValue) backgroundBlurValue.textContent = hdrBackgroundBlur.toFixed(2);
+  if (backgroundLightnessInput) backgroundLightnessInput.value = hdrBackgroundLightness.toFixed(2);
+  if (backgroundLightnessValue) backgroundLightnessValue.textContent = hdrBackgroundLightness.toFixed(2);
+}
+
 function applySceneBackground(useEditMode: boolean) {
+  if (hdrBackgroundTexture) {
+    scene.background = hdrBackgroundTexture;
+    scene.backgroundBlurriness = hdrBackgroundBlur;
+    scene.backgroundIntensity = hdrBackgroundLightness;
+    return;
+  }
+
   const source = useEditMode ? editBackground : baseBackground;
   source.getHSL(sceneBackgroundHsl);
   const saturationFloor = useEditMode ? 0.02 : 0.03;
@@ -250,7 +369,152 @@ function applySceneBackground(useEditMode: boolean) {
   const saturation = Math.max(sceneBackgroundHsl.s * saturationScale, saturationFloor);
   sceneBackgroundColor.setHSL(backgroundBlueHue, saturation, sceneBackgroundHsl.l);
   scene.background = sceneBackgroundColor;
+  scene.backgroundBlurriness = 0;
+  scene.backgroundIntensity = 1;
   renderer.setClearColor(sceneBackgroundColor);
+}
+
+function normalizeHdrBackgroundKey(value: string | null | undefined): HdriBackgroundKey {
+  if (!value) return HDR_BACKGROUND_OPTIONS[0].key;
+  const match = HDR_BACKGROUND_OPTIONS.find(option => option.key === value);
+  return match?.key ?? HDR_BACKGROUND_OPTIONS[0].key;
+}
+
+function getStoredHdrBackgroundKey(): HdriBackgroundKey {
+  try {
+    return normalizeHdrBackgroundKey(window.localStorage.getItem(HDR_BACKGROUND_SELECTION_KEY));
+  } catch {
+    return HDR_BACKGROUND_OPTIONS[0].key;
+  }
+}
+
+function storeHdrBackgroundKey(key: HdriBackgroundKey) {
+  try {
+    window.localStorage.setItem(HDR_BACKGROUND_SELECTION_KEY, key);
+  } catch {
+    // Storage may be unavailable in private sessions.
+  }
+}
+
+function updateBackgroundSwatchUI() {
+  backgroundSwatchButtons.forEach(button => {
+    const key = normalizeHdrBackgroundKey(button.dataset.hdri);
+    const loading = key === hdrBackgroundLoadingKey;
+    const active = key === activeHdrBackgroundKey;
+    button.classList.toggle('loading', loading);
+    button.classList.toggle('active', active);
+    button.toggleAttribute('disabled', loading);
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+}
+
+function initializeBackgroundRenderControls() {
+  syncBackgroundRenderControls();
+  if (backgroundBlurInput) {
+    backgroundBlurInput.addEventListener('input', () => {
+      const next = clamp01(Number.parseFloat(backgroundBlurInput.value));
+      hdrBackgroundBlur = next;
+      if (backgroundBlurValue) backgroundBlurValue.textContent = next.toFixed(2);
+      applySceneBackground(PARAMS.editMode);
+      storeBackgroundRenderSettings();
+    });
+  }
+  if (backgroundLightnessInput) {
+    backgroundLightnessInput.addEventListener('input', () => {
+      const next = clampHdrLightness(Number.parseFloat(backgroundLightnessInput.value));
+      hdrBackgroundLightness = next;
+      if (backgroundLightnessValue) backgroundLightnessValue.textContent = next.toFixed(2);
+      applySceneBackground(PARAMS.editMode);
+      storeBackgroundRenderSettings();
+    });
+  }
+}
+
+function hdrCandidateUrls(rawPath: string) {
+  const clean = rawPath.replace(/^\/+/, '');
+  const primary = `${APP_BASE_URL}${clean}`;
+  if (APP_BASE_URL === '/') return [primary];
+  return [primary, `/${clean}`];
+}
+
+async function setActiveHdrBackground(key: HdriBackgroundKey) {
+  const option = hdrBackgroundOptionByKey.get(key);
+  if (!option) return false;
+  if (hdrBackgroundLoadingKey === key) return false;
+  if (activeHdrBackgroundKey === key && hdrBackgroundTexture) return true;
+
+  hdrBackgroundLoadingKey = key;
+  updateBackgroundSwatchUI();
+  try {
+    let hdrTexture = hdrBackgroundTextureCache.get(key);
+    if (!hdrTexture) {
+      const candidates = new Set<string>();
+      for (const rawPath of option.urls) {
+        hdrCandidateUrls(rawPath).forEach(url => candidates.add(url));
+      }
+      for (const candidateUrl of candidates) {
+        try {
+          hdrTexture = await hdrLoader.loadAsync(candidateUrl);
+          break;
+        } catch {
+          // Try next URL candidate.
+        }
+      }
+      if (!hdrTexture) {
+        return false;
+      }
+      hdrTexture.mapping = THREE.EquirectangularReflectionMapping;
+      hdrBackgroundTextureCache.set(key, hdrTexture);
+    }
+
+    let environmentTarget = hdrEnvironmentTargetCache.get(key);
+    if (!environmentTarget) {
+      environmentTarget = pmrem.fromEquirectangular(hdrTexture);
+      hdrEnvironmentTargetCache.set(key, environmentTarget);
+    }
+
+    activeHdrBackgroundKey = key;
+    activeEnvironmentTarget = environmentTarget;
+    scene.environment = environmentTarget.texture;
+    hdrBackgroundTexture = hdrTexture;
+    applySceneBackground(PARAMS.editMode);
+    storeHdrBackgroundKey(key);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    hdrBackgroundLoadingKey = null;
+    updateBackgroundSwatchUI();
+  }
+}
+
+async function initializeHdrBackgroundSelector() {
+  if (!backgroundSelectorEl || backgroundSwatchButtons.length === 0) return;
+
+  backgroundSwatchButtons.forEach(button => {
+    const key = normalizeHdrBackgroundKey(button.dataset.hdri);
+    const option = hdrBackgroundOptionByKey.get(key);
+    if (option) {
+      button.title = option.label;
+      button.setAttribute('aria-label', option.label);
+      button.style.setProperty('--swatch-image', `url('${APP_BASE_URL}${option.preview}')`);
+    }
+    button.addEventListener('click', () => {
+      void setActiveHdrBackground(key);
+    });
+  });
+
+  updateBackgroundSwatchUI();
+
+  const preferred = getStoredHdrBackgroundKey();
+  if (await setActiveHdrBackground(preferred)) {
+    return;
+  }
+
+  for (const option of HDR_BACKGROUND_OPTIONS) {
+    if (option.key === preferred) continue;
+    if (await setActiveHdrBackground(option.key)) return;
+  }
 }
 
 function pointerAngleInExtraAxisGizmo(ev: PointerEvent, gizmoEl: HTMLDivElement) {
@@ -1415,7 +1679,6 @@ function ensureTexturePreview() {
   rendererRef.outputColorSpace = THREE.SRGBColorSpace;
   rendererRef.toneMapping = renderer.toneMapping;
   rendererRef.toneMappingExposure = renderer.toneMappingExposure;
-  rendererRef.useLegacyLights = renderer.useLegacyLights;
   rendererRef.setClearColor(0x000000, 0);
 
   const sceneRef = new THREE.Scene();
@@ -2656,6 +2919,8 @@ updateDimensionControl();
 updateEditModeToggle();
 bindTextureControls();
 updateTexturePanel();
+initializeBackgroundRenderControls();
+void initializeHdrBackgroundSelector();
 
 if (viewToggle) {
   const btns = Array.from(viewToggle.querySelectorAll('button')) as HTMLButtonElement[];

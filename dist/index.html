@@ -79,7 +79,8 @@
       }
       #axis-list,
       #object-list,
-      #dimension-control {
+      #dimension-control,
+      #background-selector {
         box-sizing: border-box;
         width: 100%;
         min-width: 0;
@@ -106,6 +107,7 @@
       body.pane-collapsed #pane-toggle .hide-icon { display: none; }
       body.pane-collapsed #object-list,
       body.pane-collapsed #dimension-control,
+      body.pane-collapsed #background-selector,
       body.pane-collapsed #texture-panel {
         display: none;
       }
@@ -528,6 +530,11 @@
       #dimension-control,
       #dimension-control .dimension-label,
       #dimension-value,
+      #background-selector,
+      #background-selector h4,
+      #background-swatches button,
+      #background-controls label,
+      #background-controls output,
       #texture-panel,
       #texture-panel h4,
       #texture-empty,
@@ -613,6 +620,80 @@
         padding: 5px 8px;
         text-align: center;
         font: 700 13px/1.2 system-ui, sans-serif;
+      }
+      #background-selector {
+        background: var(--ui-bg);
+        color: var(--ui-text);
+        padding: 8px;
+        border-radius: 5px;
+        border: 1px solid var(--ui-border);
+        font: 12px/1.4 system-ui, sans-serif;
+        margin-bottom: 8px;
+        box-shadow: var(--ui-shadow);
+      }
+      #background-selector h4 {
+        margin: 0 0 8px 0;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.2px;
+        color: var(--ui-text-strong);
+      }
+      #background-swatches {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      #background-swatches .background-swatch {
+        --swatch-image: none;
+        width: 44px;
+        height: 44px;
+        border: 1px solid rgba(255,255,255,0.18);
+        border-radius: 50%;
+        background-color: #1b1f28;
+        background-image: var(--swatch-image);
+        background-size: cover;
+        background-position: center;
+        box-shadow: 0 3px 8px rgba(0,0,0,0.25);
+        cursor: pointer;
+        padding: 0;
+        transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+      }
+      #background-swatches .background-swatch:hover {
+        transform: translateY(-1px);
+      }
+      #background-swatches .background-swatch.active {
+        border-color: rgba(255,255,255,0.94);
+        box-shadow: 0 0 0 2px rgba(255,255,255,0.2), 0 6px 12px rgba(0,0,0,0.3);
+      }
+      #background-swatches .background-swatch.loading {
+        opacity: 0.58;
+      }
+      #background-swatches .background-swatch:focus-visible {
+        outline: 2px solid rgba(255,255,255,0.9);
+        outline-offset: 2px;
+      }
+      #background-controls {
+        margin-top: 10px;
+        display: grid;
+        gap: 6px;
+      }
+      #background-controls .background-row {
+        display: grid;
+        grid-template-columns: 64px minmax(0, 1fr) 52px;
+        align-items: center;
+        gap: 8px;
+      }
+      #background-controls label {
+        color: var(--ui-text);
+      }
+      #background-controls input[type="range"] {
+        width: 100%;
+        accent-color: var(--ui-blue-hover);
+      }
+      #background-controls output {
+        text-align: right;
+        color: var(--ui-muted);
+        font-variant-numeric: tabular-nums;
       }
       #texture-panel {
         background: var(--ui-bg);
@@ -1184,6 +1265,9 @@
         #dimension-control {
           margin-bottom: 6px;
         }
+        #background-selector {
+          margin-bottom: 6px;
+        }
         #texture-preview-wrap {
           height: 108px;
         }
@@ -1205,7 +1289,7 @@
         }
       }
     </style>
-    <script type="module" crossorigin src="/BleND/assets/index-BeCXy9Yl.js"></script>
+    <script type="module" crossorigin src="/BleND/assets/index-dWzobaNS.js"></script>
   </head>
   <body>
     <div id="top-left-controls">
@@ -1264,6 +1348,51 @@
           <button id="dimension-up" type="button" aria-label="Dimension up" title="Dimension up">
             <span class="material-symbols-rounded" aria-hidden="true">keyboard_arrow_up</span>
           </button>
+        </div>
+      </div>
+      <div id="background-selector" role="group" aria-label="Background environment selector">
+        <h4>Background</h4>
+        <div id="background-swatches">
+          <button
+            type="button"
+            class="background-swatch"
+            data-hdri="ferndale"
+            aria-label="Ferndale studio background"
+            title="Ferndale studio"
+          ></button>
+          <button
+            type="button"
+            class="background-swatch"
+            data-hdri="monochrome"
+            aria-label="Monochrome studio background"
+            title="Monochrome studio"
+          ></button>
+          <button
+            type="button"
+            class="background-swatch"
+            data-hdri="sundowner"
+            aria-label="Sundowner deck background"
+            title="Sundowner deck"
+          ></button>
+          <button
+            type="button"
+            class="background-swatch"
+            data-hdri="grasslands"
+            aria-label="Grasslands sunset background"
+            title="Grasslands sunset"
+          ></button>
+        </div>
+        <div id="background-controls">
+          <div class="background-row">
+            <label for="background-blur">Blur</label>
+            <input id="background-blur" type="range" min="0" max="1" step="0.01" value="0.35" />
+            <output id="background-blur-value">0.35</output>
+          </div>
+          <div class="background-row">
+            <label for="background-lightness">Lightness</label>
+            <input id="background-lightness" type="range" min="0.2" max="2" step="0.01" value="1.00" />
+            <output id="background-lightness-value">1.00</output>
+          </div>
         </div>
       </div>
       <div id="texture-panel" role="group" aria-label="Texture controls" class="empty disabled">
