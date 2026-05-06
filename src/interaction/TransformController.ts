@@ -1,0 +1,766 @@
+import * as THREE from 'three';
+import type { RotND } from '../RotND';
+import type { NDProjector } from '../geometry/NDProjector';
+import { perspectiveDepthDim, perspectiveScaleFrom, type AxisMap } from '../geometry/projectionUtils';
+import type { HypercubeRenderer } from '../rendering/HypercubeRenderer';
+import type { Instance, TransformMode, TransformState } from '../scene/types';
+
+type TransformParams = {
+  editMode: boolean;
+  axesX: number;
+  axesY: number;
+  axesZ: number;
+  sliceDim: number;
+  sliceMin: number;
+  sliceMax: number;
+};
+
+type TransformControllerOptions = {
+  scene: THREE.Scene;
+  camera: THREE.PerspectiveCamera;
+  renderer: THREE.WebGLRenderer;
+  raycaster: THREE.Raycaster;
+  ndc: THREE.Vector2;
+  vertexGeo: THREE.BufferGeometry;
+  statusBar: HTMLDivElement | null;
+  moveButton: HTMLButtonElement | null;
+  rotateButton: HTMLButtonElement | null;
+  scaleButton: HTMLButtonElement | null;
+  getParams: () => TransformParams;
+  getN: () => number;
+  getX: () => Float32Array;
+  getM: () => number;
+  getY: () => Float32Array;
+  getRot: () => RotND;
+  getProjector: () => NDProjector;
+  getRendererND: () => HypercubeRenderer;
+  getExtraInstances: () => Instance[];
+  getBaseTransform: () => TransformState;
+  getBaseOriginalN: () => number;
+  getBaseAxisMap: () => AxisMap;
+  getSelectedInstance: () => number;
+  getObjectVisible: (idx: number) => boolean;
+  visibleDims: () => number;
+  perspectiveDimsFor: (localN: number, axisMap: AxisMap) => number[];
+  wRotationPlaneAxis: (lockAxis: -1 | 0 | 1 | 2, depthDim: number) => number;
+  setProjectionDirty: (dirty: boolean) => void;
+  projectAndRenderAll: () => void;
+  applySliceFilter: () => void;
+  updateSelectionOutline: () => void;
+  pushUndoSnapshot: () => void;
+};
+
+type TransformOperation = {
+  mode: TransformMode;
+  instIdx: number;
+  targetVertex: number;
+  startPos: THREE.Vector3;
+  startRot: THREE.Vector3;
+  startScale: number;
+  startMouse: THREE.Vector2;
+  vertexStart: THREE.Vector3;
+  axis: THREE.Vector3;
+  plane: THREE.Plane;
+  planeHitStart: THREE.Vector3;
+  lastHit: THREE.Vector3;
+  vertexDataStart: Float32Array | null;
+  lockAxis: -1 | 0 | 1 | 2;
+  objectDataStart: Float32Array | null;
+  wPlane: boolean;
+  moveOffset: THREE.Vector3;
+};
+
+function computeCenterFromPositions(positions: Float32Array, count: number) {
+  if (!count) return new THREE.Vector3();
+  let sumX = 0;
+  let sumY = 0;
+  let sumZ = 0;
+  for (let i = 0; i < count; i++) {
+    const pIdx = i * 3;
+    sumX += positions[pIdx];
+    sumY += positions[pIdx + 1];
+    sumZ += positions[pIdx + 2];
+  }
+  return new THREE.Vector3(sumX / count, sumY / count, sumZ / count);
+}
+
+export class TransformController {
+  private selectedVertex = -1;
+  private selectionVertexMarker: THREE.Mesh | null = null;
+  private vertexCloud: THREE.InstancedMesh | null = null;
+  private axisGuide: THREE.Line | null = null;
+  private wGuide: THREE.Line | null = null;
+  private readonly tmpVec = new THREE.Vector3();
+  private readonly dragRotated = new Float32Array(32);
+  private readonly dragRotatedNext = new Float32Array(32);
+  private readonly dragZero = new THREE.Vector3();
+  private readonly dragQuat = new THREE.Quaternion();
+  private readonly dragEuler = new THREE.Euler();
+  private readonly dragRS = new THREE.Matrix4();
+  private readonly dragRSInv = new THREE.Matrix4();
+  private readonly dragWorldCurrent = new THREE.Vector3();
+  private readonly dragYCurrent = new THREE.Vector3();
+  private readonly dragTranslation = new THREE.Vector3();
+  private readonly dragTargetY = new THREE.Vector3();
+  private readonly dragTmpVec = new THREE.Vector3();
+  private readonly dragWorldTarget = new THREE.Vector3();
+
+  private readonly transformOp: TransformOperation = {
+    mode: 'none',
+    instIdx: -1,
+    targetVertex: -1,
+    startPos: new THREE.Vector3(),
+    startRot: new THREE.Vector3(),
+    startScale: 1,
+    startMouse: new THREE.Vector2(),
+    vertexStart: new THREE.Vector3(),
+    axis: new THREE.Vector3(),
+    plane: new THREE.Plane(),
+    planeHitStart: new THREE.Vector3(),
+    lastHit: new THREE.Vector3(),
+    vertexDataStart: null,
+    lockAxis: -1,
+    objectDataStart: null,
+    wPlane: false,
+    moveOffset: new THREE.Vector3(),
+  };
+
+  private readonly toolbarTransformDrag = {
+    active: false,
+    started: false,
+    pointerId: -1,
+    mode: 'none' as TransformMode,
+    startX: 0,
+    startY: 0,
+    sourceButton: null as HTMLButtonElement | null,
+  };
+
+  constructor(private readonly options: TransformControllerOptions) {}
+
+  get mode() {
+    return this.transformOp.mode;
+  }
+
+  isActive() {
+    return this.transformOp.mode !== 'none';
+  }
+
+  getSelectedVertex() {
+    return this.selectedVertex;
+  }
+
+  setSelectedVertex(vertex: number) {
+    this.selectedVertex = vertex;
+  }
+
+  clearSelectionVisuals() {
+    this.selectedVertex = -1;
+    this.clearVertexMarker();
+    this.clearVertexCloud();
+  }
+
+  clearVertexMarker() {
+    if (this.selectionVertexMarker) {
+      this.options.scene.remove(this.selectionVertexMarker);
+      this.selectionVertexMarker = null;
+    }
+  }
+
+  clearVertexCloud() {
+    if (this.vertexCloud) {
+      this.options.scene.remove(this.vertexCloud);
+      this.vertexCloud = null;
+    }
+  }
+
+  clearAxisGuide() {
+    if (this.axisGuide) {
+      this.options.scene.remove(this.axisGuide);
+      this.axisGuide.geometry.dispose();
+      this.axisGuide = null;
+    }
+    if (this.wGuide) {
+      this.options.scene.remove(this.wGuide);
+      this.wGuide.geometry.dispose();
+      this.wGuide = null;
+    }
+  }
+
+  updateVertexCloud(instIdx: number) {
+    if (!this.options.getParams().editMode || !this.options.getObjectVisible(instIdx)) {
+      this.clearVertexCloud();
+      this.clearVertexMarker();
+      return;
+    }
+
+    const rendererRef = instIdx === -1
+      ? this.options.getRendererND()
+      : this.options.getExtraInstances()[instIdx].renderer;
+    const count = instIdx === -1 ? this.options.getM() : this.options.getExtraInstances()[instIdx].M;
+    if (!rendererRef || count <= 0) return;
+
+    this.clearVertexCloud();
+    const mat = new THREE.MeshBasicMaterial({ color: 0xbfc7d5 });
+    this.vertexCloud = new THREE.InstancedMesh(this.options.vertexGeo, mat, count);
+    const dummy = new THREE.Object3D();
+    const posArr = rendererRef.positions;
+    for (let i = 0; i < count; i++) {
+      const pIdx = i * 3;
+      dummy.position.set(posArr[pIdx], posArr[pIdx + 1], posArr[pIdx + 2]);
+      dummy.updateMatrix();
+      this.vertexCloud.setMatrixAt(i, dummy.matrix);
+    }
+    this.vertexCloud.instanceMatrix.needsUpdate = true;
+    this.vertexCloud.renderOrder = 5;
+    this.options.scene.add(this.vertexCloud);
+    if (this.selectedVertex >= 0) this.placeVertexMarker(instIdx, this.selectedVertex);
+  }
+
+  placeVertexMarker(instIdx: number, vertexIdx: number) {
+    if (!this.options.getObjectVisible(instIdx)) return;
+    if (!this.selectionVertexMarker) {
+      const mat = new THREE.MeshBasicMaterial({ color: 0xffa64d, depthTest: false });
+      this.selectionVertexMarker = new THREE.Mesh(this.options.vertexGeo, mat);
+      this.selectionVertexMarker.renderOrder = 20;
+    }
+    this.selectionVertexMarker.scale.setScalar(1.35);
+    const rendererRef = instIdx === -1
+      ? this.options.getRendererND()
+      : this.options.getExtraInstances()[instIdx].renderer;
+    const posArr = rendererRef.positions;
+    const pIdx = vertexIdx * 3;
+    this.selectionVertexMarker.position.set(posArr[pIdx], posArr[pIdx + 1], posArr[pIdx + 2]);
+    this.options.scene.add(this.selectionVertexMarker);
+  }
+
+  updateActionButtons() {
+    const buttons: { mode: TransformMode; el: HTMLButtonElement | null; }[] = [
+      { mode: 'move', el: this.options.moveButton },
+      { mode: 'rotate', el: this.options.rotateButton },
+      { mode: 'scale', el: this.options.scaleButton },
+    ];
+    const hasTarget = this.options.getObjectVisible(this.options.getSelectedInstance());
+    const busy = this.transformOp.mode !== 'none';
+
+    for (const entry of buttons) {
+      if (!entry.el) continue;
+      entry.el.classList.toggle('active', this.transformOp.mode === entry.mode);
+      entry.el.disabled = !hasTarget || busy;
+    }
+  }
+
+  handleConstraintKey(key: string) {
+    if (key === 'w') {
+      if (this.transformOp.mode === 'rotate') {
+        this.transformOp.wPlane = !this.transformOp.wPlane;
+        this.updateAxisGuide();
+        return true;
+      }
+      return false;
+    }
+    if (key === 'x' || key === 'y' || key === 'z') {
+      this.transformOp.lockAxis = key === 'x' ? 0 : key === 'y' ? 1 : 2;
+      this.updateAxisGuide();
+      return true;
+    }
+    return false;
+  }
+
+  startFromPointer(mode: TransformMode, pointer: { x: number; y: number }) {
+    this.start(mode, { clientX: pointer.x, clientY: pointer.y });
+  }
+
+  start(mode: TransformMode, ev: { clientX: number; clientY: number }) {
+    const selectedInstance = this.options.getSelectedInstance();
+    if (!this.options.getObjectVisible(selectedInstance)) return;
+
+    this.transformOp.mode = mode;
+    this.transformOp.instIdx = selectedInstance;
+    this.transformOp.targetVertex = this.options.getParams().editMode ? this.selectedVertex : -1;
+    this.transformOp.startMouse.set(ev.clientX, ev.clientY);
+
+    if (this.transformOp.targetVertex >= 0) {
+      const inst = this.transformOp.instIdx === -1 ? null : this.options.getExtraInstances()[this.transformOp.instIdx];
+      const posArr = inst ? inst.renderer.positions : this.options.getRendererND().positions;
+      const idx = this.transformOp.targetVertex * 3;
+      this.transformOp.vertexStart.set(posArr[idx], posArr[idx + 1], posArr[idx + 2]);
+      const src = inst ? inst.X : this.options.getX();
+      const count = inst ? inst.M : this.options.getM();
+      const N = this.options.getN();
+      this.transformOp.vertexDataStart = new Float32Array(N);
+      for (let d = 0; d < N; d++) this.transformOp.vertexDataStart[d] = src[d * count + this.transformOp.targetVertex];
+      this.transformOp.startScale = 1;
+      this.transformOp.plane.setFromNormalAndCoplanarPoint(this.options.camera.getWorldDirection(this.tmpVec).normalize(), this.transformOp.vertexStart);
+      this.transformOp.planeHitStart.copy(this.transformOp.vertexStart);
+      this.transformOp.lastHit.copy(this.transformOp.vertexStart);
+      this.transformOp.lockAxis = -1;
+      this.transformOp.wPlane = false;
+      return;
+    }
+
+    const target = selectedInstance === -1
+      ? this.options.getBaseTransform()
+      : this.options.getExtraInstances()[selectedInstance]?.transform;
+    if (!target) {
+      this.transformOp.mode = 'none';
+      return;
+    }
+
+    this.transformOp.startPos.copy(target.pos);
+    this.transformOp.startRot.copy(target.rot);
+    this.transformOp.startScale = target.scale.x;
+    this.transformOp.lockAxis = -1;
+    this.transformOp.wPlane = false;
+
+    if (mode === 'move' || mode === 'rotate') {
+      const src = selectedInstance === -1 ? this.options.getX() : this.options.getExtraInstances()[selectedInstance].X;
+      const count = selectedInstance === -1 ? this.options.getM() : this.options.getExtraInstances()[selectedInstance].M;
+      this.transformOp.objectDataStart = new Float32Array(src.length);
+      this.transformOp.objectDataStart.set(src);
+      this.transformOp.lastHit.set(0, 0, 0);
+      if (mode === 'move') {
+        const positions = selectedInstance === -1
+          ? this.options.getRendererND().positions
+          : this.options.getExtraInstances()[selectedInstance].renderer.positions;
+        const center = computeCenterFromPositions(positions, count);
+        this.transformOp.planeHitStart.copy(center);
+        this.transformOp.plane.setFromNormalAndCoplanarPoint(this.options.camera.getWorldDirection(this.tmpVec).normalize(), center);
+        const rect = this.options.renderer.domElement.getBoundingClientRect();
+        this.options.ndc.set(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1);
+        this.options.raycaster.setFromCamera(this.options.ndc, this.options.camera);
+        const hit = this.options.raycaster.ray.intersectPlane(this.transformOp.plane, this.tmpVec);
+        if (hit) {
+          this.transformOp.lastHit.copy(hit);
+          this.transformOp.moveOffset.copy(this.transformOp.planeHitStart).sub(hit);
+        } else {
+          this.transformOp.lastHit.copy(center);
+          this.transformOp.moveOffset.set(0, 0, 0);
+        }
+      }
+    } else {
+      this.transformOp.objectDataStart = null;
+    }
+  }
+
+  beginToolbarDrag(mode: TransformMode, ev: PointerEvent) {
+    if (mode === 'none') return;
+    if (this.transformOp.mode !== 'none') return;
+    if (!this.options.getObjectVisible(this.options.getSelectedInstance())) return;
+
+    ev.preventDefault();
+    ev.stopPropagation();
+    this.toolbarTransformDrag.active = true;
+    this.toolbarTransformDrag.started = false;
+    this.toolbarTransformDrag.pointerId = ev.pointerId;
+    this.toolbarTransformDrag.mode = mode;
+    this.toolbarTransformDrag.startX = ev.clientX;
+    this.toolbarTransformDrag.startY = ev.clientY;
+    this.toolbarTransformDrag.sourceButton = ev.currentTarget as HTMLButtonElement | null;
+    try {
+      this.toolbarTransformDrag.sourceButton?.setPointerCapture(ev.pointerId);
+    } catch {
+      // Some browsers may reject capture when pointerdown starts from nested SVG nodes.
+    }
+  }
+
+  handleToolbarPointerMove(ev: PointerEvent, setLastPointer: (point: { x: number; y: number }) => void) {
+    if (!this.toolbarTransformDrag.active || ev.pointerId !== this.toolbarTransformDrag.pointerId) return false;
+
+    ev.preventDefault();
+    setLastPointer({ x: ev.clientX, y: ev.clientY });
+    if (!this.toolbarTransformDrag.started) {
+      const moved = Math.hypot(ev.clientX - this.toolbarTransformDrag.startX, ev.clientY - this.toolbarTransformDrag.startY);
+      if (moved < 3) return true;
+      this.options.pushUndoSnapshot();
+      this.start(this.toolbarTransformDrag.mode, ev);
+      this.toolbarTransformDrag.started = this.transformOp.mode !== 'none';
+      if (!this.toolbarTransformDrag.started) {
+        this.resetToolbarDrag();
+        return true;
+      }
+      this.updateActionButtons();
+    }
+    this.applyPointer(ev.clientX, ev.clientY);
+    return true;
+  }
+
+  handleToolbarPointerEnd(ev: PointerEvent, commit: boolean) {
+    if (!this.toolbarTransformDrag.active || ev.pointerId !== this.toolbarTransformDrag.pointerId) return false;
+
+    if (this.toolbarTransformDrag.sourceButton?.hasPointerCapture(ev.pointerId)) {
+      this.toolbarTransformDrag.sourceButton.releasePointerCapture(ev.pointerId);
+    }
+    const shouldFinish = this.toolbarTransformDrag.started && this.transformOp.mode !== 'none';
+    if (shouldFinish) this.finish(commit);
+    this.resetToolbarDrag();
+    ev.preventDefault();
+    return true;
+  }
+
+  applyPointer(clientX: number, clientY: number) {
+    if (this.transformOp.mode === 'none') return;
+
+    const dx = clientX - this.transformOp.startMouse.x;
+    const dy = clientY - this.transformOp.startMouse.y;
+    const params = this.options.getParams();
+    const N = this.options.getN();
+    const M = this.options.getM();
+    const extraInstances = this.options.getExtraInstances();
+    const rendererND = this.options.getRendererND();
+
+    if (this.transformOp.targetVertex >= 0) {
+      const inst = this.transformOp.instIdx === -1 ? null : extraInstances[this.transformOp.instIdx];
+      const posArr = inst ? inst.renderer.positions : rendererND.positions;
+      const idx = this.transformOp.targetVertex * 3;
+      const rect = this.options.renderer.domElement.getBoundingClientRect();
+      this.options.ndc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+      this.options.raycaster.setFromCamera(this.options.ndc, this.options.camera);
+      this.transformOp.plane.setFromNormalAndCoplanarPoint(this.options.camera.getWorldDirection(this.tmpVec).normalize(), this.transformOp.planeHitStart);
+      const hit = this.options.raycaster.ray.intersectPlane(this.transformOp.plane, this.tmpVec);
+      if (!hit) return;
+      const dragWorld = this.dragWorldTarget;
+
+      if (this.transformOp.mode === 'move') {
+        const locked = this.transformOp.lockAxis;
+        dragWorld.set(
+          locked === 1 || locked === 2 ? this.transformOp.vertexStart.x : hit.x,
+          locked === 0 || locked === 2 ? this.transformOp.vertexStart.y : hit.y,
+          locked === 0 || locked === 1 ? this.transformOp.vertexStart.z : hit.z,
+        );
+        this.transformOp.lastHit.copy(dragWorld);
+      } else if (this.transformOp.mode === 'scale') {
+        const fromOrigin = hit.clone().sub(this.transformOp.planeHitStart);
+        const base = this.transformOp.vertexStart.clone().sub(this.transformOp.planeHitStart);
+        const baseLen = base.length();
+        const newLen = fromOrigin.length();
+        const s = baseLen > 1e-6 ? newLen / baseLen : 1;
+        const scaled = base.multiplyScalar(s).add(this.transformOp.planeHitStart);
+        dragWorld.copy(scaled);
+        this.transformOp.lastHit.copy(scaled);
+      } else if (this.transformOp.mode === 'rotate') {
+        const base = this.transformOp.vertexStart.clone().sub(this.transformOp.planeHitStart);
+        const cur = hit.clone().sub(this.transformOp.planeHitStart);
+        const angle = Math.atan2(cur.y, cur.x) - Math.atan2(base.y, base.x);
+        const q = new THREE.Quaternion().setFromAxisAngle(this.transformOp.axis, angle);
+        base.applyQuaternion(q).add(this.transformOp.planeHitStart);
+        dragWorld.copy(base);
+        this.transformOp.lastHit.copy(base);
+      } else {
+        return;
+      }
+
+      if (!this.setDraggedVertexFromWorldPosition(this.transformOp.instIdx, this.transformOp.targetVertex, dragWorld)) return;
+      this.options.projectAndRenderAll();
+      this.options.applySliceFilter();
+      const refreshed = inst ? inst.renderer.positions : rendererND.positions;
+      if (this.selectionVertexMarker) this.selectionVertexMarker.position.set(refreshed[idx], refreshed[idx + 1], refreshed[idx + 2]);
+      if (this.options.statusBar) {
+        this.options.statusBar.textContent = `Vertex (${this.transformOp.targetVertex}): (${refreshed[idx].toFixed(3)}, ${refreshed[idx + 1].toFixed(3)}, ${refreshed[idx + 2].toFixed(3)})`;
+      }
+    } else {
+      const target = this.transformOp.instIdx === -1
+        ? this.options.getBaseTransform()
+        : extraInstances[this.transformOp.instIdx].transform;
+
+      if (this.transformOp.mode === 'move') {
+        const src = this.transformOp.instIdx === -1 ? this.options.getX() : extraInstances[this.transformOp.instIdx].X;
+        const baseData = this.transformOp.objectDataStart;
+        const count = this.transformOp.instIdx === -1 ? M : extraInstances[this.transformOp.instIdx].M;
+        if (baseData && count > 0) {
+          const rect = this.options.renderer.domElement.getBoundingClientRect();
+          this.options.ndc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+          this.options.raycaster.setFromCamera(this.options.ndc, this.options.camera);
+          const hit = this.options.raycaster.ray.intersectPlane(this.transformOp.plane, this.tmpVec);
+          if (!hit) return;
+          const delta = hit.clone().add(this.transformOp.moveOffset).sub(this.transformOp.planeHitStart);
+          if (this.transformOp.lockAxis === 0) {
+            delta.y = 0;
+            delta.z = 0;
+          } else if (this.transformOp.lockAxis === 1) {
+            delta.x = 0;
+            delta.z = 0;
+          } else if (this.transformOp.lockAxis === 2) {
+            delta.x = 0;
+            delta.y = 0;
+          }
+          const axes = [params.axesX, params.axesY, params.axesZ];
+          for (let i = 0; i < count; i++) {
+            for (let c = 0; c < 3; c++) {
+              const dim = axes[c] % N;
+              const idxD = dim * count + i;
+              src[idxD] = baseData[idxD] + delta.getComponent(c);
+            }
+          }
+          this.transformOp.lastHit.copy(hit);
+          this.options.setProjectionDirty(true);
+        }
+      } else if (this.transformOp.mode === 'rotate') {
+        if (this.transformOp.wPlane && this.transformOp.objectDataStart) {
+          const inst = this.transformOp.instIdx === -1 ? null : extraInstances[this.transformOp.instIdx];
+          const src = inst ? inst.X : this.options.getX();
+          const baseData = this.transformOp.objectDataStart;
+          const count = inst ? inst.M : M;
+          if (count > 0) {
+            const originalN = inst ? inst.originalN : this.options.getBaseOriginalN() || this.options.visibleDims();
+            const axisMap = inst ? inst.axisMap : this.options.getBaseAxisMap();
+            const perspectiveDims = this.options.perspectiveDimsFor(originalN, axisMap);
+            const dimB = perspectiveDims[0] ?? perspectiveDepthDim(originalN, axisMap);
+            const dimA = this.options.wRotationPlaneAxis(this.transformOp.lockAxis, dimB);
+            if (dimA < 0 || dimB < 0 || dimA === dimB) return;
+            const angle = (dx - dy) * 0.01;
+            const c = Math.cos(angle);
+            const s = Math.sin(angle);
+            for (let i = 0; i < count; i++) {
+              const a0 = baseData[dimA * count + i];
+              const b0 = baseData[dimB * count + i];
+              src[dimA * count + i] = a0 * c - b0 * s;
+              src[dimB * count + i] = a0 * s + b0 * c;
+            }
+            this.options.setProjectionDirty(true);
+          }
+        } else {
+          const deltaX = dx * 0.005;
+          const deltaY = dy * 0.005;
+          const lx = this.transformOp.startRot.x;
+          const ly = this.transformOp.startRot.y;
+          const lz = this.transformOp.startRot.z;
+          if (this.transformOp.lockAxis === 0) {
+            target.rot.set(lx + deltaY, ly, lz);
+          } else if (this.transformOp.lockAxis === 1) {
+            target.rot.set(lx, ly + deltaX, lz);
+          } else if (this.transformOp.lockAxis === 2) {
+            target.rot.set(lx, ly, lz + deltaX);
+          } else {
+            target.rot.set(lx + deltaY, ly + deltaX, lz);
+          }
+        }
+      } else if (this.transformOp.mode === 'scale') {
+        const delta = (dx - dy) * 0.005;
+        const s = Math.max(0.1, Math.min(5, this.transformOp.startScale + delta));
+        target.scale.set(s, s, s);
+      }
+
+      if (this.options.statusBar) {
+        this.options.statusBar.textContent = `Object: pos(${target.pos.x.toFixed(3)}, ${target.pos.y.toFixed(3)}, ${target.pos.z.toFixed(3)}) rot(${target.rot.x.toFixed(3)}, ${target.rot.y.toFixed(3)}, ${target.rot.z.toFixed(3)})`;
+      }
+    }
+
+    this.options.projectAndRenderAll();
+    this.options.applySliceFilter();
+    this.options.updateSelectionOutline();
+    this.updateAxisGuide();
+  }
+
+  finish(commit: boolean) {
+    if (this.transformOp.mode === 'none') return;
+
+    const extraInstances = this.options.getExtraInstances();
+    const rendererND = this.options.getRendererND();
+    const params = this.options.getParams();
+    const N = this.options.getN();
+    const M = this.options.getM();
+
+    if (commit) {
+      if (this.transformOp.targetVertex >= 0) {
+        const inst = this.transformOp.instIdx === -1 ? null : extraInstances[this.transformOp.instIdx];
+        const posArr = inst ? inst.renderer.positions : rendererND.positions;
+        const idx = this.transformOp.targetVertex * 3;
+        this.dragWorldTarget.set(posArr[idx], posArr[idx + 1], posArr[idx + 2]);
+        this.setDraggedVertexFromWorldPosition(this.transformOp.instIdx, this.transformOp.targetVertex, this.dragWorldTarget);
+      }
+      if (this.options.statusBar) {
+        if (this.transformOp.targetVertex >= 0) {
+          const inst = this.transformOp.instIdx === -1 ? null : extraInstances[this.transformOp.instIdx];
+          const posArr = inst ? inst.renderer.positions : rendererND.positions;
+          const idx = this.transformOp.targetVertex * 3;
+          this.options.statusBar.textContent = `Vertex (${this.transformOp.targetVertex}) commit: (${posArr[idx].toFixed(3)}, ${posArr[idx + 1].toFixed(3)}, ${posArr[idx + 2].toFixed(3)})`;
+        } else {
+          const target = this.transformOp.instIdx === -1 ? this.options.getBaseTransform() : extraInstances[this.transformOp.instIdx].transform;
+          this.options.statusBar.textContent = `Object commit: pos(${target.pos.x.toFixed(3)}, ${target.pos.y.toFixed(3)}, ${target.pos.z.toFixed(3)})`;
+        }
+      }
+    } else {
+      if (this.transformOp.targetVertex >= 0) {
+        const inst = this.transformOp.instIdx === -1 ? null : extraInstances[this.transformOp.instIdx];
+        const posArr = inst ? inst.renderer.positions : rendererND.positions;
+        const idx = this.transformOp.targetVertex * 3;
+        posArr[idx] = this.transformOp.vertexStart.x;
+        posArr[idx + 1] = this.transformOp.vertexStart.y;
+        posArr[idx + 2] = this.transformOp.vertexStart.z;
+        const targetRenderer = inst ? inst.renderer : rendererND;
+        if (this.transformOp.vertexDataStart) {
+          const src = inst ? inst.X : this.options.getX();
+          const count = inst ? inst.M : M;
+          for (let d = 0; d < N; d++) src[d * count + this.transformOp.targetVertex] = this.transformOp.vertexDataStart[d];
+        }
+        if (inst) {
+          this.options.getProjector().project(inst.X, inst.M, inst.Y);
+          inst.renderer.writeInterleavedFrom(inst.Y);
+          inst.renderer.filterEdgesByDimRange(inst.X, N, inst.M, params.sliceDim, params.sliceMin, params.sliceMax);
+        } else {
+          this.options.getProjector().project(this.options.getX(), M, this.options.getY());
+          rendererND.writeInterleavedFrom(this.options.getY());
+          rendererND.filterEdgesByDimRange(this.options.getX(), N, M, params.sliceDim, params.sliceMin, params.sliceMax);
+        }
+        (targetRenderer.geometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
+        targetRenderer.geometry.computeBoundingBox();
+        targetRenderer.geometry.computeBoundingSphere();
+        if (this.selectionVertexMarker) this.selectionVertexMarker.position.set(posArr[idx], posArr[idx + 1], posArr[idx + 2]);
+      } else {
+        const target = this.transformOp.instIdx === -1 ? this.options.getBaseTransform() : extraInstances[this.transformOp.instIdx].transform;
+        if (this.transformOp.objectDataStart) {
+          const src = this.transformOp.instIdx === -1 ? this.options.getX() : extraInstances[this.transformOp.instIdx].X;
+          src.set(this.transformOp.objectDataStart);
+          this.options.setProjectionDirty(true);
+        }
+        target.pos.copy(this.transformOp.startPos);
+        target.rot.copy(this.transformOp.startRot);
+        target.scale.set(this.transformOp.startScale, this.transformOp.startScale, this.transformOp.startScale);
+      }
+    }
+
+    this.transformOp.mode = 'none';
+    this.transformOp.vertexDataStart = null;
+    this.transformOp.lockAxis = -1;
+    this.transformOp.objectDataStart = null;
+    this.transformOp.wPlane = false;
+    this.clearAxisGuide();
+    this.transformOp.moveOffset.set(0, 0, 0);
+    this.options.projectAndRenderAll();
+    this.options.applySliceFilter();
+    if (params.editMode && this.selectedVertex >= 0) this.placeVertexMarker(this.options.getSelectedInstance(), this.selectedVertex);
+    this.options.updateSelectionOutline();
+    this.updateActionButtons();
+  }
+
+  updateAxisGuide() {
+    this.clearAxisGuide();
+    if (this.transformOp.mode === 'none') return;
+    const hasAxis = this.transformOp.lockAxis !== -1;
+    const axisIdx = hasAxis ? this.transformOp.lockAxis : 0;
+    const dir = new THREE.Vector3(
+      axisIdx === 0 ? 1 : 0,
+      axisIdx === 1 ? 1 : 0,
+      axisIdx === 2 ? 1 : 0,
+    );
+    if (!hasAxis && !this.transformOp.wPlane) return;
+
+    let center = new THREE.Vector3();
+    if (this.transformOp.targetVertex >= 0) {
+      const inst = this.transformOp.instIdx === -1 ? null : this.options.getExtraInstances()[this.transformOp.instIdx];
+      const posArr = inst ? inst.renderer.positions : this.options.getRendererND().positions;
+      const idx = this.transformOp.targetVertex * 3;
+      center.set(posArr[idx], posArr[idx + 1], posArr[idx + 2]);
+    } else {
+      if (this.transformOp.instIdx === -1 && this.options.getM() > 0) {
+        center = computeCenterFromPositions(this.options.getRendererND().positions, this.options.getM());
+      } else if (this.transformOp.instIdx >= 0) {
+        const inst = this.options.getExtraInstances()[this.transformOp.instIdx];
+        center = computeCenterFromPositions(inst.renderer.positions, inst.M);
+      }
+    }
+
+    const len = 3;
+    const points = [
+      center.clone().addScaledVector(dir, -len),
+      center.clone().addScaledVector(dir, len),
+    ];
+    if (hasAxis) {
+      const geom = new THREE.BufferGeometry().setFromPoints(points);
+      const mat = new THREE.LineBasicMaterial({ color: 0xffa64d, linewidth: 2, depthTest: false, transparent: true, opacity: 0.9 });
+      this.axisGuide = new THREE.Line(geom, mat);
+      this.axisGuide.renderOrder = 30;
+      this.options.scene.add(this.axisGuide);
+    }
+    if (this.transformOp.wPlane) {
+      const wDir = new THREE.Vector3(0, 0, 0);
+      wDir.copy(dir).cross(this.options.camera.getWorldDirection(this.tmpVec).normalize()).normalize();
+      if (wDir.lengthSq() === 0) wDir.copy(this.options.camera.up).normalize();
+      const wLen = 2;
+      const wPoints = [
+        center.clone().addScaledVector(wDir, -wLen),
+        center.clone().addScaledVector(wDir, wLen),
+      ];
+      const wGeom = new THREE.BufferGeometry().setFromPoints(wPoints);
+      const wMat = new THREE.LineBasicMaterial({ color: 0xc084fc, linewidth: 2, depthTest: false, transparent: true, opacity: 0.9 });
+      this.wGuide = new THREE.Line(wGeom, wMat);
+      this.wGuide.renderOrder = 31;
+      this.options.scene.add(this.wGuide);
+    }
+  }
+
+  private setDraggedVertexFromWorldPosition(instIdx: number, vertexIdx: number, worldPos: THREE.Vector3) {
+    const inst = instIdx === -1 ? null : this.options.getExtraInstances()[instIdx];
+    const src = inst ? inst.X : this.options.getX();
+    const count = inst ? inst.M : this.options.getM();
+    const yArr = inst ? inst.Y : this.options.getY();
+    const transform = inst ? inst.transform : this.options.getBaseTransform();
+    const originalN = inst ? inst.originalN : this.options.getBaseOriginalN() || this.options.visibleDims();
+    const axisMap = inst ? inst.axisMap : this.options.getBaseAxisMap();
+    const N = this.options.getN();
+
+    if (vertexIdx < 0 || vertexIdx >= count) return false;
+
+    const posArr = inst ? inst.renderer.positions : this.options.getRendererND().positions;
+    const pIdx = vertexIdx * 3;
+
+    this.dragEuler.set(transform.rot.x, transform.rot.y, transform.rot.z);
+    this.dragQuat.setFromEuler(this.dragEuler);
+    this.dragRS.compose(this.dragZero, this.dragQuat, transform.scale);
+    this.dragRSInv.copy(this.dragRS).invert();
+
+    this.dragWorldCurrent.set(posArr[pIdx], posArr[pIdx + 1], posArr[pIdx + 2]);
+    this.dragYCurrent.set(yArr[vertexIdx], yArr[count + vertexIdx], yArr[2 * count + vertexIdx]);
+    this.dragTmpVec.copy(this.dragYCurrent).applyMatrix4(this.dragRS);
+    this.dragTranslation.copy(this.dragWorldCurrent).sub(this.dragTmpVec);
+
+    this.dragTargetY.copy(worldPos).sub(this.dragTranslation).applyMatrix4(this.dragRSInv);
+
+    const R = this.options.getRot().matrix;
+    for (let d = 0; d < N; d++) {
+      let acc = 0;
+      for (let a = 0; a < N; a++) acc += R[d * N + a] * src[a * count + vertexIdx];
+      this.dragRotated[d] = acc;
+      this.dragRotatedNext[d] = acc;
+    }
+
+    const params = this.options.getParams();
+    const axes = [params.axesX % N, params.axesY % N, params.axesZ % N].map(v => Math.max(0, Math.min(N - 1, v)));
+    const perspectiveDims = this.options.perspectiveDimsFor(originalN, axisMap);
+    const projectedTargets = [this.dragTargetY.x, this.dragTargetY.y, this.dragTargetY.z] as const;
+
+    let scale = 1;
+    const iterations = perspectiveDims.length > 0 ? 6 : 1;
+    for (let iter = 0; iter < iterations; iter++) {
+      scale = perspectiveScaleFrom(this.dragRotatedNext, perspectiveDims);
+      for (let c = 0; c < 3; c++) {
+        const dim = axes[c];
+        this.dragRotatedNext[dim] = projectedTargets[c] / scale;
+      }
+    }
+    scale = perspectiveScaleFrom(this.dragRotatedNext, perspectiveDims);
+
+    for (let c = 0; c < 3; c++) {
+      const dim = axes[c];
+      const projected = projectedTargets[c];
+      this.dragRotatedNext[dim] = projected / scale;
+    }
+
+    for (let a = 0; a < N; a++) {
+      let acc = 0;
+      for (let d = 0; d < N; d++) acc += R[d * N + a] * this.dragRotatedNext[d];
+      src[a * count + vertexIdx] = acc;
+    }
+
+    if (instIdx === -1) this.options.setProjectionDirty(true);
+    return true;
+  }
+
+  private resetToolbarDrag() {
+    this.toolbarTransformDrag.active = false;
+    this.toolbarTransformDrag.started = false;
+    this.toolbarTransformDrag.pointerId = -1;
+    this.toolbarTransformDrag.mode = 'none';
+    this.toolbarTransformDrag.sourceButton = null;
+  }
+}

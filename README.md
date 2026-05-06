@@ -25,7 +25,6 @@ https://srdz-af.github.io/BleND/
 - Multiple objects, per-object visibility, rename, delete
 - Per-object surface settings (base color, metallic, roughness, alpha)
 - View modes: wireframe, transparent, solid
-- JSON import/export
 - Undo/redo
 
 ## Quick Start
@@ -113,24 +112,9 @@ Ctrl+Shift+Z / Cmd+Shift+Z: redo
 ## UI Overview
 
 - **View mode buttons**: Wireframe / Transparent / Solid / Faceted (shared colors per coplanar outer face region)
-- **Scene actions**: Import JSON, Export JSON, Edit mode
+- **Scene actions**: record viewport, capture frame, Edit mode
 - **Axis order panel**: drag to reorder active dimensions
 - **Object list**: select, rename, hide/show objects
 - **Dimension selector**: sets dimension for newly created primitives
 - **Texture panel**: per-selected-object surface controls and preview cube
 - **Extra-axis gizmos**: per-axis high-dimensional rotation dials with mini play, 2x, 3x, stop auto-rotate toggles
-
-## JSON Import / Export
-
-Accepted import format:
-
-```json
-{
-  "points": [
-    { "d0": 0.0, "d1": 0.5, "d2": -0.5 },
-    { "d0": 1.0, "d1": 0.5, "d2": 0.0 }
-  ],
-  "edges": [[0, 1]],
-  "adjacency": { "0": [1], "1": [0] }
-}
-```

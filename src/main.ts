@@ -2,40 +2,50 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
-import { MAX_N, AXIS_PALETTE, VIEW_MODES, type ViewMode } from './constants';
+import { MAX_N, type ViewMode } from './constants';
 import { RotND } from './RotND';
-import { pcaTopK } from './PCA';
 import { NDProjector, canonicalP } from './geometry/NDProjector';
 import { buildPrimitive, type PrimitiveKind } from './geometry/primitives';
-import { parseGeometryJson, serializeGeometryJson } from './io/geometryJson';
-import { HypercubeRenderer, type SurfaceMaterial } from './rendering/HypercubeRenderer';
+import {
+  canonicalAxisMap,
+  embedToMax,
+  normalizeAxisMap,
+  type AxisMap,
+} from './geometry/projectionUtils';
+import { BackgroundController } from './background/BackgroundController';
+import { KeyboardCameraController } from './controls/KeyboardCameraController';
+import { KeyboardShortcutController } from './interaction/KeyboardShortcutController';
+import { TransformController } from './interaction/TransformController';
+import { ViewportInteractionController } from './interaction/ViewportInteractionController';
+import { createFadingGrid } from './viewport/grid';
+import { AxisGizmoController } from './ui/AxisGizmoController';
+import { ModalOverlayController } from './ui/ModalOverlayController';
+import { ObjectListController } from './ui/ObjectListController';
+import { PaneController } from './ui/PaneController';
+import { TextureEditorController } from './ui/TextureEditorController';
+import { ViewModeController } from './ui/ViewModeController';
+import { ViewportCaptureController } from './viewport/ViewportCaptureController';
+import { HypercubeRenderer } from './rendering/HypercubeRenderer';
+import { createSceneInstance, type InstanceGeometryData } from './scene/instanceFactory';
+import { ProjectionPipeline } from './scene/ProjectionPipeline';
+import { SceneHistory } from './scene/SceneHistory';
+import { DEFAULT_SURFACE, cloneSurface, normalizeSurface, surfacesEqual, type SurfaceState } from './scene/surface';
+import type {
+  DataSource,
+  Instance,
+  InstanceSnapshot,
+  ProjectionAxes,
+  SceneSnapshot,
+  TransformMode,
+  TransformState,
+} from './scene/types';
 
 type ProjMode = 'Canonical' | 'PCA';
 type PrimitiveMode = PrimitiveKind;
 
 const app = document.getElementById('app')!;
-const fileInput = document.getElementById('file-input') as HTMLInputElement | null;
 const tooltipEl = document.getElementById('tooltip') as HTMLDivElement | null;
 const ctxMenu = document.getElementById('context-menu') as HTMLDivElement | null;
-const viewToggle = document.getElementById('view-toggle') as HTMLDivElement | null;
-const axisGizmoEl = document.getElementById('axis-gizmo') as HTMLDivElement | null;
-const extraAxisGizmosEl = document.getElementById('extra-axis-gizmos') as HTMLDivElement | null;
-const helpToggleButton = document.getElementById('help-toggle') as HTMLButtonElement | null;
-const helpOverlay = document.getElementById('help-overlay') as HTMLDivElement | null;
-const helpCloseButton = document.getElementById('help-close') as HTMLButtonElement | null;
-const mobileOnboardingOpenButton = document.getElementById('mobile-onboarding-open') as HTMLButtonElement | null;
-const mobileOnboardingOverlay = document.getElementById('mobile-onboarding-overlay') as HTMLDivElement | null;
-const mobileOnboardingTrack = document.getElementById('mobile-onboarding-track') as HTMLDivElement | null;
-const mobileOnboardingCloseButton = document.getElementById('mobile-onboarding-close') as HTMLButtonElement | null;
-const mobileOnboardingSkipButton = document.getElementById('mobile-onboarding-skip') as HTMLButtonElement | null;
-const mobileOnboardingPrevButton = document.getElementById('mobile-onboarding-prev') as HTMLButtonElement | null;
-const mobileOnboardingNextButton = document.getElementById('mobile-onboarding-next') as HTMLButtonElement | null;
-const mobileOnboardingFinishButton = document.getElementById('mobile-onboarding-finish') as HTMLButtonElement | null;
-const mobileOnboardingProgressButtons = Array.from(document.querySelectorAll('#mobile-onboarding-progress button[data-step]')) as HTMLButtonElement[];
-const mobileOnboardingSteps = Array.from(document.querySelectorAll('#mobile-onboarding-track .mobile-onboarding-step')) as HTMLElement[];
-const importJsonButton = document.getElementById('import-json-button') as HTMLButtonElement | null;
-const exportJsonButton = document.getElementById('export-json-button') as HTMLButtonElement | null;
 const recordViewportButton = document.getElementById('record-viewport-button') as HTMLButtonElement | null;
 const recordViewportTimer = document.getElementById('record-viewport-timer') as HTMLSpanElement | null;
 const captureFrameButton = document.getElementById('capture-frame-button') as HTMLButtonElement | null;
@@ -46,128 +56,8 @@ const transformScaleButton = document.getElementById('transform-scale-button') a
 const dimensionValue = document.getElementById('dimension-value') as HTMLOutputElement | null;
 const dimensionDownButton = document.getElementById('dimension-down') as HTMLButtonElement | null;
 const dimensionUpButton = document.getElementById('dimension-up') as HTMLButtonElement | null;
-const backgroundSelectorEl = document.getElementById('background-selector') as HTMLDivElement | null;
-const backgroundSwatchButtons = Array.from(document.querySelectorAll('#background-swatches .background-swatch[data-hdri]')) as HTMLButtonElement[];
-const backgroundBlurInput = document.getElementById('background-blur') as HTMLInputElement | null;
-const backgroundBlurValue = document.getElementById('background-blur-value') as HTMLOutputElement | null;
-const backgroundLightnessInput = document.getElementById('background-lightness') as HTMLInputElement | null;
-const backgroundLightnessValue = document.getElementById('background-lightness-value') as HTMLOutputElement | null;
-const backgroundControlsEl = document.getElementById('background-controls') as HTMLDivElement | null;
-const texturePanel = document.getElementById('texture-panel') as HTMLDivElement | null;
-const texturePreviewCanvas = document.getElementById('texture-preview') as HTMLCanvasElement | null;
-const textureBaseColorInput = document.getElementById('texture-base-color') as HTMLInputElement | null;
-const textureBaseColorValue = document.getElementById('texture-base-color-value') as HTMLOutputElement | null;
-const textureMetallicInput = document.getElementById('texture-metallic') as HTMLInputElement | null;
-const textureMetallicValue = document.getElementById('texture-metallic-value') as HTMLOutputElement | null;
-const textureRoughnessInput = document.getElementById('texture-roughness') as HTMLInputElement | null;
-const textureRoughnessValue = document.getElementById('texture-roughness-value') as HTMLOutputElement | null;
-const textureAlphaInput = document.getElementById('texture-alpha') as HTMLInputElement | null;
-const textureAlphaValue = document.getElementById('texture-alpha-value') as HTMLOutputElement | null;
-const texturePresetSelect = document.getElementById('texture-preset-select') as HTMLSelectElement | null;
-const texturePresetSaveButton = document.getElementById('texture-preset-save') as HTMLButtonElement | null;
-const getPaneToggleButton = () => document.getElementById('pane-toggle') as HTMLButtonElement | null;
-const MOBILE_ONBOARDING_SEEN_KEY = 'blend.mobileOnboardingSeen.v1';
-const HDR_BACKGROUND_SELECTION_KEY = 'blend.hdriSelection.v1';
-const HDR_BACKGROUND_BLUR_KEY = 'blend.hdriBlur.v1';
-const HDR_BACKGROUND_LIGHTNESS_KEY = 'blend.hdriLightness.v1';
-const TEXTURE_PRESETS_KEY = 'blend.texturePresets.v1';
-let helpLastFocusedEl: HTMLElement | null = null;
-let mobileOnboardingLastFocusedEl: HTMLElement | null = null;
-let mobileOnboardingStep = 0;
-
-const isHelpOverlayOpen = () => helpOverlay?.classList.contains('open') ?? false;
-const isMobileOnboardingOpen = () => mobileOnboardingOverlay?.classList.contains('open') ?? false;
-const isModalUIOpen = () => isHelpOverlayOpen() || isMobileOnboardingOpen();
-
-function setHelpOverlayOpen(open: boolean) {
-  if (!helpOverlay) return;
-  if (open && isMobileOnboardingOpen()) {
-    setMobileOnboardingOpen(false);
-  }
-  helpOverlay.classList.toggle('open', open);
-  helpOverlay.setAttribute('aria-hidden', open ? 'false' : 'true');
-  if (open) {
-    helpLastFocusedEl = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    helpCloseButton?.focus();
-    return;
-  }
-  if (helpLastFocusedEl && document.contains(helpLastFocusedEl)) {
-    helpLastFocusedEl.focus();
-  }
-}
-
-function hasSeenMobileOnboarding() {
-  try {
-    return window.localStorage.getItem(MOBILE_ONBOARDING_SEEN_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-function markMobileOnboardingSeen() {
-  try {
-    window.localStorage.setItem(MOBILE_ONBOARDING_SEEN_KEY, '1');
-  } catch {
-    // Storage may be unavailable in private sessions.
-  }
-}
-
-function setMobileOnboardingStep(step: number) {
-  if (!mobileOnboardingTrack || mobileOnboardingSteps.length === 0) return;
-  const maxStep = mobileOnboardingSteps.length - 1;
-  mobileOnboardingStep = Math.max(0, Math.min(maxStep, step));
-  mobileOnboardingTrack.style.transform = `translateX(${-mobileOnboardingStep * 100}%)`;
-
-  mobileOnboardingSteps.forEach((stepEl, idx) => {
-    stepEl.setAttribute('aria-hidden', idx === mobileOnboardingStep ? 'false' : 'true');
-  });
-
-  mobileOnboardingProgressButtons.forEach((button, idx) => {
-    const active = idx === mobileOnboardingStep;
-    button.classList.toggle('active', active);
-    button.setAttribute('aria-current', active ? 'step' : 'false');
-  });
-
-  const isLastStep = mobileOnboardingStep >= maxStep;
-  if (mobileOnboardingPrevButton) mobileOnboardingPrevButton.disabled = mobileOnboardingStep === 0;
-  if (mobileOnboardingNextButton) mobileOnboardingNextButton.style.display = isLastStep ? 'none' : 'inline-block';
-  if (mobileOnboardingFinishButton) mobileOnboardingFinishButton.classList.toggle('visible', isLastStep);
-}
-
-function setMobileOnboardingOpen(open: boolean) {
-  if (!mobileOnboardingOverlay) return;
-  if (open && isHelpOverlayOpen()) {
-    setHelpOverlayOpen(false);
-  }
-  mobileOnboardingOverlay.classList.toggle('open', open);
-  mobileOnboardingOverlay.setAttribute('aria-hidden', open ? 'false' : 'true');
-  if (open) {
-    mobileOnboardingLastFocusedEl = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setMobileOnboardingStep(mobileOnboardingStep);
-    mobileOnboardingCloseButton?.focus();
-    return;
-  }
-  if (mobileOnboardingLastFocusedEl && document.contains(mobileOnboardingLastFocusedEl)) {
-    mobileOnboardingLastFocusedEl.focus();
-  }
-}
-
-function closeMobileOnboarding(markSeen = true) {
-  if (!isMobileOnboardingOpen()) return;
-  if (markSeen) markMobileOnboardingSeen();
-  setMobileOnboardingOpen(false);
-}
-
-function openMobileOnboarding(step = 0) {
-  setMobileOnboardingStep(step);
-  setMobileOnboardingOpen(true);
-}
-
-function maybeOpenMobileOnboarding() {
-  if (!mobileOnboardingOverlay || mobileOnboardingSteps.length === 0) return;
-  if (hasSeenMobileOnboarding()) return;
-  openMobileOnboarding(0);
-}
+const modalOverlayController = new ModalOverlayController();
+const paneController = new PaneController();
 
 // --- Three.js setup ---
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -185,97 +75,24 @@ scene.background = baseBackground.clone();
 renderer.setClearColor(scene.background);
 const pmrem = new THREE.PMREMGenerator(renderer);
 const fallbackEnvironmentTarget = pmrem.fromScene(new RoomEnvironment(), 0.04);
-let activeEnvironmentTarget: THREE.WebGLRenderTarget = fallbackEnvironmentTarget;
 scene.environment = fallbackEnvironmentTarget.texture;
-const HDR_BACKGROUND_BLUR_DEFAULT = 0.35;
-const HDR_BACKGROUND_LIGHTNESS_DEFAULT = 1.0;
-const PLAIN_BACKGROUND_KEY = 'plain' as const;
-const DEFAULT_SOLID_BACKGROUND_KEY = 'ferndale' as const;
-const VITE_BASE_URL = (() => {
-  const env = (import.meta as { env?: { BASE_URL?: unknown } }).env;
-  if (typeof env?.BASE_URL !== 'string') return '';
-  const trimmed = env.BASE_URL.trim();
-  if (!trimmed) return '';
-  const withLeadingSlash = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
-  return withLeadingSlash.endsWith('/') ? withLeadingSlash : `${withLeadingSlash}/`;
-})();
-const APP_BASE_URL = (() => {
-  if (VITE_BASE_URL) return VITE_BASE_URL;
-  try {
-    const path = new URL('.', document.baseURI).pathname;
-    return path.endsWith('/') ? path : `${path}/`;
-  } catch {
-    return '/';
-  }
-})();
-const HDR_BACKGROUND_OPTIONS = [
-  {
-    key: 'ferndale',
-    label: 'Ferndale studio',
-    preview: 'hdri/previews/ferndale_studio_12_1k.webp',
-    urls: [
-      '/hdri/ferndale_studio_12_1k.hdr',
-      '/ferndale_studio_12_1k.hdr',
-      '/hdri/ferndale-studio-12-1k.hdr',
-      '/ferndale-studio-12-1k.hdr',
-    ],
-  },
-  {
-    key: 'monochrome',
-    label: 'Monochrome studio',
-    preview: 'hdri/previews/monochrome_studio_02_1k.webp',
-    urls: [
-      '/hdri/monochrome_studio_02_1k.hdr',
-      '/monochrome_studio_02_1k.hdr',
-      '/hdri/monochrome-studio-02-1k.hdr',
-      '/monochrome-studio-02-1k.hdr',
-    ],
-  },
-  {
-    key: 'sundowner',
-    label: 'Sundowner deck',
-    preview: 'hdri/previews/sundowner_deck_1k.webp',
-    urls: [
-      '/hdri/sundowner_deck_1k.hdr',
-      '/sundowner_deck_1k.hdr',
-      '/hdri/sundowner-deck-1k.hdr',
-      '/sundowner-deck-1k.hdr',
-    ],
-  },
-  {
-    key: 'grasslands',
-    label: 'Grasslands sunset',
-    preview: 'hdri/previews/grasslands_sunset_1k.webp',
-    urls: [
-      '/hdri/grasslands_sunset_1k.hdr',
-      '/grasslands_sunset_1k.hdr',
-      '/hdri/grasslands-sunset-1k.hdr',
-      '/grasslands-sunset-1k.hdr',
-    ],
-  },
-] as const;
-type HdriBackgroundOption = (typeof HDR_BACKGROUND_OPTIONS)[number];
-type HdriBackgroundKey = HdriBackgroundOption['key'];
-type BackgroundKey = HdriBackgroundKey | typeof PLAIN_BACKGROUND_KEY;
-type BackgroundOption = HdriBackgroundOption | { key: typeof PLAIN_BACKGROUND_KEY; label: 'Plain background'; };
-const backgroundOptionByKey = new Map<BackgroundKey, BackgroundOption>([
-  [PLAIN_BACKGROUND_KEY, { key: PLAIN_BACKGROUND_KEY, label: 'Plain background' }],
-  ...HDR_BACKGROUND_OPTIONS.map(option => [option.key, option] as const),
-]);
-const hdrBackgroundOptionByKey = new Map<HdriBackgroundKey, HdriBackgroundOption>(
-  HDR_BACKGROUND_OPTIONS.map(option => [option.key, option]),
-);
-const hdrLoader = new RGBELoader();
-const hdrBackgroundTextureCache = new Map<HdriBackgroundKey, THREE.Texture>();
-const hdrEnvironmentTargetCache = new Map<HdriBackgroundKey, THREE.WebGLRenderTarget>();
-let hdrBackgroundTexture: THREE.Texture | null = null;
-let activeBackgroundKey: BackgroundKey | null = null;
-let hdrBackgroundLoadingKey: HdriBackgroundKey | null = null;
-let hdrBackgroundBlur = HDR_BACKGROUND_BLUR_DEFAULT;
-let hdrBackgroundLightness = HDR_BACKGROUND_LIGHTNESS_DEFAULT;
-hdrBackgroundBlur = Math.max(0, Math.min(1, readStoredNumber(HDR_BACKGROUND_BLUR_KEY, hdrBackgroundBlur)));
-hdrBackgroundLightness = clampHdrLightness(readStoredNumber(HDR_BACKGROUND_LIGHTNESS_KEY, hdrBackgroundLightness));
-syncBackgroundRenderControls();
+const backgroundController = new BackgroundController({
+  scene,
+  renderer,
+  pmrem,
+  fallbackEnvironmentTarget,
+  baseBackground,
+  editBackground,
+  selectorEl: document.getElementById('background-selector') as HTMLDivElement | null,
+  swatchButtons: Array.from(document.querySelectorAll('#background-swatches .background-swatch[data-hdri]')) as HTMLButtonElement[],
+  blurInput: document.getElementById('background-blur') as HTMLInputElement | null,
+  blurValue: document.getElementById('background-blur-value') as HTMLOutputElement | null,
+  lightnessInput: document.getElementById('background-lightness') as HTMLInputElement | null,
+  lightnessValue: document.getElementById('background-lightness-value') as HTMLOutputElement | null,
+  controlsEl: document.getElementById('background-controls') as HTMLDivElement | null,
+  getRenderMode: () => PARAMS.renderMode,
+  getEditMode: () => PARAMS.editMode,
+});
 
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.01, 100);
 const DEFAULT_CAMERA_POSITION = new THREE.Vector3(3.9, 2.7, 3.9);
@@ -283,1047 +100,27 @@ camera.position.copy(DEFAULT_CAMERA_POSITION);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 const worldUp = new THREE.Vector3(0, 1, 0);
-
-type AxisGizmoPart = {
-  slot: 0 | 1 | 2;
-  vector: THREE.Vector3;
-  button: HTMLButtonElement;
-  line: SVGLineElement;
-};
-type ExtraAxisGizmoPlane = {
-  planeAxis: number;
-  depthDim: number;
-};
-type ExtraAxisGizmoUI = {
-  root: HTMLDivElement;
-  line: SVGLineElement;
-  negButton: HTMLButtonElement;
-  posButton: HTMLButtonElement;
-  autoToggleButton: HTMLButtonElement;
-  perspectiveToggleButton: HTMLButtonElement;
-  label: HTMLSpanElement;
-};
-const axisGizmoParts: AxisGizmoPart[] = [];
-const GIZMO_VIEWBOX_SIZE = 86;
-const axisGizmoCenter = GIZMO_VIEWBOX_SIZE * 0.5;
-const axisGizmoRadius = 28;
-const wGizmoCenter = GIZMO_VIEWBOX_SIZE * 0.5;
-const wGizmoRadius = 28;
-const EXTRA_GIZMO_BASE_ANGLE = -Math.PI / 4;
-const extraAxisGizmoUIs = new Map<number, ExtraAxisGizmoUI>();
-const extraAxisGizmoAngles = new Map<number, number>();
-const selectedExtraAxisGizmoDims = new Set<number>([3]);
-const selectedPerspectiveDims = new Set<number>([3]);
-const autoRotateExtraAxisSpeeds = new Map<number, number>();
-const EXTRA_AXIS_AUTO_ROTATE_SPEED = 0.45;
-const axisChipDoubleTapState = { dim: -1, ts: 0, x: 0, y: 0 };
-const gizmoDoubleTapState = { dim: -1, ts: 0, x: 0, y: 0 };
-const axisGizmoDrag = {
-  active: false,
-  moved: false,
-  pointerId: -1,
-  lastX: 0,
-  lastY: 0,
-  snapVector: null as THREE.Vector3 | null,
-};
-const extraAxisGizmoDrag = {
-  active: false,
-  moved: false,
-  pointerId: -1,
-  lastAngle: 0,
-  planeAxis: -1,
-  depthAxis: -1,
-  target: null as HTMLDivElement | null,
-};
-const sceneBackgroundHsl = { h: 0, s: 0, l: 0 };
-const sceneBackgroundColor = new THREE.Color();
-const backgroundBlueHue = 0.61;
-
-function normalizeSignedAngleDelta(value: number) {
-  let delta = value;
-  while (delta > Math.PI) delta -= Math.PI * 2;
-  while (delta < -Math.PI) delta += Math.PI * 2;
-  return delta;
-}
-
-function clampHdrLightness(value: number) {
-  return Math.max(0.2, Math.min(2.0, value));
-}
-
-function readStoredNumber(key: string, fallback: number) {
-  try {
-    const raw = window.localStorage.getItem(key);
-    if (raw == null) return fallback;
-    const parsed = Number.parseFloat(raw);
-    return Number.isFinite(parsed) ? parsed : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function storeBackgroundRenderSettings() {
-  try {
-    window.localStorage.setItem(HDR_BACKGROUND_BLUR_KEY, String(hdrBackgroundBlur));
-    window.localStorage.setItem(HDR_BACKGROUND_LIGHTNESS_KEY, String(hdrBackgroundLightness));
-  } catch {
-    // Storage may be unavailable in private sessions.
-  }
-}
-
-function syncBackgroundRenderControls() {
-  if (backgroundBlurInput) backgroundBlurInput.value = hdrBackgroundBlur.toFixed(2);
-  if (backgroundBlurValue) backgroundBlurValue.textContent = hdrBackgroundBlur.toFixed(2);
-  if (backgroundLightnessInput) backgroundLightnessInput.value = hdrBackgroundLightness.toFixed(2);
-  if (backgroundLightnessValue) backgroundLightnessValue.textContent = hdrBackgroundLightness.toFixed(2);
-}
-
-function applySceneBackground(useEditMode: boolean) {
-  if (hdrBackgroundTexture) {
-    scene.background = hdrBackgroundTexture;
-    scene.backgroundBlurriness = hdrBackgroundBlur;
-    scene.backgroundIntensity = hdrBackgroundLightness;
-    return;
-  }
-
-  const source = useEditMode ? editBackground : baseBackground;
-  source.getHSL(sceneBackgroundHsl);
-  const saturationFloor = useEditMode ? 0.02 : 0.03;
-  const saturationScale = useEditMode ? 0.22 : 0.26;
-  const saturation = Math.max(sceneBackgroundHsl.s * saturationScale, saturationFloor);
-  sceneBackgroundColor.setHSL(backgroundBlueHue, saturation, sceneBackgroundHsl.l);
-  scene.background = sceneBackgroundColor;
-  scene.backgroundBlurriness = 0;
-  scene.backgroundIntensity = 1;
-  renderer.setClearColor(sceneBackgroundColor);
-}
-
-function isHdriBackgroundKey(key: BackgroundKey): key is HdriBackgroundKey {
-  return key !== PLAIN_BACKGROUND_KEY;
-}
-
-function normalizeSolidBackgroundKey(value: string | null | undefined): HdriBackgroundKey {
-  if (!value) return DEFAULT_SOLID_BACKGROUND_KEY;
-  const match = HDR_BACKGROUND_OPTIONS.find(option => option.key === value);
-  return match?.key ?? DEFAULT_SOLID_BACKGROUND_KEY;
-}
-
-function normalizeBackgroundKey(value: string | null | undefined): BackgroundKey {
-  if (value === PLAIN_BACKGROUND_KEY) return PLAIN_BACKGROUND_KEY;
-  return normalizeSolidBackgroundKey(value);
-}
-
-function getStoredHdrBackgroundKey(): HdriBackgroundKey {
-  try {
-    return normalizeSolidBackgroundKey(window.localStorage.getItem(HDR_BACKGROUND_SELECTION_KEY));
-  } catch {
-    return DEFAULT_SOLID_BACKGROUND_KEY;
-  }
-}
-
-function storeHdrBackgroundKey(key: HdriBackgroundKey) {
-  try {
-    window.localStorage.setItem(HDR_BACKGROUND_SELECTION_KEY, key);
-  } catch {
-    // Storage may be unavailable in private sessions.
-  }
-}
-
-function updateBackgroundSwatchUI() {
-  const plainOnly = PARAMS.renderMode !== 'solid';
-  const controlsEnabled = PARAMS.renderMode === 'solid' && activeBackgroundKey !== PLAIN_BACKGROUND_KEY;
-  backgroundSelectorEl?.classList.toggle('plain-only', plainOnly);
-  backgroundControlsEl?.classList.toggle('disabled', !controlsEnabled);
-  if (backgroundBlurInput) backgroundBlurInput.disabled = !controlsEnabled;
-  if (backgroundLightnessInput) backgroundLightnessInput.disabled = !controlsEnabled;
-
-  backgroundSwatchButtons.forEach(button => {
-    const key = normalizeBackgroundKey(button.dataset.hdri);
-    const available = !plainOnly || key === PLAIN_BACKGROUND_KEY;
-    const loading = isHdriBackgroundKey(key) && key === hdrBackgroundLoadingKey;
-    const active = key === activeBackgroundKey;
-    button.classList.toggle('loading', loading);
-    button.classList.toggle('active', active);
-    button.disabled = !available || loading;
-    button.setAttribute('aria-pressed', active ? 'true' : 'false');
-  });
-}
-
-function initializeBackgroundRenderControls() {
-  syncBackgroundRenderControls();
-  if (backgroundBlurInput) {
-    backgroundBlurInput.addEventListener('input', () => {
-      const next = clamp01(Number.parseFloat(backgroundBlurInput.value));
-      hdrBackgroundBlur = next;
-      if (backgroundBlurValue) backgroundBlurValue.textContent = next.toFixed(2);
-      applySceneBackground(PARAMS.editMode);
-      storeBackgroundRenderSettings();
-    });
-  }
-  if (backgroundLightnessInput) {
-    backgroundLightnessInput.addEventListener('input', () => {
-      const next = clampHdrLightness(Number.parseFloat(backgroundLightnessInput.value));
-      hdrBackgroundLightness = next;
-      if (backgroundLightnessValue) backgroundLightnessValue.textContent = next.toFixed(2);
-      applySceneBackground(PARAMS.editMode);
-      storeBackgroundRenderSettings();
-    });
-  }
-}
-
-function hdrCandidateUrls(rawPath: string) {
-  const clean = rawPath.replace(/^\/+/, '');
-  const primary = `${APP_BASE_URL}${clean}`;
-  if (APP_BASE_URL === '/') return [primary];
-  return [primary, `/${clean}`];
-}
-
-async function setActiveBackground(key: BackgroundKey) {
-  const option = backgroundOptionByKey.get(key);
-  if (!option) return false;
-
-  if (!isHdriBackgroundKey(key)) {
-    if (activeBackgroundKey === PLAIN_BACKGROUND_KEY && !hdrBackgroundTexture) return true;
-    activeBackgroundKey = PLAIN_BACKGROUND_KEY;
-    activeEnvironmentTarget = fallbackEnvironmentTarget;
-    scene.environment = fallbackEnvironmentTarget.texture;
-    hdrBackgroundTexture = null;
-    applySceneBackground(PARAMS.editMode);
-    updateBackgroundSwatchUI();
-    return true;
-  }
-
-  const hdriOption = hdrBackgroundOptionByKey.get(key);
-  if (!hdriOption) return false;
-  if (hdrBackgroundLoadingKey === key) return false;
-  if (activeBackgroundKey === key && hdrBackgroundTexture) return true;
-
-  hdrBackgroundLoadingKey = key;
-  updateBackgroundSwatchUI();
-  try {
-    let hdrTexture = hdrBackgroundTextureCache.get(key);
-    if (!hdrTexture) {
-      const candidates = new Set<string>();
-      for (const rawPath of hdriOption.urls) {
-        hdrCandidateUrls(rawPath).forEach(url => candidates.add(url));
-      }
-      for (const candidateUrl of candidates) {
-        try {
-          hdrTexture = await hdrLoader.loadAsync(candidateUrl);
-          break;
-        } catch {
-          // Try next URL candidate.
-        }
-      }
-      if (!hdrTexture) {
-        return false;
-      }
-      hdrTexture.mapping = THREE.EquirectangularReflectionMapping;
-      hdrBackgroundTextureCache.set(key, hdrTexture);
-    }
-
-    let environmentTarget = hdrEnvironmentTargetCache.get(key);
-    if (!environmentTarget) {
-      environmentTarget = pmrem.fromEquirectangular(hdrTexture);
-      hdrEnvironmentTargetCache.set(key, environmentTarget);
-    }
-
-    activeBackgroundKey = key;
-    activeEnvironmentTarget = environmentTarget;
-    scene.environment = environmentTarget.texture;
-    hdrBackgroundTexture = hdrTexture;
-    applySceneBackground(PARAMS.editMode);
-    storeHdrBackgroundKey(key);
-    return true;
-  } catch {
-    return false;
-  } finally {
-    hdrBackgroundLoadingKey = null;
-    updateBackgroundSwatchUI();
-  }
-}
-
-function syncBackgroundForRenderMode() {
-  const plainOnly = PARAMS.renderMode !== 'solid';
-  if (plainOnly) {
-    if (activeBackgroundKey !== PLAIN_BACKGROUND_KEY) {
-      void setActiveBackground(PLAIN_BACKGROUND_KEY);
-      return;
-    }
-    updateBackgroundSwatchUI();
-    return;
-  }
-
-  if (activeBackgroundKey == null || activeBackgroundKey === PLAIN_BACKGROUND_KEY) {
-    void setActiveBackground(getStoredHdrBackgroundKey());
-    return;
-  }
-  updateBackgroundSwatchUI();
-}
-
-async function initializeHdrBackgroundSelector() {
-  if (!backgroundSelectorEl || backgroundSwatchButtons.length === 0) return;
-
-  backgroundSwatchButtons.forEach(button => {
-    const key = normalizeBackgroundKey(button.dataset.hdri);
-    const option = backgroundOptionByKey.get(key);
-    if (option) {
-      button.title = option.label;
-      button.setAttribute('aria-label', option.label);
-      if ('preview' in option) {
-        button.style.setProperty('--swatch-image', `url('${APP_BASE_URL}${option.preview}')`);
-      } else {
-        button.style.removeProperty('--swatch-image');
-      }
-    }
-    button.addEventListener('click', () => {
-      void setActiveBackground(key);
-    });
-  });
-
-  updateBackgroundSwatchUI();
-
-  if (PARAMS.renderMode !== 'solid') {
-    await setActiveBackground(PLAIN_BACKGROUND_KEY);
-    return;
-  }
-
-  const preferred = getStoredHdrBackgroundKey();
-  if (await setActiveBackground(preferred)) {
-    return;
-  }
-
-  for (const option of HDR_BACKGROUND_OPTIONS) {
-    if (option.key === preferred) continue;
-    if (await setActiveBackground(option.key)) return;
-  }
-}
-
-function pointerAngleInExtraAxisGizmo(ev: PointerEvent, gizmoEl: HTMLDivElement) {
-  const rect = gizmoEl.getBoundingClientRect();
-  const cx = rect.left + rect.width * 0.5;
-  const cy = rect.top + rect.height * 0.5;
-  const dx = ev.clientX - cx;
-  const dy = ev.clientY - cy;
-  if ((dx * dx) + (dy * dy) < 16) return null;
-  return Math.atan2(dy, dx);
-}
-
-function currentExtraAxisGizmoPlanes(): ExtraAxisGizmoPlane[] {
-  const nVis = visibleDims();
-  if (nVis < 2) return [];
-  const ordered = axesOrder.slice(0, nVis);
-  const activeAxes = [PARAMS.axesX, PARAMS.axesY, PARAMS.axesZ];
-  const planes: ExtraAxisGizmoPlane[] = [];
-  const usedPairs = new Set<string>();
-  const pairKey = (a: number, b: number) => (a < b ? `${a}:${b}` : `${b}:${a}`);
-
-  for (let depthSlot = 0; depthSlot < ordered.length; depthSlot++) {
-    const depthDim = ordered[depthSlot];
-    if (!selectedExtraAxisGizmoDims.has(depthDim)) continue;
-
-    const baseSlot = ((depthSlot % activeAxes.length) + activeAxes.length) % activeAxes.length;
-    const candidates: number[] = [];
-    for (let offset = 0; offset < activeAxes.length; offset++) {
-      const candidate = activeAxes[(baseSlot + offset) % activeAxes.length];
-      if (!candidates.includes(candidate)) candidates.push(candidate);
-    }
-    for (const candidate of ordered) {
-      if (!candidates.includes(candidate)) candidates.push(candidate);
-    }
-
-    let planeAxis = -1;
-    for (const candidate of candidates) {
-      if (candidate < 0 || candidate === depthDim) continue;
-      const key = pairKey(candidate, depthDim);
-      if (usedPairs.has(key)) continue;
-      planeAxis = candidate;
-      usedPairs.add(key);
-      break;
-    }
-
-    if (planeAxis < 0) {
-      planeAxis = candidates.find(candidate => candidate >= 0 && candidate !== depthDim) ?? -1;
-    }
-    if (planeAxis < 0 || planeAxis === depthDim) continue;
-    usedPairs.add(pairKey(planeAxis, depthDim));
-    planes.push({ planeAxis, depthDim });
-  }
-  return planes;
-}
-
-function getExtraAxisGizmoAngle(depthDim: number) {
-  const existing = extraAxisGizmoAngles.get(depthDim);
-  if (typeof existing === 'number') return existing;
-  extraAxisGizmoAngles.set(depthDim, EXTRA_GIZMO_BASE_ANGLE);
-  return EXTRA_GIZMO_BASE_ANGLE;
-}
-
-function addExtraAxisGizmo(depthDim: number) {
-  if (!Number.isInteger(depthDim) || depthDim < 0 || depthDim >= MAX_N) return;
-  if (selectedExtraAxisGizmoDims.has(depthDim)) return;
-  selectedExtraAxisGizmoDims.add(depthDim);
-  getExtraAxisGizmoAngle(depthDim);
-  renderAxisList();
-  syncExtraAxisGizmos();
-}
-
-function removeExtraAxisGizmo(depthDim: number) {
-  if (!selectedExtraAxisGizmoDims.has(depthDim)) return;
-  if (extraAxisGizmoDrag.active && extraAxisGizmoDrag.depthAxis === depthDim) {
-    resetExtraAxisGizmoDragState();
-  }
-  selectedExtraAxisGizmoDims.delete(depthDim);
-  selectedPerspectiveDims.delete(depthDim);
-  autoRotateExtraAxisSpeeds.delete(depthDim);
-  extraAxisGizmoAngles.delete(depthDim);
-  const ui = extraAxisGizmoUIs.get(depthDim);
-  if (ui) {
-    ui.root.remove();
-    extraAxisGizmoUIs.delete(depthDim);
-  }
-  renderAxisList();
-  syncExtraAxisGizmos();
-}
-
-function toggleExtraAxisGizmo(depthDim: number) {
-  if (selectedExtraAxisGizmoDims.has(depthDim)) removeExtraAxisGizmo(depthDim);
-  else addExtraAxisGizmo(depthDim);
-}
-
-function setExtraAxisAutoRotateSpeed(depthDim: number, speed: number) {
-  const normalizedSpeed = Number.isFinite(speed) ? Math.max(0, Math.min(3, Math.round(speed))) : 0;
-  if (normalizedSpeed > 0) autoRotateExtraAxisSpeeds.set(depthDim, normalizedSpeed);
-  else autoRotateExtraAxisSpeeds.delete(depthDim);
-
-  const ui = extraAxisGizmoUIs.get(depthDim);
-  if (ui) {
-    const active = normalizedSpeed > 0;
-    ui.autoToggleButton.classList.toggle('active', active);
-    const speedKey = String(normalizedSpeed);
-    if (ui.autoToggleButton.dataset.autoSpeed !== speedKey) {
-      ui.autoToggleButton.dataset.autoSpeed = speedKey;
-      ui.autoToggleButton.replaceChildren();
-      if (normalizedSpeed === 0 || normalizedSpeed === 3) {
-        const icon = document.createElement('span');
-        icon.className = 'material-symbols-rounded';
-        icon.setAttribute('aria-hidden', 'true');
-        icon.textContent = normalizedSpeed === 0 ? 'play_arrow' : 'stop';
-        ui.autoToggleButton.appendChild(icon);
-      } else {
-        const speedLabel = document.createElement('span');
-        speedLabel.className = 'auto-speed-label';
-        speedLabel.textContent = `x${normalizedSpeed + 1}`;
-        ui.autoToggleButton.appendChild(speedLabel);
-      }
-    }
-    const label = axisLabel(depthDim);
-    const action = normalizedSpeed === 0
-      ? 'Start auto-rotate'
-      : normalizedSpeed < 3
-        ? `Set auto-rotate ${normalizedSpeed + 1}x`
-        : 'Stop auto-rotate';
-    const title = `${action} ${label} axis`;
-    ui.autoToggleButton.title = title;
-    ui.autoToggleButton.setAttribute('aria-label', title);
-    ui.autoToggleButton.setAttribute('aria-pressed', String(active));
-  }
-}
-
-function advanceExtraAxisAutoRotate(depthDim: number) {
-  const currentSpeed = autoRotateExtraAxisSpeeds.get(depthDim) ?? 0;
-  const nextSpeed = currentSpeed >= 3 ? 0 : currentSpeed + 1;
-  setExtraAxisAutoRotateSpeed(depthDim, nextSpeed);
-}
-
-function setExtraAxisPerspectiveDepth(depthDim: number, active: boolean) {
-  if (active) selectedPerspectiveDims.add(depthDim);
-  else selectedPerspectiveDims.delete(depthDim);
-  const ui = extraAxisGizmoUIs.get(depthDim);
-  if (ui) {
-    ui.perspectiveToggleButton.classList.toggle('active', active);
-    const label = axisLabel(depthDim);
-    const action = active ? 'Disable perspective depth' : 'Enable perspective depth';
-    const title = `${action} for ${label} axis`;
-    ui.perspectiveToggleButton.title = title;
-    ui.perspectiveToggleButton.setAttribute('aria-label', title);
-    ui.perspectiveToggleButton.setAttribute('aria-pressed', String(active));
-  }
-}
-
-function isDoubleTapOnDim(
-  state: { dim: number; ts: number; x: number; y: number; },
-  depthDim: number,
-  ev: PointerEvent,
-) {
-  const now = performance.now();
-  const dt = now - state.ts;
-  const dx = ev.clientX - state.x;
-  const dy = ev.clientY - state.y;
-  const sameTarget = state.dim === depthDim;
-  const closeEnough = (dx * dx) + (dy * dy) < (16 * 16);
-  state.dim = depthDim;
-  state.ts = now;
-  state.x = ev.clientX;
-  state.y = ev.clientY;
-  return sameTarget && dt < 320 && closeEnough;
-}
-
-function resetExtraAxisGizmoDragState() {
-  const target = extraAxisGizmoDrag.target;
-  if (target && extraAxisGizmoDrag.pointerId >= 0 && target.hasPointerCapture(extraAxisGizmoDrag.pointerId)) {
-    target.releasePointerCapture(extraAxisGizmoDrag.pointerId);
-  }
-  target?.classList.remove('dragging');
-  extraAxisGizmoDrag.active = false;
-  extraAxisGizmoDrag.moved = false;
-  extraAxisGizmoDrag.pointerId = -1;
-  extraAxisGizmoDrag.lastAngle = 0;
-  extraAxisGizmoDrag.planeAxis = -1;
-  extraAxisGizmoDrag.depthAxis = -1;
-  extraAxisGizmoDrag.target = null;
-}
-
-function beginExtraAxisGizmoDrag(ev: PointerEvent, plane: ExtraAxisGizmoPlane, gizmoEl: HTMLDivElement) {
-  const angle = pointerAngleInExtraAxisGizmo(ev, gizmoEl);
-  if (angle == null) return;
-
-  extraAxisGizmoDrag.active = true;
-  extraAxisGizmoDrag.moved = false;
-  extraAxisGizmoDrag.pointerId = ev.pointerId;
-  extraAxisGizmoDrag.lastAngle = angle;
-  extraAxisGizmoDrag.planeAxis = plane.planeAxis;
-  extraAxisGizmoDrag.depthAxis = plane.depthDim;
-  extraAxisGizmoDrag.target = gizmoEl;
-  try {
-    gizmoEl.setPointerCapture(ev.pointerId);
-  } catch {
-    // Some browsers are strict about capture when pointerdown starts on a child.
-  }
-  gizmoEl.classList.add('dragging');
-}
-
-function endExtraAxisGizmoDrag(ev: PointerEvent) {
-  if (ev.pointerId !== extraAxisGizmoDrag.pointerId) return;
-  resetExtraAxisGizmoDragState();
-}
-
-function createExtraAxisGizmoUI(depthDim: number): ExtraAxisGizmoUI {
-  const root = document.createElement('div');
-  root.className = 'extra-axis-gizmo';
-  root.dataset.depthDim = String(depthDim);
-
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('viewBox', `0 0 ${GIZMO_VIEWBOX_SIZE} ${GIZMO_VIEWBOX_SIZE}`);
-  svg.setAttribute('aria-hidden', 'true');
-  const ring = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-  ring.setAttribute('class', 'ring');
-  ring.setAttribute('cx', `${wGizmoCenter}`);
-  ring.setAttribute('cy', `${wGizmoCenter}`);
-  ring.setAttribute('r', `${wGizmoRadius + 3}`);
-  const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-  line.setAttribute('x1', `${wGizmoCenter}`);
-  line.setAttribute('y1', `${wGizmoCenter}`);
-  line.setAttribute('x2', `${wGizmoCenter}`);
-  line.setAttribute('y2', `${wGizmoCenter}`);
-  svg.append(ring, line);
-
-  const negButton = document.createElement('button');
-  negButton.type = 'button';
-  negButton.className = 'negative';
-  const posButton = document.createElement('button');
-  posButton.type = 'button';
-  posButton.className = 'positive';
-  const autoToggleButton = document.createElement('button');
-  autoToggleButton.type = 'button';
-  autoToggleButton.className = 'auto-toggle';
-  autoToggleButton.innerHTML = `
-    <span class="material-symbols-rounded play-icon" aria-hidden="true">play_arrow</span>
-    <span class="material-symbols-rounded stop-icon" aria-hidden="true">stop</span>
-  `;
-  const perspectiveToggleButton = document.createElement('button');
-  perspectiveToggleButton.type = 'button';
-  perspectiveToggleButton.className = 'perspective-toggle';
-  perspectiveToggleButton.innerHTML = `
-    <span class="material-symbols-rounded depth-icon" aria-hidden="true">vrpano</span>
-  `;
-  const label = document.createElement('span');
-  label.className = 'axis-label';
-
-  const onPointerDown = (ev: PointerEvent) => {
-    if (ev.pointerType !== 'mouse') ev.preventDefault();
-    ev.stopPropagation();
-    const plane = currentExtraAxisGizmoPlanes().find(candidate => candidate.depthDim === depthDim);
-    if (!plane) return;
-    beginExtraAxisGizmoDrag(ev, plane, root);
-  };
-  root.addEventListener('pointerdown', onPointerDown);
-  negButton.addEventListener('pointerdown', onPointerDown);
-  posButton.addEventListener('pointerdown', onPointerDown);
-  autoToggleButton.addEventListener('pointerdown', ev => {
-    if (ev.pointerType !== 'mouse') ev.preventDefault();
-    ev.stopPropagation();
-    if (ev.button !== 0) return;
-    advanceExtraAxisAutoRotate(depthDim);
-  });
-  autoToggleButton.addEventListener('keydown', ev => {
-    if (ev.key !== 'Enter' && ev.key !== ' ') return;
-    ev.preventDefault();
-    advanceExtraAxisAutoRotate(depthDim);
-  });
-  autoToggleButton.addEventListener('pointerup', ev => {
-    ev.preventDefault();
-    ev.stopPropagation();
-  });
-  autoToggleButton.addEventListener('dblclick', ev => {
-    ev.preventDefault();
-    ev.stopPropagation();
-  });
-  perspectiveToggleButton.addEventListener('pointerdown', ev => {
-    if (ev.pointerType !== 'mouse') ev.preventDefault();
-    ev.stopPropagation();
-    if (ev.button !== 0) return;
-    setExtraAxisPerspectiveDepth(depthDim, !selectedPerspectiveDims.has(depthDim));
-    projectAndRenderAll();
-  });
-  perspectiveToggleButton.addEventListener('keydown', ev => {
-    if (ev.key !== 'Enter' && ev.key !== ' ') return;
-    ev.preventDefault();
-    setExtraAxisPerspectiveDepth(depthDim, !selectedPerspectiveDims.has(depthDim));
-    projectAndRenderAll();
-  });
-  perspectiveToggleButton.addEventListener('pointerup', ev => {
-    ev.preventDefault();
-    ev.stopPropagation();
-  });
-  perspectiveToggleButton.addEventListener('dblclick', ev => {
-    ev.preventDefault();
-    ev.stopPropagation();
-  });
-
-  root.addEventListener('pointermove', ev => {
-    if (!extraAxisGizmoDrag.active || ev.pointerId !== extraAxisGizmoDrag.pointerId || extraAxisGizmoDrag.target !== root) return;
-    ev.preventDefault();
-    const angle = pointerAngleInExtraAxisGizmo(ev, root);
-    if (angle == null) return;
-    const delta = normalizeSignedAngleDelta(angle - extraAxisGizmoDrag.lastAngle);
-    extraAxisGizmoDrag.lastAngle = angle;
-    if (Math.abs(delta) < 1e-4) return;
-    extraAxisGizmoDrag.moved = true;
-    if (
-      extraAxisGizmoDrag.planeAxis >= 0
-      && extraAxisGizmoDrag.depthAxis >= 0
-      && extraAxisGizmoDrag.planeAxis !== extraAxisGizmoDrag.depthAxis
-    ) {
-      rot.applyGivensLeft(extraAxisGizmoDrag.planeAxis, extraAxisGizmoDrag.depthAxis, delta);
-      projectionDirty = true;
-      const prev = getExtraAxisGizmoAngle(extraAxisGizmoDrag.depthAxis);
-      extraAxisGizmoAngles.set(extraAxisGizmoDrag.depthAxis, normalizeSignedAngleDelta(prev + delta));
-      applySceneBackground(PARAMS.editMode);
-    }
-  });
-  root.addEventListener('dblclick', ev => {
-    ev.preventDefault();
-    ev.stopPropagation();
-    removeExtraAxisGizmo(depthDim);
-  });
-  root.addEventListener('pointerup', ev => {
-    const wasDraggingThisGizmo = extraAxisGizmoDrag.active
-      && ev.pointerId === extraAxisGizmoDrag.pointerId
-      && extraAxisGizmoDrag.target === root;
-    const movedWhileDragging = wasDraggingThisGizmo && extraAxisGizmoDrag.moved;
-    endExtraAxisGizmoDrag(ev);
-    if (movedWhileDragging) return;
-    if (!isDoubleTapOnDim(gizmoDoubleTapState, depthDim, ev)) return;
-    removeExtraAxisGizmo(depthDim);
-  });
-  root.addEventListener('pointercancel', endExtraAxisGizmoDrag);
-
-  root.append(svg, negButton, posButton, autoToggleButton, perspectiveToggleButton, label);
-  return { root, line, negButton, posButton, autoToggleButton, perspectiveToggleButton, label };
-}
-
-function syncExtraAxisGizmos() {
-  if (!extraAxisGizmosEl) return;
-  const planes = currentExtraAxisGizmoPlanes();
-  const activeDepthDims = new Set(planes.map(plane => plane.depthDim));
-
-  for (const [depthDim, ui] of extraAxisGizmoUIs) {
-    if (!activeDepthDims.has(depthDim)) {
-      if (extraAxisGizmoDrag.active && extraAxisGizmoDrag.depthAxis === depthDim) {
-        resetExtraAxisGizmoDragState();
-      }
-      ui.root.remove();
-      extraAxisGizmoUIs.delete(depthDim);
-      extraAxisGizmoAngles.delete(depthDim);
-    }
-  }
-
-  for (const plane of planes) {
-    let ui = extraAxisGizmoUIs.get(plane.depthDim);
-    if (!ui) {
-      ui = createExtraAxisGizmoUI(plane.depthDim);
-      extraAxisGizmoUIs.set(plane.depthDim, ui);
-    }
-    extraAxisGizmosEl.appendChild(ui.root);
-
-    const color = AXIS_PALETTE[plane.depthDim % AXIS_PALETTE.length];
-    const depthLabel = axisLabel(plane.depthDim);
-    const planeLabel = axisLabel(plane.planeAxis);
-    const buttonScale = (ui.root.clientWidth || GIZMO_VIEWBOX_SIZE) / GIZMO_VIEWBOX_SIZE;
-    const angle = getExtraAxisGizmoAngle(plane.depthDim);
-    const dx = Math.cos(angle);
-    const dy = Math.sin(angle);
-    const startX = wGizmoCenter - dx * wGizmoRadius;
-    const startY = wGizmoCenter - dy * wGizmoRadius;
-    const endX = wGizmoCenter + dx * wGizmoRadius;
-    const endY = wGizmoCenter + dy * wGizmoRadius;
-
-    ui.root.style.setProperty('--extra-axis-color', color);
-    ui.root.title = `Rotate global ${depthLabel} axis (${planeLabel}-${depthLabel} plane)`;
-    ui.root.setAttribute('aria-label', ui.root.title);
-    ui.root.classList.remove('disabled');
-    ui.posButton.disabled = false;
-    ui.negButton.disabled = false;
-    ui.label.textContent = depthLabel;
-    ui.posButton.textContent = depthLabel;
-    ui.posButton.title = `Rotate ${planeLabel}-${depthLabel}`;
-    ui.negButton.title = `Rotate ${planeLabel}-${depthLabel}`;
-    ui.posButton.setAttribute('aria-label', ui.posButton.title);
-    ui.negButton.setAttribute('aria-label', ui.negButton.title);
-
-    ui.line.setAttribute('x1', `${startX}`);
-    ui.line.setAttribute('y1', `${startY}`);
-    ui.line.setAttribute('x2', `${endX}`);
-    ui.line.setAttribute('y2', `${endY}`);
-    ui.line.style.opacity = '0.9';
-
-    ui.negButton.style.left = `${startX * buttonScale}px`;
-    ui.negButton.style.top = `${startY * buttonScale}px`;
-    ui.posButton.style.left = `${endX * buttonScale}px`;
-    ui.posButton.style.top = `${endY * buttonScale}px`;
-    ui.posButton.classList.remove('back');
-    ui.negButton.classList.remove('back');
-    ui.posButton.style.zIndex = '2';
-    ui.negButton.style.zIndex = '1';
-    setExtraAxisAutoRotateSpeed(plane.depthDim, autoRotateExtraAxisSpeeds.get(plane.depthDim) ?? 0);
-    setExtraAxisPerspectiveDepth(plane.depthDim, selectedPerspectiveDims.has(plane.depthDim));
-  }
-}
-
-function snapCameraToAxis(axis: THREE.Vector3) {
-  const target = controls.target.clone();
-  const distance = Math.max(camera.position.distanceTo(target), 0.8);
-  const direction = axis.clone().normalize();
-
-  camera.up.copy(worldUp);
-  camera.position.copy(target).addScaledVector(direction, distance);
-  camera.lookAt(target);
-  controls.update();
-  updateAxisGizmo();
-}
-
-function initAxisGizmo() {
-  if (!axisGizmoEl) return;
-
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  axisGizmoEl.appendChild(svg);
-
-  const axesConfig: { slot: 0 | 1 | 2; vector: THREE.Vector3 }[] = [
-    { slot: 0, vector: new THREE.Vector3(1, 0, 0) },
-    { slot: 1, vector: new THREE.Vector3(0, 1, 0) },
-    { slot: 2, vector: new THREE.Vector3(0, 0, 1) },
-  ];
-
-  for (const axis of axesConfig) {
-    for (const sign of [1, -1]) {
-      const vector = axis.vector.clone().multiplyScalar(sign);
-      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-      svg.appendChild(line);
-
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.classList.toggle('negative', sign < 0);
-      button.addEventListener('pointerdown', ev => {
-        ev.preventDefault();
-        ev.stopPropagation();
-        beginAxisGizmoDrag(ev, vector);
-      });
-      button.addEventListener('click', ev => {
-        ev.preventDefault();
-        ev.stopPropagation();
-        if (!axisGizmoDrag.moved) snapCameraToAxis(vector);
-      });
-      axisGizmoEl.appendChild(button);
-      axisGizmoParts.push({ slot: axis.slot, vector, button, line });
-    }
-  }
-
-  axisGizmoEl.addEventListener('pointerdown', ev => {
-    ev.preventDefault();
-    ev.stopPropagation();
-    beginAxisGizmoDrag(ev);
-  });
-
-  axisGizmoEl.addEventListener('pointermove', ev => {
-    if (!axisGizmoDrag.active || ev.pointerId !== axisGizmoDrag.pointerId) return;
-    ev.preventDefault();
-
-    const dx = ev.clientX - axisGizmoDrag.lastX;
-    const dy = ev.clientY - axisGizmoDrag.lastY;
-    axisGizmoDrag.lastX = ev.clientX;
-    axisGizmoDrag.lastY = ev.clientY;
-    if (Math.abs(dx) + Math.abs(dy) > 2) axisGizmoDrag.moved = true;
-
-    orbitCameraFromGizmo(dx, dy);
-  });
-
-  axisGizmoEl.addEventListener('pointerup', ev => {
-    if (ev.pointerId !== axisGizmoDrag.pointerId) return;
-    if (!axisGizmoDrag.moved && axisGizmoDrag.snapVector) {
-      snapCameraToAxis(axisGizmoDrag.snapVector);
-    }
-    axisGizmoDrag.active = false;
-    axisGizmoDrag.pointerId = -1;
-    axisGizmoDrag.snapVector = null;
-    if (axisGizmoEl.hasPointerCapture(ev.pointerId)) {
-      axisGizmoEl.releasePointerCapture(ev.pointerId);
-    }
-    axisGizmoEl.classList.remove('dragging');
-  });
-
-  axisGizmoEl.addEventListener('pointercancel', ev => {
-    if (ev.pointerId !== axisGizmoDrag.pointerId) return;
-    axisGizmoDrag.active = false;
-    axisGizmoDrag.pointerId = -1;
-    axisGizmoDrag.snapVector = null;
-    if (axisGizmoEl.hasPointerCapture(ev.pointerId)) {
-      axisGizmoEl.releasePointerCapture(ev.pointerId);
-    }
-    axisGizmoEl.classList.remove('dragging');
-  });
-
-  updateAxisGizmo();
-}
-
-function beginAxisGizmoDrag(ev: PointerEvent, snapVector?: THREE.Vector3) {
-  if (!axisGizmoEl) return;
-
-  axisGizmoDrag.active = true;
-  axisGizmoDrag.moved = false;
-  axisGizmoDrag.pointerId = ev.pointerId;
-  axisGizmoDrag.lastX = ev.clientX;
-  axisGizmoDrag.lastY = ev.clientY;
-  axisGizmoDrag.snapVector = snapVector?.clone() ?? null;
-  try {
-    axisGizmoEl.setPointerCapture(ev.pointerId);
-  } catch {
-    // Some browsers are strict about capture when pointerdown starts on a child.
-  }
-  axisGizmoEl.classList.add('dragging');
-}
-
-function orbitCameraFromGizmo(dx: number, dy: number) {
-  camera.up.copy(worldUp);
-  const offset = camera.position.clone().sub(controls.target);
-  const spherical = new THREE.Spherical().setFromVector3(offset);
-  const rotateSpeed = 0.008;
-  const minPolar = 0.01;
-  const maxPolar = Math.PI - 0.01;
-
-  spherical.theta -= dx * rotateSpeed;
-  spherical.phi = Math.max(minPolar, Math.min(maxPolar, spherical.phi - dy * rotateSpeed));
-  offset.setFromSpherical(spherical);
-  camera.position.copy(controls.target).add(offset);
-  camera.lookAt(controls.target);
-  controls.update();
-  updateAxisGizmo();
-}
-
-const KEYBOARD_ORBIT_TARGET = new THREE.Vector3(0, 0, 0);
-const KEYBOARD_ORBIT_RATE = 1.9;
-const KEYBOARD_ZOOM_RATE = 2.6;
-const KEYBOARD_ZOOM_MIN_DISTANCE = 0.2;
-const KEYBOARD_ZOOM_MAX_DISTANCE = 80;
-const keyboardOrbitOffset = new THREE.Vector3();
-const keyboardOrbitSpherical = new THREE.Spherical();
-const keyboardCameraTargetOffset = new THREE.Vector3();
-const keyboardCameraCurrentOffset = new THREE.Vector3();
-const keyboardCameraKeys = {
-  left: false,
-  right: false,
-  up: false,
-  down: false,
-  ctrl: false,
-};
-let keyboardCameraSmoothingActive = false;
-
-function setCameraToOriginOffset(offset: THREE.Vector3) {
-  controls.target.copy(KEYBOARD_ORBIT_TARGET);
-  camera.up.copy(worldUp);
-  camera.position.copy(KEYBOARD_ORBIT_TARGET).add(offset);
-  camera.lookAt(KEYBOARD_ORBIT_TARGET);
-  controls.update();
-  updateAxisGizmo();
-}
-
-function queueKeyboardCameraOffset(offset: THREE.Vector3) {
-  keyboardCameraTargetOffset.copy(offset);
-  keyboardCameraSmoothingActive = true;
-}
-
-function getKeyboardCameraPlanningOffset() {
-  if (keyboardCameraSmoothingActive) {
-    keyboardOrbitOffset.copy(keyboardCameraTargetOffset);
-  } else {
-    keyboardOrbitOffset.copy(camera.position).sub(KEYBOARD_ORBIT_TARGET);
-  }
-  if (keyboardOrbitOffset.lengthSq() < 1e-8) {
-    keyboardOrbitOffset.copy(DEFAULT_CAMERA_POSITION);
-  }
-  return keyboardOrbitOffset;
-}
-
-function applyKeyboardCameraSmoothing(dt: number) {
-  if (!keyboardCameraSmoothingActive) return;
-  keyboardOrbitOffset.copy(camera.position).sub(KEYBOARD_ORBIT_TARGET);
-  if (keyboardOrbitOffset.lengthSq() < 1e-8) {
-    keyboardOrbitOffset.copy(DEFAULT_CAMERA_POSITION);
-  }
-  const alpha = 1 - Math.exp(-dt * 14);
-  keyboardCameraCurrentOffset.copy(keyboardOrbitOffset).lerp(keyboardCameraTargetOffset, alpha);
-  if (keyboardCameraCurrentOffset.distanceToSquared(keyboardCameraTargetOffset) < 0.00001) {
-    keyboardCameraCurrentOffset.copy(keyboardCameraTargetOffset);
-    keyboardCameraSmoothingActive = false;
-  }
-  setCameraToOriginOffset(keyboardCameraCurrentOffset);
-}
-
-function applyKeyboardCameraInput(dt: number) {
-  if (transformOp.mode !== 'none') return;
-  const horizontal = Number(keyboardCameraKeys.left) - Number(keyboardCameraKeys.right);
-  const vertical = Number(keyboardCameraKeys.down) - Number(keyboardCameraKeys.up);
-
-  if (keyboardCameraKeys.ctrl) {
-    if (vertical === 0) return;
-    zoomCameraTowardOrigin(Math.exp(vertical * KEYBOARD_ZOOM_RATE * dt));
-    return;
-  }
-
-  if (horizontal === 0 && vertical === 0) return;
-  orbitCameraAroundOrigin(horizontal * KEYBOARD_ORBIT_RATE * dt, vertical * KEYBOARD_ORBIT_RATE * dt);
-}
-
-function orbitCameraAroundOrigin(thetaDelta: number, phiDelta: number) {
-  const offset = getKeyboardCameraPlanningOffset();
-  keyboardOrbitSpherical.setFromVector3(offset);
-  keyboardOrbitSpherical.theta += thetaDelta;
-  keyboardOrbitSpherical.phi = Math.max(0.01, Math.min(Math.PI - 0.01, keyboardOrbitSpherical.phi + phiDelta));
-  offset.setFromSpherical(keyboardOrbitSpherical);
-  queueKeyboardCameraOffset(offset);
-}
-
-function zoomCameraTowardOrigin(scale: number) {
-  const offset = getKeyboardCameraPlanningOffset();
-  const distance = Math.max(KEYBOARD_ZOOM_MIN_DISTANCE, Math.min(KEYBOARD_ZOOM_MAX_DISTANCE, offset.length() * scale));
-  offset.normalize().multiplyScalar(distance);
-  queueKeyboardCameraOffset(offset);
-}
-
-function clearKeyboardCameraKeys() {
-  keyboardCameraKeys.left = false;
-  keyboardCameraKeys.right = false;
-  keyboardCameraKeys.up = false;
-  keyboardCameraKeys.down = false;
-  keyboardCameraKeys.ctrl = false;
-}
-
-function setKeyboardCameraArrowKey(key: string, pressed: boolean) {
-  if (key === 'arrowleft') {
-    keyboardCameraKeys.left = pressed;
-    return true;
-  }
-  if (key === 'arrowright') {
-    keyboardCameraKeys.right = pressed;
-    return true;
-  }
-  if (key === 'arrowup') {
-    keyboardCameraKeys.up = pressed;
-    return true;
-  }
-  if (key === 'arrowdown') {
-    keyboardCameraKeys.down = pressed;
-    return true;
-  }
-  return false;
-}
-
-function handleKeyboardCameraShortcut(ev: KeyboardEvent, key: string) {
-  if (transformOp.mode !== 'none') return false;
-  if (ev.metaKey || ev.altKey || ev.shiftKey) return false;
-  if (key === 'control') {
-    keyboardCameraKeys.ctrl = true;
-    return false;
-  }
-  if (setKeyboardCameraArrowKey(key, true)) {
-    keyboardCameraKeys.ctrl = ev.ctrlKey;
-    ev.preventDefault();
-    return true;
-  }
-  return false;
-}
-
-function viewModeShortcutIndex(ev: KeyboardEvent) {
-  const keyMatch = /^[1-4]$/.test(ev.key) ? Number.parseInt(ev.key, 10) - 1 : -1;
-  if (keyMatch >= 0) return keyMatch;
-
-  const codeMatch = /^(?:Digit|Numpad)([1-4])$/.exec(ev.code);
-  return codeMatch ? Number.parseInt(codeMatch[1], 10) - 1 : -1;
-}
-
-function updateAxisGizmo() {
-  if (!axisGizmoParts.length) return;
-
-  const axisButtonScale = axisGizmoEl
-    ? (axisGizmoEl.clientWidth || GIZMO_VIEWBOX_SIZE) / GIZMO_VIEWBOX_SIZE
-    : 1;
-  const inverseCamera = camera.quaternion.clone().invert();
-  const activeDims = [PARAMS.axesX, PARAMS.axesY, PARAMS.axesZ];
-  for (const part of axisGizmoParts) {
-    const dim = activeDims[part.slot] ?? part.slot;
-    const label = axisLabel(dim);
-    const color = AXIS_PALETTE[dim % AXIS_PALETTE.length];
-    const isPositive = part.vector.getComponent(part.slot) > 0;
-    const signedLabel = `${isPositive ? '+' : '-'}${label}`;
-    part.button.textContent = isPositive ? label : '';
-    part.button.title = `View ${signedLabel}`;
-    part.button.setAttribute('aria-label', part.button.title);
-    part.button.style.setProperty('--axis-color', color);
-    part.line.style.stroke = color;
-
-    const viewVector = part.vector.clone().applyQuaternion(inverseCamera);
-    const x = axisGizmoCenter + viewVector.x * axisGizmoRadius;
-    const y = axisGizmoCenter - viewVector.y * axisGizmoRadius;
-    const isBack = viewVector.z > 0;
-
-    part.button.style.left = `${x * axisButtonScale}px`;
-    part.button.style.top = `${y * axisButtonScale}px`;
-    part.button.style.zIndex = `${Math.round((1 - viewVector.z) * 100)}`;
-    part.button.classList.toggle('back', isBack);
-
-    part.line.setAttribute('x1', `${axisGizmoCenter}`);
-    part.line.setAttribute('y1', `${axisGizmoCenter}`);
-    part.line.setAttribute('x2', `${x}`);
-    part.line.setAttribute('y2', `${y}`);
-    part.line.style.opacity = isBack ? '0.2' : '0.64';
-  }
-
-  syncExtraAxisGizmos();
-}
+let keyboardCamera: KeyboardCameraController;
+
+let axisController: AxisGizmoController;
+const visibleDims = () => axisController.visibleDims();
+const currentAxisMap = (localN: number) => axisController.currentAxisMap(localN);
+const perspectiveDimsFor = (localN: number, axisMap: AxisMap) => axisController.perspectiveDimsFor(localN, axisMap);
+const wRotationPlaneAxis = (lockAxis: -1 | 0 | 1 | 2, depthDim: number) => axisController.wRotationPlaneAxis(lockAxis, depthDim, N);
+const setProjectionAxes = (axes: ProjectionAxes) => axisController.setProjectionAxes(axes);
+const cycleAxes = (step: number) => axisController.cycleAxes(step);
+const renderAxisList = () => axisController.renderAxisList();
+const updateAxisLegend = () => axisController.updateAxisLegend();
+const updateAxisGizmo = () => axisController.updateAxisGizmo();
+const applyAutoRotation = (dt: number) => axisController.applyAutoRotation(dt);
+let projectionPipeline: ProjectionPipeline;
+const applySliceFilter = () => projectionPipeline.applySliceFilter();
+const projectAndRenderAll = () => projectionPipeline.projectAndRenderAll();
+let transformController: TransformController;
+let viewportInteraction: ViewportInteractionController;
 
 const raycaster = new THREE.Raycaster();
 const ndc = new THREE.Vector2();
-const clickPlane = new THREE.Plane();
-const clickPoint = new THREE.Vector3();
 
 const light = new THREE.DirectionalLight(0xffffff, 1.0);
 light.position.set(2, 3, 4);
@@ -1333,69 +130,18 @@ scene.add(ambient, hemi, light);
 const axes = new THREE.AxesHelper(1000);
 axes.position.set(0, -0.6, 0);
 scene.add(axes);
-const gridGroup = new THREE.Group();
-gridGroup.position.y = -0.6;
-const gridRadius = 30;
-const gridStep = 1;
-const gridOpacity = 0.4;
-const gridFadeStart = 0.62;
-const gridFadeBuckets = 36;
-const gridBuckets = Array.from({ length: gridFadeBuckets }, () => [] as number[]);
-const smoothstep = (edge0: number, edge1: number, x: number) => {
-  const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
-  return t * t * (3 - 2 * t);
-};
-const gridFadeAt = (x: number, z: number) => {
-  const radial = Math.hypot(x, z) / gridRadius;
-  return 1 - smoothstep(gridFadeStart, 1, radial);
-};
-const addGridSegment = (x1: number, z1: number, x2: number, z2: number) => {
-  const fade = gridFadeAt((x1 + x2) * 0.5, (z1 + z2) * 0.5);
-  if (fade <= 0.01) return;
-  const bucket = Math.min(gridFadeBuckets - 1, Math.max(0, Math.floor(fade * gridFadeBuckets)));
-  gridBuckets[bucket].push(x1, 0, z1, x2, 0, z2);
-};
-const addClippedGridLine = (fixed: number, alongX: boolean) => {
-  const limit = Math.sqrt(Math.max(0, gridRadius * gridRadius - fixed * fixed));
-  const stops = [-limit];
-  const first = Math.ceil(-limit / gridStep) * gridStep;
-
-  for (let v = first; v < limit; v += gridStep) {
-    if (v > -limit) stops.push(v);
-  }
-
-  stops.push(limit);
-  for (let i = 0; i < stops.length - 1; i++) {
-    const a = stops[i];
-    const b = stops[i + 1];
-    if (alongX) {
-      addGridSegment(a, fixed, b, fixed);
-    } else {
-      addGridSegment(fixed, a, fixed, b);
-    }
-  }
-};
-
-for (let i = -gridRadius; i <= gridRadius; i += gridStep) {
-  addClippedGridLine(i, true);
-  addClippedGridLine(i, false);
-}
-
-for (let i = 0; i < gridBuckets.length; i++) {
-  const positions = gridBuckets[i];
-  if (!positions.length) continue;
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  const material = new THREE.LineBasicMaterial({
-    color: 0x3a414f,
-    opacity: gridOpacity * ((i + 0.5) / gridFadeBuckets),
-    transparent: true,
-    depthWrite: false,
-  });
-  gridGroup.add(new THREE.LineSegments(geometry, material));
-}
+const gridGroup = createFadingGrid({ y: -0.6 });
 scene.add(gridGroup);
+const viewportCapture = new ViewportCaptureController({
+  renderer,
+  scene,
+  camera,
+  gridGroup,
+  axes,
+  recordButton: recordViewportButton,
+  captureButton: captureFrameButton,
+  timerEl: recordViewportTimer,
+});
 const vertexGeo = new THREE.SphereGeometry(0.012, 8, 8);
 
 // --- N-D state ---
@@ -1406,254 +152,34 @@ let M = 0;
 let rot = new RotND(N);
 let projector = new NDProjector(N, rot.matrix, canonicalP(N));
 let Y = new Float32Array();
-let dataSource: 'primitive' | 'custom' = 'primitive';
+let dataSource: DataSource = 'primitive';
 const edgesFallback = new Uint32Array([0, 0]);
 const tmpVec = new THREE.Vector3();
-const tmpOffset = new THREE.Vector3();
 const tmpN = new Float32Array(32);
 const tmpCenter = new THREE.Vector3();
-const dragRotated = new Float32Array(MAX_N);
-const dragRotatedNext = new Float32Array(MAX_N);
-const dragZero = new THREE.Vector3();
-const dragQuat = new THREE.Quaternion();
-const dragEuler = new THREE.Euler();
-const dragRS = new THREE.Matrix4();
-const dragRSInv = new THREE.Matrix4();
-const dragWorldCurrent = new THREE.Vector3();
-const dragYCurrent = new THREE.Vector3();
-const dragTranslation = new THREE.Vector3();
-const dragTargetY = new THREE.Vector3();
-const dragTmpVec = new THREE.Vector3();
-const dragWorldTarget = new THREE.Vector3();
 let pcaCache: Float32Array | null = null;
 let projectionDirty = true;
 let setViewMode: (mode: ViewMode) => void;
-const objList = document.getElementById('object-list') as HTMLDivElement | null;
-const axisLegend = document.getElementById('axis-legend') as HTMLDivElement | null;
-const axisList = document.getElementById('axis-list') as HTMLDivElement | null;
 const statusBar = document.getElementById('status-bar') as HTMLDivElement | null;
-const PANE_COLLAPSE_BREAKPOINT = 920;
-const isMobilePaneViewport = () => window.innerWidth <= PANE_COLLAPSE_BREAKPOINT;
-let lastPointer = { x: window.innerWidth - 180, y: window.innerHeight - 80 };
-let paneCollapsed = isMobilePaneViewport();
-let paneViewportWasMobile = isMobilePaneViewport();
-type AxisMap = number[];
-type SurfaceState = SurfaceMaterial;
-type TexturePreset = {
-  id: string;
-  name: string;
-  surface: SurfaceState;
-};
-const DEFAULT_SURFACE: SurfaceState = {
-  color: 0xbfc7d5,
-  metalness: 1,
-  roughness: 0.05,
-  alpha: 1,
-};
-const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
-const normalizeSurface = (surface: SurfaceState | undefined): SurfaceState => ({
-  color: Math.max(0, Math.min(0xffffff, (surface?.color ?? DEFAULT_SURFACE.color) >>> 0)),
-  metalness: clamp01(surface?.metalness ?? DEFAULT_SURFACE.metalness),
-  roughness: clamp01(surface?.roughness ?? DEFAULT_SURFACE.roughness),
-  alpha: clamp01(surface?.alpha ?? DEFAULT_SURFACE.alpha),
-});
-const cloneSurface = (surface: SurfaceState): SurfaceState => ({ ...surface });
-const surfacesEqual = (a: SurfaceState, b: SurfaceState) => (
-  a.color === b.color
-  && Math.abs(a.metalness - b.metalness) <= 1e-6
-  && Math.abs(a.roughness - b.roughness) <= 1e-6
-  && Math.abs(a.alpha - b.alpha) <= 1e-6
-);
-let syncingTextureUI = false;
-let syncingTexturePresetUI = false;
-let texturePresets: TexturePreset[] = [];
-let texturePreviewRenderer: THREE.WebGLRenderer | null = null;
-let texturePreviewScene: THREE.Scene | null = null;
-let texturePreviewCamera: THREE.PerspectiveCamera | null = null;
-let texturePreviewCube: THREE.Mesh<THREE.BoxGeometry, THREE.MeshStandardMaterial> | null = null;
-type SceneSnapshot = {
-  N: number;
-  X: Float32Array;
-  E: Uint32Array;
-  M: number;
-  source: 'primitive' | 'custom';
-  label: string;
-  paramsN: number;
-  primitive: PrimitiveMode;
-  axes: { x: number; y: number; z: number };
-  axesOrder: number[];
-  axesOffset: number;
-  baseAxisMap: AxisMap;
-  baseTransform: { pos: THREE.Vector3; rot: THREE.Vector3; scale: THREE.Vector3 };
-  baseOrigN: number;
-  baseVisible: boolean;
-  baseSurface?: SurfaceState;
-  selectedInstance: number;
-  instances: InstanceSnapshot[];
-};
-type TransformState = { pos: THREE.Vector3; rot: THREE.Vector3; scale: THREE.Vector3; };
-type InstanceSnapshot = {
-  X: Float32Array;
-  E: Uint32Array;
-  M: number;
-  offset: THREE.Vector3;
-  label: string;
-  kind: PrimitiveKind;
-  transform: TransformState;
-  originalN: number;
-  axisMap: AxisMap;
-  visible: boolean;
-  surface?: SurfaceState;
-};
-const undoStack: SceneSnapshot[] = [];
-const redoStack: SceneSnapshot[] = [];
-const MAX_HISTORY = 20;
+let sceneHistory: SceneHistory<SceneSnapshot<PrimitiveMode>>;
 let baseLabel = 'Hypercube';
 const BASE_SELECTION = -1;
 const NO_SELECTION = -2;
 let selectedInstance: number = BASE_SELECTION; // -1 base, >=0 extra, -2 none
-let selectedVertex: number = -1;
 let selectionOutline: THREE.LineSegments | null = null;
-let vertexMarker: THREE.Mesh | null = null;
-let vertexCloud: THREE.InstancedMesh | null = null;
-let axisGuide: THREE.Line | null = null;
-let wGuide: THREE.Line | null = null;
-let deletePending = false;
 const baseTransform = { pos: new THREE.Vector3(), rot: new THREE.Vector3(), scale: new THREE.Vector3(1,1,1) };
 let baseOriginalN = 0;
 let baseAxisMap: AxisMap = Array.from({ length: MAX_N }, (_, i) => i);
 let baseVisible = true;
 let baseSurface: SurfaceState = cloneSurface(DEFAULT_SURFACE);
-type TransformMode = 'none' | 'move' | 'rotate' | 'scale';
-type ProjectionAxes = { x: number; y: number; z: number };
-const transformOp = {
-  mode: 'none' as TransformMode,
-  instIdx: -1,
-  targetVertex: -1,
-  startPos: new THREE.Vector3(),
-  startRot: new THREE.Vector3(),
-  startScale: 1,
-  startMouse: new THREE.Vector2(),
-  vertexStart: new THREE.Vector3(),
-  axis: new THREE.Vector3(),
-  plane: new THREE.Plane(),
-  planeHitStart: new THREE.Vector3(),
-  lastHit: new THREE.Vector3(),
-  vertexDataStart: null as Float32Array | null,
-  lockAxis: -1 as -1 | 0 | 1 | 2, // 0=x,1=y,2=z in current projected axes
-  objectDataStart: null as Float32Array | null,
-  wPlane: false,
-  moveOffset: new THREE.Vector3(),
-};
-const toolbarTransformDrag = {
-  active: false,
-  started: false,
-  pointerId: -1,
-  mode: 'none' as TransformMode,
-  startX: 0,
-  startY: 0,
-  sourceButton: null as HTMLButtonElement | null,
-};
-const axisDrag = { active: false, lastX: 0, accum: 0, prevZoom: controls.enableZoom, prevPan: controls.enablePan };
-let axesOrder: number[] = Array.from({ length: N }, (_, i) => i);
-let axesOffset = 0;
-
-const visibleDims = () => Math.max(3, Math.min(PARAMS.N, MAX_N));
-
-function canonicalAxisMap(localN: number): AxisMap {
-  const count = Math.max(0, Math.min(localN, MAX_N));
-  return Array.from({ length: count }, (_, dim) => dim);
-}
-
-function currentAxisMap(localN: number): AxisMap {
-  const source = axesOrder.slice(0, visibleDims());
-  const activeAxes = source.length ? source : canonicalAxisMap(MAX_N);
-  const count = Math.max(0, Math.min(localN, MAX_N));
-  return Array.from({ length: count }, (_, dim) => activeAxes[(axesOffset + dim) % activeAxes.length] ?? dim);
-}
-
-function normalizeAxisMap(axisMap: AxisMap | undefined, localN: number): AxisMap {
-  const fallback = canonicalAxisMap(localN);
-  const used = new Set<number>();
-
-  return fallback.map((fallbackDim, dim) => {
-    const mapped = axisMap?.[dim];
-    const valid = typeof mapped === 'number'
-      && Number.isInteger(mapped)
-      && mapped >= 0
-      && mapped < MAX_N
-      && !used.has(mapped);
-    const out = valid ? mapped : fallbackDim;
-    used.add(out);
-    return out;
-  });
-}
-
-function embedToMax(localVerts: Float32Array, localN: number, axisMap: AxisMap) {
-  const V = localVerts.length / localN;
-  const out = new Float32Array(MAX_N * V);
-  for (let d = 0; d < localN; d++) {
-    const dim = axisMap[d] ?? d;
-    for (let v = 0; v < V; v++) {
-      out[dim * V + v] = localVerts[d * V + v];
-    }
-  }
-  return out;
-}
-
-function perspectiveDepthDim(localN: number, axisMap: AxisMap) {
-  return localN >= 4 ? axisMap[localN - 1] ?? -1 : -1;
-}
-
-function perspectiveDimsFor(localN: number, axisMap: AxisMap): number[] {
-  if (localN < 4) return [];
-  const nVis = visibleDims();
-  const visibleSet = new Set(axesOrder.slice(0, nVis));
-  const available = new Set<number>(axisMap.slice(0, localN));
-  return Array.from(selectedPerspectiveDims).filter(
-    dim => visibleSet.has(dim) && available.has(dim),
-  );
-}
-
-function perspectiveScaleFrom(rotated: ArrayLike<number>, perspectiveDims: number[]) {
-  if (perspectiveDims.length === 0) return 1;
-  const k = 0.6;
-  let scale = 1;
-  for (const dim of perspectiveDims) {
-    const value = rotated[dim] ?? 0;
-    const denom = Math.max(0.05, 1 - (k * value));
-    scale /= denom;
-  }
-  return Math.min(80, Math.max(0.01, scale));
-}
-
-function wRotationPlaneAxis(lockAxis: -1 | 0 | 1 | 2, depthDim: number) {
-  const axes = [PARAMS.axesX, PARAMS.axesY, PARAMS.axesZ].map(dim => Math.max(0, Math.min(N - 1, dim % N)));
-  const preferred = axes[lockAxis >= 0 ? lockAxis : 0];
-  if (preferred !== depthDim) return preferred;
-  return axes.find(dim => dim !== depthDim) ?? -1;
-}
-
-function setProjectionAxes({ x, y, z }: ProjectionAxes) {
-  const nVis = visibleDims();
-  const list = axesOrder.slice(0, nVis);
-  const clamp = (v: number) => {
-    const idx = list.indexOf(v);
-    return idx >= 0 ? v : list[0] ?? 0;
-  };
-  PARAMS.axesX = clamp(x);
-  PARAMS.axesY = clamp(y);
-  PARAMS.axesZ = clamp(z);
-  const idx = list.indexOf(PARAMS.axesX);
-  if (idx >= 0) axesOffset = idx;
-  projectionDirty = true;
-  transformOp.lockAxis = -1;
-  clearAxisGuide();
-  updateAxisLegend();
-  renderAxisList();
-  projectAndRenderAll();
-}
-
+keyboardCamera = new KeyboardCameraController({
+  camera,
+  controls,
+  defaultCameraPosition: DEFAULT_CAMERA_POSITION,
+  worldUp,
+  isTransformActive: () => transformController?.isActive() ?? false,
+  onCameraChange: () => updateAxisGizmo(),
+});
 function cloneTransformState(transform: TransformState): TransformState {
   return {
     pos: transform.pos.clone(),
@@ -1662,7 +188,7 @@ function cloneTransformState(transform: TransformState): TransformState {
   };
 }
 
-function captureSnapshot(): SceneSnapshot {
+function captureSnapshot(): SceneSnapshot<PrimitiveMode> {
   return {
     N,
     X: new Float32Array(X),
@@ -1673,8 +199,8 @@ function captureSnapshot(): SceneSnapshot {
     paramsN: PARAMS.N,
     primitive: PARAMS.primitive,
     axes: { x: PARAMS.axesX, y: PARAMS.axesY, z: PARAMS.axesZ },
-    axesOrder: [...axesOrder],
-    axesOffset,
+    axesOrder: [...axisController.axesOrder],
+    axesOffset: axisController.axesOffset,
     baseAxisMap: [...baseAxisMap],
     baseTransform: cloneTransformState(baseTransform),
     baseOrigN: baseOriginalN,
@@ -1698,19 +224,25 @@ function captureSnapshot(): SceneSnapshot {
 }
 
 function pushUndoSnapshot() {
-  undoStack.push(captureSnapshot());
-  if (undoStack.length > MAX_HISTORY) undoStack.shift();
-  redoStack.length = 0;
+  sceneHistory.push();
 }
 
-function applySnapshot(snap: SceneSnapshot) {
+function undoSceneSnapshot() {
+  sceneHistory.undo();
+}
+
+function redoSceneSnapshot() {
+  sceneHistory.redo();
+}
+
+function applySnapshot(snap: SceneSnapshot<PrimitiveMode>) {
   PARAMS.N = snap.paramsN;
   PARAMS.primitive = snap.primitive;
   rebuildState(snap.N, snap.X, snap.E, snap.source, snap.baseOrigN, snap.baseAxisMap);
   baseLabel = snap.label;
   PARAMS.axesX = snap.axes.x; PARAMS.axesY = snap.axes.y; PARAMS.axesZ = snap.axes.z;
-  axesOrder = [...snap.axesOrder];
-  axesOffset = snap.axesOffset;
+  axisController.setAxisOrder(snap.axesOrder);
+  axisController.axesOffset = snap.axesOffset;
   baseTransform.pos.copy(snap.baseTransform.pos);
   baseTransform.rot.copy(snap.baseTransform.rot);
   baseTransform.scale.copy(snap.baseTransform.scale);
@@ -1728,50 +260,12 @@ function applySnapshot(snap: SceneSnapshot) {
   updateObjectList();
   selectObject(selectedInstance);
 }
-function cycleAxes(step: number) {
-  const n = visibleDims();
-  if (n < 3) return;
-  axesOffset = (((axesOffset + step) % n) + n) % n;
-  if (PARAMS.projection !== 'Canonical') {
-    PARAMS.projection = 'Canonical';
-    projectionDirty = true;
-  }
-  setProjectionAxes({
-    x: axesOrder[axesOffset % n],
-    y: axesOrder[(axesOffset + 1) % n],
-    z: axesOrder[(axesOffset + 2) % n],
-  });
-}
 
-function endAxisShiftDrag() {
-  if (!axisDrag.active) return;
-  axisDrag.active = false;
-  axisDrag.accum = 0;
-  controls.enableZoom = axisDrag.prevZoom;
-  controls.enablePan = axisDrag.prevPan;
-}
-
-function isTextEntryTarget(target: EventTarget | null) {
-  if (!(target instanceof HTMLElement)) return false;
-  return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
-}
-
-function isPlainTextEditTarget(target: EventTarget | null) {
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
-  if (target instanceof HTMLTextAreaElement) return true;
-  if (target instanceof HTMLInputElement) {
-    const type = (target.type || 'text').toLowerCase();
-    return type === 'text'
-      || type === 'search'
-      || type === 'url'
-      || type === 'tel'
-      || type === 'email'
-      || type === 'password'
-      || type === 'number';
-  }
-  return false;
-}
+sceneHistory = new SceneHistory({
+  capture: captureSnapshot,
+  apply: applySnapshot,
+  maxEntries: 20,
+});
 
 function getObjectVisible(idx: number) {
   if (idx === BASE_SELECTION) return M > 0 && baseVisible;
@@ -1790,8 +284,7 @@ function setObjectVisible(idx: number, visible: boolean, recordUndo = true) {
   applyObjectVisibility();
   if (!visible && idx === selectedInstance) {
     if (selectionOutline) { scene.remove(selectionOutline); selectionOutline = null; }
-    if (vertexCloud) { scene.remove(vertexCloud); vertexCloud = null; }
-    if (vertexMarker) { scene.remove(vertexMarker); vertexMarker = null; }
+    transformController.clearSelectionVisuals();
   }
   selectObject(selectedInstance);
 }
@@ -1825,300 +318,14 @@ function renameObject(idx: number, value: string) {
   updateObjectList();
 }
 
-function eyeIcon(visible: boolean) {
-  return `<span class="material-symbols-rounded" aria-hidden="true">${visible ? 'visibility' : 'visibility_off'}</span>`;
-}
-
 function updateObjectList() {
-  if (!objList) return;
-
-  const rows = [
-    ...(M > 0 ? [{ idx: -1, label: baseLabel, dimension: baseOriginalN || PARAMS.N, visible: baseVisible }] : []),
-    ...extraInstances.map((inst, idx) => ({
-      idx,
-      label: inst.label,
-      dimension: inst.originalN,
-      visible: inst.visible,
-    })),
-  ];
-
-  objList.textContent = '';
-  const title = document.createElement('h4');
-  title.textContent = 'Objects';
-  objList.appendChild(title);
-
-  const table = document.createElement('table');
-  const thead = document.createElement('thead');
-  thead.innerHTML = '<tr><th aria-label="Visibility"></th><th>Name</th><th>Dim</th></tr>';
-  table.appendChild(thead);
-
-  const tbody = document.createElement('tbody');
-  rows.forEach(row => {
-    const tr = document.createElement('tr');
-    tr.className = `object-row${row.idx === selectedInstance ? ' active' : ''}${row.visible ? '' : ' hidden'}`;
-    tr.addEventListener('click', () => selectObject(row.idx));
-
-    const visibilityCell = document.createElement('td');
-    const visibilityButton = document.createElement('button');
-    visibilityButton.className = 'object-eye';
-    visibilityButton.type = 'button';
-    visibilityButton.title = row.visible ? 'Hide object' : 'Show object';
-    visibilityButton.setAttribute('aria-label', row.visible ? `Hide ${row.label}` : `Show ${row.label}`);
-    visibilityButton.innerHTML = eyeIcon(row.visible);
-    visibilityButton.addEventListener('click', ev => {
-      ev.stopPropagation();
-      setObjectVisible(row.idx, !row.visible);
-    });
-    visibilityCell.appendChild(visibilityButton);
-
-    const nameCell = document.createElement('td');
-    const nameInput = document.createElement('input');
-    nameInput.className = 'object-name';
-    nameInput.value = row.label;
-    nameInput.title = 'Rename object';
-    nameInput.addEventListener('click', ev => ev.stopPropagation());
-    nameInput.addEventListener('keydown', ev => {
-      ev.stopPropagation();
-      if (ev.key === 'Enter') {
-        ev.preventDefault();
-        nameInput.blur();
-      } else if (ev.key === 'Escape') {
-        nameInput.value = row.label;
-        nameInput.blur();
-      }
-    });
-    nameInput.addEventListener('blur', () => renameObject(row.idx, nameInput.value));
-    nameCell.appendChild(nameInput);
-
-    const dimensionCell = document.createElement('td');
-    dimensionCell.textContent = `${row.dimension}`;
-
-    tr.append(visibilityCell, nameCell, dimensionCell);
-    tbody.appendChild(tr);
-  });
-  table.appendChild(tbody);
-  objList.appendChild(table);
-  updateAxisLegend();
-}
-
-function toColorHex(color: number) {
-  return `#${Math.max(0, Math.min(0xffffff, color >>> 0)).toString(16).padStart(6, '0')}`;
+  objectListController.update();
 }
 
 function getSurfaceTarget(idx: number): { surface: SurfaceState; renderer: HypercubeRenderer; } | null {
   if (idx === BASE_SELECTION) return M > 0 ? { surface: baseSurface, renderer: rendererND } : null;
   const inst = extraInstances[idx];
   return inst ? { surface: inst.surface, renderer: inst.renderer } : null;
-}
-
-function texturePresetLabel(name: string, idx: number) {
-  const clean = name.trim();
-  if (clean.length > 0) return clean;
-  return `Texture ${idx + 1}`;
-}
-
-function createTexturePresetId() {
-  return `tx_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function loadTexturePresets() {
-  try {
-    const raw = window.localStorage.getItem(TEXTURE_PRESETS_KEY);
-    if (!raw) return [] as TexturePreset[];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [] as TexturePreset[];
-
-    const presets: TexturePreset[] = [];
-    parsed.forEach((entry, idx) => {
-      if (!entry || typeof entry !== 'object') return;
-      const record = entry as { id?: unknown; name?: unknown; surface?: SurfaceState | undefined; };
-      const name = typeof record.name === 'string' ? record.name : '';
-      const id = typeof record.id === 'string' && record.id.length > 0 ? record.id : createTexturePresetId();
-      presets.push({
-        id,
-        name: texturePresetLabel(name, idx),
-        surface: normalizeSurface(record.surface),
-      });
-    });
-    return presets;
-  } catch {
-    return [] as TexturePreset[];
-  }
-}
-
-function persistTexturePresets() {
-  try {
-    window.localStorage.setItem(TEXTURE_PRESETS_KEY, JSON.stringify(texturePresets));
-  } catch {
-    // Storage may be unavailable in private sessions.
-  }
-}
-
-function findTexturePresetById(id: string) {
-  return texturePresets.find(preset => preset.id === id) ?? null;
-}
-
-function findMatchingTexturePresetId(surface: SurfaceState | null) {
-  if (!surface) return '';
-  const match = texturePresets.find(preset => surfacesEqual(preset.surface, surface));
-  return match?.id ?? '';
-}
-
-function updateTexturePresetSelect(selectedId = '') {
-  if (!texturePresetSelect) return;
-  const previous = selectedId || texturePresetSelect.value;
-  syncingTexturePresetUI = true;
-  texturePresetSelect.replaceChildren();
-
-  const placeholder = document.createElement('option');
-  placeholder.value = '';
-  placeholder.textContent = 'Select preset...';
-  texturePresetSelect.appendChild(placeholder);
-
-  texturePresets.forEach((preset, idx) => {
-    const option = document.createElement('option');
-    option.value = preset.id;
-    option.textContent = texturePresetLabel(preset.name, idx);
-    texturePresetSelect.appendChild(option);
-  });
-
-  texturePresetSelect.value = findTexturePresetById(previous) ? previous : '';
-  syncingTexturePresetUI = false;
-}
-
-function syncTexturePresetSelection(surface: SurfaceState | null) {
-  if (!texturePresetSelect) return;
-  const matchingId = findMatchingTexturePresetId(surface);
-  if (texturePresetSelect.value === matchingId) return;
-  syncingTexturePresetUI = true;
-  texturePresetSelect.value = matchingId;
-  syncingTexturePresetUI = false;
-}
-
-function setTextureInputsEnabled(enabled: boolean) {
-  if (textureBaseColorInput) textureBaseColorInput.disabled = !enabled;
-  if (textureMetallicInput) textureMetallicInput.disabled = !enabled;
-  if (textureRoughnessInput) textureRoughnessInput.disabled = !enabled;
-  if (textureAlphaInput) textureAlphaInput.disabled = !enabled;
-  if (texturePresetSaveButton) texturePresetSaveButton.disabled = !enabled;
-  if (texturePresetSelect) texturePresetSelect.disabled = !enabled || texturePresets.length === 0;
-}
-
-function syncTextureControls(surface: SurfaceState) {
-  if (!textureBaseColorInput || !textureMetallicInput || !textureRoughnessInput || !textureAlphaInput) return;
-  syncingTextureUI = true;
-  textureBaseColorInput.value = toColorHex(surface.color);
-  textureMetallicInput.value = `${surface.metalness}`;
-  textureRoughnessInput.value = `${surface.roughness}`;
-  textureAlphaInput.value = `${surface.alpha}`;
-  if (textureBaseColorValue) textureBaseColorValue.textContent = textureBaseColorInput.value;
-  if (textureMetallicValue) textureMetallicValue.textContent = surface.metalness.toFixed(3);
-  if (textureRoughnessValue) textureRoughnessValue.textContent = surface.roughness.toFixed(3);
-  if (textureAlphaValue) textureAlphaValue.textContent = surface.alpha.toFixed(3);
-  syncingTextureUI = false;
-}
-
-function ensureTexturePreview() {
-  if (!texturePreviewCanvas || texturePreviewRenderer) return;
-
-  const rendererRef = new THREE.WebGLRenderer({
-    canvas: texturePreviewCanvas,
-    antialias: true,
-    alpha: true,
-  });
-  rendererRef.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  rendererRef.outputColorSpace = THREE.SRGBColorSpace;
-  rendererRef.toneMapping = renderer.toneMapping;
-  rendererRef.toneMappingExposure = renderer.toneMappingExposure;
-  rendererRef.setClearColor(0x000000, 0);
-
-  const sceneRef = new THREE.Scene();
-  sceneRef.environment = scene.environment;
-
-  const cameraRef = new THREE.PerspectiveCamera(36, 1, 0.1, 10);
-  cameraRef.position.set(1.8, 1.35, 1.9);
-  cameraRef.lookAt(0, 0, 0);
-
-  const cubeMaterial = new THREE.MeshStandardMaterial({
-    color: DEFAULT_SURFACE.color,
-    metalness: DEFAULT_SURFACE.metalness,
-    roughness: DEFAULT_SURFACE.roughness,
-    transparent: false,
-    opacity: DEFAULT_SURFACE.alpha,
-    envMapIntensity: 1.8,
-    side: THREE.DoubleSide,
-  });
-  const cube = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), cubeMaterial);
-  cube.rotation.set(0.45, 0.68, 0);
-  sceneRef.add(cube);
-
-  const previewLight = new THREE.DirectionalLight(0xffffff, light.intensity);
-  previewLight.position.copy(light.position);
-  const previewAmbient = new THREE.AmbientLight(0xffffff, ambient.intensity);
-  const previewHemi = new THREE.HemisphereLight(hemi.color.getHex(), hemi.groundColor.getHex(), hemi.intensity);
-  sceneRef.add(previewAmbient, previewHemi, previewLight);
-
-  texturePreviewRenderer = rendererRef;
-  texturePreviewScene = sceneRef;
-  texturePreviewCamera = cameraRef;
-  texturePreviewCube = cube;
-}
-
-function renderTexturePreview(surface: SurfaceState | null) {
-  ensureTexturePreview();
-  if (!texturePreviewRenderer || !texturePreviewScene || !texturePreviewCamera || !texturePreviewCube || !texturePreviewCanvas) return;
-
-  const width = Math.max(1, texturePreviewCanvas.clientWidth);
-  const height = Math.max(1, texturePreviewCanvas.clientHeight);
-  texturePreviewRenderer.setSize(width, height, false);
-  texturePreviewCamera.aspect = width / height;
-  texturePreviewCamera.updateProjectionMatrix();
-
-  if (!surface) {
-    texturePreviewRenderer.clear();
-    return;
-  }
-
-  const material = texturePreviewCube.material;
-  material.color.setHex(surface.color);
-  material.metalness = surface.metalness;
-  material.roughness = surface.roughness;
-  material.transparent = surface.alpha < 0.999;
-  material.opacity = surface.alpha;
-  material.depthWrite = !material.transparent;
-  material.needsUpdate = true;
-
-  texturePreviewRenderer.render(texturePreviewScene, texturePreviewCamera);
-}
-
-function updateTexturePanel() {
-  if (!texturePanel) return;
-
-  const target = getSurfaceTarget(selectedInstance);
-  const editable = !!target;
-  texturePanel.classList.toggle('empty', !target);
-  texturePanel.classList.toggle('disabled', !editable);
-  setTextureInputsEnabled(editable);
-
-  if (target) {
-    syncTextureControls(target.surface);
-    renderTexturePreview(target.surface);
-    syncTexturePresetSelection(target.surface);
-  } else {
-    syncTextureControls(DEFAULT_SURFACE);
-    renderTexturePreview(DEFAULT_SURFACE);
-    syncTexturePresetSelection(null);
-  }
-}
-
-function readSurfaceFromTextureInputs() {
-  if (!textureBaseColorInput || !textureMetallicInput || !textureRoughnessInput || !textureAlphaInput) return;
-  return normalizeSurface({
-    color: Number.parseInt(textureBaseColorInput.value.replace('#', ''), 16),
-    metalness: Number.parseFloat(textureMetallicInput.value),
-    roughness: Number.parseFloat(textureRoughnessInput.value),
-    alpha: Number.parseFloat(textureAlphaInput.value),
-  });
 }
 
 function applySurfaceToSelection(surface: SurfaceState, recordUndo: boolean) {
@@ -2142,349 +349,18 @@ function applySurfaceToSelection(surface: SurfaceState, recordUndo: boolean) {
     }
   }
 
-  syncTextureControls(nextSurface);
-  renderTexturePreview(nextSurface);
-  syncTexturePresetSelection(nextSurface);
   return changed;
 }
 
-function applyTextureFromInputs(recordUndo: boolean) {
-  if (syncingTextureUI) return;
-  const surface = readSurfaceFromTextureInputs();
-  if (!surface) return;
-  applySurfaceToSelection(surface, recordUndo);
-}
-
-function saveTexturePreset() {
-  const target = getSurfaceTarget(selectedInstance);
-  if (!target) return;
-
-  const fallbackName = `Texture ${texturePresets.length + 1}`;
-  const rawName = window.prompt('Texture preset name', fallbackName);
-  if (rawName == null) return;
-  const name = rawName.trim();
-  if (!name) return;
-
-  const existingIdx = texturePresets.findIndex(preset => preset.name.toLowerCase() === name.toLowerCase());
-  const surface = cloneSurface(target.surface);
-  let selectedId = '';
-  if (existingIdx >= 0) {
-    texturePresets[existingIdx] = {
-      ...texturePresets[existingIdx],
-      name,
-      surface,
-    };
-    selectedId = texturePresets[existingIdx].id;
-  } else {
-    const nextPreset: TexturePreset = {
-      id: createTexturePresetId(),
-      name,
-      surface,
-    };
-    texturePresets.push(nextPreset);
-    selectedId = nextPreset.id;
-  }
-
-  persistTexturePresets();
-  updateTexturePresetSelect(selectedId);
-  setTextureInputsEnabled(true);
-  syncTexturePresetSelection(surface);
-}
-
-function bindTextureControls() {
-  if (!texturePanel) return;
-
-  textureBaseColorInput?.addEventListener('input', () => {
-    if (textureBaseColorValue && textureBaseColorInput) textureBaseColorValue.textContent = textureBaseColorInput.value;
-    applyTextureFromInputs(false);
-  });
-  textureMetallicInput?.addEventListener('input', () => {
-    if (textureMetallicValue && textureMetallicInput) textureMetallicValue.textContent = Number.parseFloat(textureMetallicInput.value).toFixed(3);
-    applyTextureFromInputs(false);
-  });
-  textureRoughnessInput?.addEventListener('input', () => {
-    if (textureRoughnessValue && textureRoughnessInput) textureRoughnessValue.textContent = Number.parseFloat(textureRoughnessInput.value).toFixed(3);
-    applyTextureFromInputs(false);
-  });
-  textureAlphaInput?.addEventListener('input', () => {
-    if (textureAlphaValue && textureAlphaInput) textureAlphaValue.textContent = Number.parseFloat(textureAlphaInput.value).toFixed(3);
-    applyTextureFromInputs(false);
-  });
-
-  textureBaseColorInput?.addEventListener('change', () => applyTextureFromInputs(true));
-  textureMetallicInput?.addEventListener('change', () => applyTextureFromInputs(true));
-  textureRoughnessInput?.addEventListener('change', () => applyTextureFromInputs(true));
-  textureAlphaInput?.addEventListener('change', () => applyTextureFromInputs(true));
-  texturePresetSaveButton?.addEventListener('click', saveTexturePreset);
-  texturePresetSelect?.addEventListener('change', () => {
-    if (syncingTexturePresetUI) return;
-    const presetId = texturePresetSelect.value;
-    if (!presetId) return;
-    const preset = findTexturePresetById(presetId);
-    if (!preset) return;
-    applySurfaceToSelection(preset.surface, true);
-  });
-}
-
-function updateAxesHelperColors() {
-  const colorAttr = axes.geometry.getAttribute('color') as THREE.BufferAttribute | undefined;
-  if (!colorAttr) return;
-  const cX = new THREE.Color(AXIS_PALETTE[PARAMS.axesX % AXIS_PALETTE.length]);
-  const cY = new THREE.Color(AXIS_PALETTE[PARAMS.axesY % AXIS_PALETTE.length]);
-  const cZ = new THREE.Color(AXIS_PALETTE[PARAMS.axesZ % AXIS_PALETTE.length]);
-  // AxesHelper stores colors in pairs [origin, tip] for X,Y,Z
-  colorAttr.setXYZ(0, cX.r, cX.g, cX.b);
-  colorAttr.setXYZ(1, cX.r, cX.g, cX.b);
-  colorAttr.setXYZ(2, cY.r, cY.g, cY.b);
-  colorAttr.setXYZ(3, cY.r, cY.g, cY.b);
-  colorAttr.setXYZ(4, cZ.r, cZ.g, cZ.b);
-  colorAttr.setXYZ(5, cZ.r, cZ.g, cZ.b);
-  colorAttr.needsUpdate = true;
-}
-
-function axisLabel(dim: number) {
-  return ['X', 'Y', 'Z', 'W', 'V', 'U', 'T', 'S'][dim] ?? `D${dim}`;
-}
-
-function updateAxisLegend() {
-  updateAxesHelperColors();
-  if (!axisLegend) return;
-  const nVis = visibleDims();
-  const badges = Array.from({ length: nVis }).map((_, i) => {
-    const color = AXIS_PALETTE[i % AXIS_PALETTE.length];
-    return `<span class="badge" style="background:${color};">${axisLabel(i)}</span>`;
-  }).join('');
-  axisLegend.innerHTML = `<h4 style="margin:0 0 6px 0; font-size:12px; color:#e6ecf5;">Axes</h4><div>${badges}</div>`;
-}
-function renderAxisList() {
-  if (!axisList) return;
-  const nVis = visibleDims();
-  if (nVis < 1) { axisList.innerHTML = ''; return; }
-  const list = axesOrder.slice(0, nVis);
-  const activeDims = new Set([
-    list[(axesOffset + 0) % nVis],
-    list[(axesOffset + 1) % nVis],
-    list[(axesOffset + 2) % nVis],
-  ]);
-  const items = list.map((dim, idx) => {
-    const color = AXIS_PALETTE[dim % AXIS_PALETTE.length];
-    const active = activeDims.has(dim);
-    const hasGizmo = selectedExtraAxisGizmoDims.has(dim);
-    const classes = `${active ? 'active' : ''}${hasGizmo ? ' has-gizmo' : ''}`.trim();
-    return `<li data-idx="${idx}" data-dim="${dim}" class="${classes}" style="--axis-color:${color};border-top:3px solid ${color};">${axisLabel(dim)}</li>`;
-  }).join('');
-  axisList.innerHTML = `
-    <div class="axis-list-head">
-      <h4>Axis order</h4>
-      <div class="axis-list-actions">
-        <button id="axis-cycle-button" type="button" aria-label="Shift projected axes" title="Shift projected axes">
-          <span class="material-symbols-rounded" aria-hidden="true">sync_alt</span>
-        </button>
-        <button id="pane-toggle" type="button" aria-label="Hide panel details" aria-expanded="true" aria-controls="pane" title="Hide panel details">
-          <span class="material-symbols-rounded hide-icon" aria-hidden="true">chevron_left</span>
-          <span class="material-symbols-rounded show-icon" aria-hidden="true">chevron_right</span>
-        </button>
-      </div>
-    </div>
-    <ul>${items}</ul>
-  `;
-  const axisCycleButton = axisList.querySelector('#axis-cycle-button') as HTMLButtonElement | null;
-  axisCycleButton?.addEventListener('click', () => cycleAxes(1));
-  const paneToggleButton = axisList.querySelector('#pane-toggle') as HTMLButtonElement | null;
-  paneToggleButton?.addEventListener('click', () => setPaneCollapsed(!paneCollapsed));
-  setPaneCollapsed(paneCollapsed);
-
-  const axisUl = axisList.querySelector('ul') as HTMLUListElement | null;
-  if (!axisUl) return;
-
-  type AxisDragState = {
-    pointerId: number;
-    startX: number;
-    startY: number;
-    grabOffsetX: number;
-    grabOffsetY: number;
-    active: boolean;
-    source: HTMLLIElement | null;
-    placeholder: HTMLLIElement | null;
-    ghost: HTMLLIElement | null;
-  };
-
-  const dragState: AxisDragState = {
-    pointerId: -1,
-    startX: 0,
-    startY: 0,
-    grabOffsetX: 0,
-    grabOffsetY: 0,
-    active: false,
-    source: null,
-    placeholder: null,
-    ghost: null,
-  };
-
-  const clearDragPreview = () => {
-    if (dragState.ghost?.parentElement) dragState.ghost.parentElement.removeChild(dragState.ghost);
-    if (dragState.placeholder?.parentElement) dragState.placeholder.parentElement.removeChild(dragState.placeholder);
-    if (dragState.source) {
-      dragState.source.style.display = '';
-      dragState.source.classList.remove('axis-drag-source');
-    }
-    axisUl.classList.remove('dragging');
-    document.body.classList.remove('axis-list-dragging');
-    dragState.placeholder = null;
-    dragState.ghost = null;
-  };
-
-  const commitAxisDrag = () => {
-    if (!dragState.active || !dragState.source || !dragState.placeholder) return;
-    const draggedDim = Number(dragState.source.dataset.dim ?? -1);
-    if (draggedDim < 0) return;
-
-    const orderedDims: number[] = [];
-    for (const child of Array.from(axisUl.children)) {
-      if (child === dragState.source) continue;
-      if (child === dragState.placeholder) {
-        orderedDims.push(draggedDim);
-        continue;
-      }
-      const dim = Number((child as HTMLElement).dataset.dim ?? -1);
-      if (dim >= 0) orderedDims.push(dim);
-    }
-
-    const nVis = visibleDims();
-    if (orderedDims.length !== nVis) return;
-    axesOrder = [...orderedDims, ...axesOrder.slice(nVis)];
-    const newOffset = axesOrder.slice(0, nVis).indexOf(PARAMS.axesX);
-    axesOffset = newOffset >= 0 ? newOffset : 0;
-    setProjectionAxes({
-      x: axesOrder[axesOffset % nVis],
-      y: axesOrder[(axesOffset + 1) % nVis],
-      z: axesOrder[(axesOffset + 2) % nVis],
-    });
-  };
-
-  const updateDropPlaceholder = (clientX: number, clientY: number) => {
-    if (!dragState.placeholder || !dragState.source) return;
-    const candidates = Array.from(axisUl.querySelectorAll('li')).filter(li => li !== dragState.placeholder && li !== dragState.source);
-    let beforeEl: HTMLLIElement | null = null;
-    for (const candidate of candidates) {
-      const rect = candidate.getBoundingClientRect();
-      const midX = rect.left + (rect.width * 0.5);
-      const midY = rect.top + (rect.height * 0.5);
-      const rowTolerance = rect.height * 0.45;
-      const beforeByRow = clientY < (midY - rowTolerance);
-      const beforeByColumn = Math.abs(clientY - midY) <= rowTolerance && clientX < midX;
-      if (beforeByRow || beforeByColumn) {
-        beforeEl = candidate;
-        break;
-      }
-    }
-
-    if (beforeEl) axisUl.insertBefore(dragState.placeholder, beforeEl);
-    else axisUl.appendChild(dragState.placeholder);
-  };
-
-  const updateGhostPosition = (clientX: number, clientY: number) => {
-    if (!dragState.ghost) return;
-    dragState.ghost.style.left = `${clientX - dragState.grabOffsetX}px`;
-    dragState.ghost.style.top = `${clientY - dragState.grabOffsetY}px`;
-  };
-
-  const beginAxisDrag = (ev: PointerEvent) => {
-    if (!dragState.source) return;
-    const sourceRect = dragState.source.getBoundingClientRect();
-    dragState.active = true;
-    dragState.grabOffsetX = ev.clientX - sourceRect.left;
-    dragState.grabOffsetY = ev.clientY - sourceRect.top;
-
-    dragState.placeholder = document.createElement('li');
-    dragState.placeholder.className = 'axis-drop-placeholder';
-    dragState.placeholder.style.width = `${sourceRect.width}px`;
-    dragState.placeholder.style.height = `${sourceRect.height}px`;
-    axisUl.insertBefore(dragState.placeholder, dragState.source.nextSibling);
-
-    dragState.source.classList.add('axis-drag-source');
-    dragState.source.style.display = 'none';
-
-    dragState.ghost = dragState.source.cloneNode(true) as HTMLLIElement;
-    dragState.ghost.classList.add('axis-drag-ghost');
-    dragState.ghost.style.width = `${sourceRect.width}px`;
-    dragState.ghost.style.height = `${sourceRect.height}px`;
-    document.body.appendChild(dragState.ghost);
-
-    axisUl.classList.add('dragging');
-    document.body.classList.add('axis-list-dragging');
-    updateGhostPosition(ev.clientX, ev.clientY);
-    updateDropPlaceholder(ev.clientX, ev.clientY);
-  };
-
-  const onPointerMove = (ev: PointerEvent) => {
-    if (ev.pointerId !== dragState.pointerId || !dragState.source) return;
-    ev.preventDefault();
-    if (!dragState.active) {
-      const dx = ev.clientX - dragState.startX;
-      const dy = ev.clientY - dragState.startY;
-      if ((dx * dx) + (dy * dy) < 16) return;
-      beginAxisDrag(ev);
-    } else {
-      updateGhostPosition(ev.clientX, ev.clientY);
-      updateDropPlaceholder(ev.clientX, ev.clientY);
-    }
-  };
-
-  const endAxisDrag = (commit: boolean) => {
-    window.removeEventListener('pointermove', onPointerMove);
-    window.removeEventListener('pointerup', onPointerUp);
-    window.removeEventListener('pointercancel', onPointerCancel);
-    if (commit) commitAxisDrag();
-    clearDragPreview();
-    dragState.pointerId = -1;
-    dragState.startX = 0;
-    dragState.startY = 0;
-    dragState.grabOffsetX = 0;
-    dragState.grabOffsetY = 0;
-    dragState.active = false;
-    dragState.source = null;
-  };
-
-  const onPointerUp = (ev: PointerEvent) => {
-    if (ev.pointerId !== dragState.pointerId) return;
-    endAxisDrag(true);
-  };
-
-  const onPointerCancel = (ev: PointerEvent) => {
-    if (ev.pointerId !== dragState.pointerId) return;
-    endAxisDrag(false);
-  };
-
-  axisUl.querySelectorAll('li').forEach(li => {
-    const depthDim = Number((li as HTMLElement).dataset.dim ?? -1);
-    li.addEventListener('pointerdown', (ev) => {
-      if (ev.pointerType === 'mouse' && ev.detail > 1) return;
-      if (ev.button !== 0 || dragState.pointerId !== -1) return;
-      ev.preventDefault();
-      dragState.pointerId = ev.pointerId;
-      dragState.startX = ev.clientX;
-      dragState.startY = ev.clientY;
-      dragState.source = li as HTMLLIElement;
-      dragState.active = false;
-      window.addEventListener('pointermove', onPointerMove, { passive: false });
-      window.addEventListener('pointerup', onPointerUp);
-      window.addEventListener('pointercancel', onPointerCancel);
-    });
-    li.addEventListener('dblclick', ev => {
-      if (depthDim < 0) return;
-      ev.preventDefault();
-      ev.stopPropagation();
-      toggleExtraAxisGizmo(depthDim);
-    });
-    li.addEventListener('pointerup', ev => {
-      if (depthDim < 0) return;
-      if (ev.pointerType === 'mouse') return;
-      if (!isDoubleTapOnDim(axisChipDoubleTapState, depthDim, ev)) return;
-      toggleExtraAxisGizmo(depthDim);
-    });
-  });
-}
+const textureEditor = new TextureEditorController({
+  renderer,
+  scene,
+  light,
+  ambient,
+  hemi,
+  getSurfaceTarget: () => getSurfaceTarget(selectedInstance),
+  applySurfaceToTarget: applySurfaceToSelection,
+});
 
 function selectObject(idx: number) {
   let normalizedIdx = idx;
@@ -2493,8 +369,7 @@ function selectObject(idx: number) {
   if (normalizedIdx < NO_SELECTION) normalizedIdx = NO_SELECTION;
 
   selectedInstance = normalizedIdx;
-  selectedVertex = -1;
-  deletePending = false;
+  transformController.setSelectedVertex(-1);
   updateObjectList();
   if (selectionOutline) { scene.remove(selectionOutline); selectionOutline = null; }
   const buildOutline = (geom: THREE.BufferGeometry) => {
@@ -2512,11 +387,11 @@ function selectObject(idx: number) {
   if (selectionOutline && !PARAMS.editMode && getObjectVisible(normalizedIdx)) {
     scene.add(selectionOutline);
   }
-  applySceneBackground(PARAMS.editMode);
-  if (vertexMarker) { scene.remove(vertexMarker); vertexMarker = null; }
-  if (vertexCloud) { scene.remove(vertexCloud); vertexCloud = null; }
+  backgroundController.applySceneBackground(PARAMS.editMode);
+  transformController.clearVertexMarker();
+  transformController.clearVertexCloud();
   if (PARAMS.editMode && getObjectVisible(normalizedIdx)) updateVertexCloud(normalizedIdx);
-  updateTexturePanel();
+  textureEditor.updatePanel();
   updateTransformActionButtons();
 }
 
@@ -2530,181 +405,19 @@ function updateSelectionOutline() {
 }
 
 function clearAxisGuide() {
-  if (axisGuide) { scene.remove(axisGuide); axisGuide.geometry.dispose(); axisGuide = null; }
-  if (wGuide) { scene.remove(wGuide); wGuide.geometry.dispose(); wGuide = null; }
-}
-
-function computeCenterFromPositions(positions: Float32Array, count: number) {
-  if (!count) return new THREE.Vector3();
-  let sumX = 0, sumY = 0, sumZ = 0;
-  for (let i = 0; i < count; i++) {
-    const pIdx = i * 3;
-    sumX += positions[pIdx];
-    sumY += positions[pIdx + 1];
-    sumZ += positions[pIdx + 2];
-  }
-  return new THREE.Vector3(sumX / count, sumY / count, sumZ / count);
-}
-
-function setDraggedVertexFromWorldPosition(instIdx: number, vertexIdx: number, worldPos: THREE.Vector3): boolean {
-  const inst = instIdx === -1 ? null : extraInstances[instIdx];
-  const src = inst ? inst.X : X;
-  const mcount = inst ? inst.M : M;
-  const yArr = inst ? inst.Y : Y;
-  const transform = inst ? inst.transform : baseTransform;
-  const originalN = inst ? inst.originalN : (baseOriginalN || visibleDims());
-  const axisMap = inst ? inst.axisMap : baseAxisMap;
-
-  if (vertexIdx < 0 || vertexIdx >= mcount) return false;
-
-  const posArr = inst ? inst.renderer.positions : rendererND.positions;
-  const pIdx = vertexIdx * 3;
-
-  dragEuler.set(transform.rot.x, transform.rot.y, transform.rot.z);
-  dragQuat.setFromEuler(dragEuler);
-  dragRS.compose(dragZero, dragQuat, transform.scale);
-  dragRSInv.copy(dragRS).invert();
-
-  dragWorldCurrent.set(posArr[pIdx], posArr[pIdx + 1], posArr[pIdx + 2]);
-  dragYCurrent.set(yArr[vertexIdx], yArr[mcount + vertexIdx], yArr[2 * mcount + vertexIdx]);
-  dragTmpVec.copy(dragYCurrent).applyMatrix4(dragRS);
-  dragTranslation.copy(dragWorldCurrent).sub(dragTmpVec);
-
-  dragTargetY.copy(worldPos).sub(dragTranslation).applyMatrix4(dragRSInv);
-
-  const R = rot.matrix;
-  for (let d = 0; d < N; d++) {
-    let acc = 0;
-    for (let a = 0; a < N; a++) acc += R[d * N + a] * src[a * mcount + vertexIdx];
-    dragRotated[d] = acc;
-    dragRotatedNext[d] = acc;
-  }
-
-  const axes = [PARAMS.axesX % N, PARAMS.axesY % N, PARAMS.axesZ % N].map(v => Math.max(0, Math.min(N - 1, v)));
-  const perspectiveDims = perspectiveDimsFor(originalN, axisMap);
-  const projectedTargets = [dragTargetY.x, dragTargetY.y, dragTargetY.z] as const;
-
-  let scale = 1;
-  const iterations = perspectiveDims.length > 0 ? 6 : 1;
-  for (let iter = 0; iter < iterations; iter++) {
-    scale = perspectiveScaleFrom(dragRotatedNext, perspectiveDims);
-    for (let c = 0; c < 3; c++) {
-      const dim = axes[c];
-      dragRotatedNext[dim] = projectedTargets[c] / scale;
-    }
-  }
-  scale = perspectiveScaleFrom(dragRotatedNext, perspectiveDims);
-
-  for (let c = 0; c < 3; c++) {
-    const dim = axes[c];
-    const projected = projectedTargets[c];
-    dragRotatedNext[dim] = projected / scale;
-  }
-
-  for (let a = 0; a < N; a++) {
-    let acc = 0;
-    for (let d = 0; d < N; d++) acc += R[d * N + a] * dragRotatedNext[d];
-    src[a * mcount + vertexIdx] = acc;
-  }
-
-  if (instIdx === -1) projectionDirty = true;
-  return true;
+  transformController.clearAxisGuide();
 }
 
 function updateAxisGuide() {
-  clearAxisGuide();
-  if (transformOp.mode === 'none') return;
-  const hasAxis = transformOp.lockAxis !== -1;
-  const axisIdx = hasAxis ? transformOp.lockAxis : 0;
-  const dir = new THREE.Vector3(
-    axisIdx === 0 ? 1 : 0,
-    axisIdx === 1 ? 1 : 0,
-    axisIdx === 2 ? 1 : 0,
-  );
-  if (!hasAxis && !transformOp.wPlane) return;
-
-  let center = new THREE.Vector3();
-  if (transformOp.targetVertex >= 0) {
-    const inst = transformOp.instIdx === -1 ? null : extraInstances[transformOp.instIdx];
-    const posArr = inst ? inst.renderer.positions : rendererND.positions;
-    const idx = transformOp.targetVertex * 3;
-    center.set(posArr[idx], posArr[idx+1], posArr[idx+2]);
-  } else {
-    if (transformOp.instIdx === -1 && M > 0) {
-      center = computeCenterFromPositions(rendererND.positions, M);
-    } else if (transformOp.instIdx >= 0) {
-      const inst = extraInstances[transformOp.instIdx];
-      center = computeCenterFromPositions(inst.renderer.positions, inst.M);
-    }
-  }
-  const len = 3;
-  const points = [
-    center.clone().addScaledVector(dir, -len),
-    center.clone().addScaledVector(dir, len),
-  ];
-  if (hasAxis) {
-    const geom = new THREE.BufferGeometry().setFromPoints(points);
-    const mat = new THREE.LineBasicMaterial({ color: 0xffa64d, linewidth: 2, depthTest: false, transparent: true, opacity: 0.9 });
-    axisGuide = new THREE.Line(geom, mat);
-    axisGuide.renderOrder = 30;
-    scene.add(axisGuide);
-  }
-  if (transformOp.wPlane) {
-    const wDir = new THREE.Vector3(0, 0, 0);
-    wDir.copy(dir).cross(camera.getWorldDirection(tmpVec).normalize()).normalize();
-    if (wDir.lengthSq() === 0) wDir.copy(camera.up).normalize();
-    const wLen = 2;
-    const wPoints = [
-      center.clone().addScaledVector(wDir, -wLen),
-      center.clone().addScaledVector(wDir, wLen),
-    ];
-    const wGeom = new THREE.BufferGeometry().setFromPoints(wPoints);
-    const wMat = new THREE.LineBasicMaterial({ color: 0xc084fc, linewidth: 2, depthTest: false, transparent: true, opacity: 0.9 });
-    wGuide = new THREE.Line(wGeom, wMat);
-    wGuide.renderOrder = 31;
-    scene.add(wGuide);
-  }
+  transformController.updateAxisGuide();
 }
 
 function updateVertexCloud(instIdx: number) {
-  if (!PARAMS.editMode || !getObjectVisible(instIdx)) {
-    if (vertexCloud) { scene.remove(vertexCloud); vertexCloud = null; }
-    if (vertexMarker) { scene.remove(vertexMarker); vertexMarker = null; }
-    return;
-  }
-  const rendererRef = instIdx === -1 ? rendererND : extraInstances[instIdx].renderer;
-  const count = instIdx === -1 ? M : extraInstances[instIdx].M;
-  if (!rendererRef || count <= 0) return;
-  if (vertexCloud) { scene.remove(vertexCloud); vertexCloud = null; }
-  const mat = new THREE.MeshBasicMaterial({ color: 0xbfc7d5 });
-  vertexCloud = new THREE.InstancedMesh(vertexGeo, mat, count);
-  const dummy = new THREE.Object3D();
-  const posArr = rendererRef.positions;
-  for (let i = 0; i < count; i++) {
-    const pIdx = i * 3;
-    dummy.position.set(posArr[pIdx], posArr[pIdx + 1], posArr[pIdx + 2]);
-    dummy.updateMatrix();
-    vertexCloud.setMatrixAt(i, dummy.matrix);
-  }
-  vertexCloud.instanceMatrix.needsUpdate = true;
-  vertexCloud.renderOrder = 5;
-  scene.add(vertexCloud);
-  if (selectedVertex >= 0) placeVertexMarker(instIdx, selectedVertex);
+  transformController.updateVertexCloud(instIdx);
 }
 
-function placeVertexMarker(instIdx: number, vIdx: number) {
-  if (!getObjectVisible(instIdx)) return;
-  if (!vertexMarker) {
-    const mat = new THREE.MeshBasicMaterial({ color: 0xffa64d, depthTest: false });
-    vertexMarker = new THREE.Mesh(vertexGeo, mat);
-    vertexMarker.renderOrder = 20;
-  }
-  vertexMarker.scale.setScalar(1.35);
-  const rendererRef = instIdx === -1 ? rendererND : extraInstances[instIdx].renderer;
-  const posArr = rendererRef.positions;
-  const pIdx = vIdx * 3;
-  vertexMarker.position.set(posArr[pIdx], posArr[pIdx + 1], posArr[pIdx + 2]);
-  scene.add(vertexMarker);
+function placeVertexMarker(instIdx: number, vertexIdx: number) {
+  transformController.placeVertexMarker(instIdx, vertexIdx);
 }
 
 function deleteSelected() {
@@ -2715,30 +428,29 @@ function deleteSelected() {
   extraInstances.splice(selectedInstance, 1);
   selectedInstance = NO_SELECTION;
   if (selectionOutline) { scene.remove(selectionOutline); selectionOutline = null; }
-  deletePending = false;
   projectAndRenderAll();
   applySliceFilter();
   updateObjectList();
   selectObject(selectedInstance);
 }
 
-type Instance = {
-  renderer: HypercubeRenderer;
-  Y: Float32Array;
-  X: Float32Array;
-  E: Uint32Array;
-  M: number;
-  offset: THREE.Vector3;
-  label: string;
-  kind: PrimitiveKind;
-  transform: TransformState;
-  originalN: number;
-  axisMap: AxisMap;
-  visible: boolean;
-  surface: SurfaceState;
-};
-
 const extraInstances: Instance[] = [];
+const objectListController = new ObjectListController({
+  getRows: () => [
+    ...(M > 0 ? [{ idx: BASE_SELECTION, label: baseLabel, dimension: baseOriginalN || PARAMS.N, visible: baseVisible }] : []),
+    ...extraInstances.map((inst, idx) => ({
+      idx,
+      label: inst.label,
+      dimension: inst.originalN,
+      visible: inst.visible,
+    })),
+  ],
+  getSelectedIndex: () => selectedInstance,
+  onSelect: idx => selectObject(idx),
+  onToggleVisibility: (idx, visible) => setObjectVisible(idx, visible),
+  onRename: (idx, value) => renameObject(idx, value),
+  onAfterUpdate: () => updateAxisLegend(),
+});
 
 function restoreInstanceSnapshot(snap: InstanceSnapshot): Instance {
   const instanceRenderer = new HypercubeRenderer(scene);
@@ -2785,7 +497,93 @@ const PARAMS = {
   axesY: 1,
   axesZ: 2,
 };
-initAxisGizmo();
+transformController = new TransformController({
+  scene,
+  camera,
+  renderer,
+  raycaster,
+  ndc,
+  vertexGeo,
+  statusBar,
+  moveButton: transformMoveButton,
+  rotateButton: transformRotateButton,
+  scaleButton: transformScaleButton,
+  getParams: () => PARAMS,
+  getN: () => N,
+  getX: () => X,
+  getM: () => M,
+  getY: () => Y,
+  getRot: () => rot,
+  getProjector: () => projector,
+  getRendererND: () => rendererND,
+  getExtraInstances: () => extraInstances,
+  getBaseTransform: () => baseTransform,
+  getBaseOriginalN: () => baseOriginalN,
+  getBaseAxisMap: () => baseAxisMap,
+  getSelectedInstance: () => selectedInstance,
+  getObjectVisible,
+  visibleDims,
+  perspectiveDimsFor,
+  wRotationPlaneAxis,
+  setProjectionDirty: dirty => { projectionDirty = dirty; },
+  projectAndRenderAll,
+  applySliceFilter,
+  updateSelectionOutline,
+  pushUndoSnapshot,
+});
+axisController = new AxisGizmoController({
+  camera,
+  controls,
+  worldUp,
+  axesHelper: axes,
+  getParams: () => PARAMS,
+  getN: () => N,
+  getRot: () => rot,
+  markProjectionDirty: () => { projectionDirty = true; },
+  clearAxisGuide,
+  projectAndRenderAll,
+  applySceneBackground: () => backgroundController.applySceneBackground(PARAMS.editMode),
+  setPaneCollapsed: collapsed => paneController.setCollapsed(collapsed),
+  getPaneCollapsed: () => paneController.isCollapsed,
+});
+axisController.init();
+projectionPipeline = new ProjectionPipeline({
+  getN: () => N,
+  getX: () => X,
+  getM: () => M,
+  getY: () => Y,
+  getRot: () => rot,
+  getProjector: () => projector,
+  getPcaCache: () => pcaCache,
+  setPcaCache: cache => { pcaCache = cache; },
+  isProjectionDirty: () => projectionDirty,
+  setProjectionDirty: dirty => { projectionDirty = dirty; },
+  getParams: () => PARAMS,
+  getRendererND: () => rendererND,
+  getExtraInstances: () => extraInstances,
+  getBaseTransform: () => baseTransform,
+  getBaseOriginalN: () => baseOriginalN,
+  getBaseAxisMap: () => baseAxisMap,
+  visibleDims,
+  perspectiveDimsFor,
+  onPcaAxesChanged: newAxes => {
+    PARAMS.axesX = newAxes.x;
+    PARAMS.axesY = newAxes.y;
+    PARAMS.axesZ = newAxes.z;
+    axisController.axesOffset = axisController.axesOrder.indexOf(PARAMS.axesX);
+    updateAxisLegend();
+    renderAxisList();
+  },
+  applyObjectVisibility,
+  updateSelectionOutline,
+  updateVertexCloud: () => updateVertexCloud(selectedInstance),
+  updateAxisGuide,
+  applySceneBackground: () => backgroundController.applySceneBackground(PARAMS.editMode),
+  clearVertexCloud: () => transformController.clearVertexCloud(),
+  tmpN,
+  tmpVec,
+  tmpCenter,
+});
 
 function updateDimensionControl() {
   if (dimensionValue) dimensionValue.textContent = `${PARAMS.N}D`;
@@ -2801,11 +599,11 @@ function setNewPrimitiveDimension(value: number) {
   const next = Math.max(3, Math.min(MAX_N, Math.round(value)));
   PARAMS.N = next;
   const nVis = visibleDims();
-  axesOffset = (((axesOffset % nVis) + nVis) % nVis);
-  const visibleOrder = axesOrder.slice(0, nVis);
-  PARAMS.axesX = visibleOrder[axesOffset % nVis] ?? 0;
-  PARAMS.axesY = visibleOrder[(axesOffset + 1) % nVis] ?? 1;
-  PARAMS.axesZ = visibleOrder[(axesOffset + 2) % nVis] ?? 2;
+  axisController.axesOffset = (((axisController.axesOffset % nVis) + nVis) % nVis);
+  const visibleOrder = axisController.axesOrder.slice(0, nVis);
+  PARAMS.axesX = visibleOrder[axisController.axesOffset % nVis] ?? 0;
+  PARAMS.axesY = visibleOrder[(axisController.axesOffset + 1) % nVis] ?? 1;
+  PARAMS.axesZ = visibleOrder[(axisController.axesOffset + 2) % nVis] ?? 2;
   updateDimensionControl();
   renderAxisList();
   updateAxisLegend();
@@ -2819,13 +617,13 @@ function updateEditModeToggle() {
 
 function setEditMode(active: boolean) {
   PARAMS.editMode = active;
-  applySceneBackground(PARAMS.editMode);
+  backgroundController.applySceneBackground(PARAMS.editMode);
   updateEditModeToggle();
 
-  selectedVertex = -1;
-  if (vertexMarker) { scene.remove(vertexMarker); vertexMarker = null; }
+  transformController.setSelectedVertex(-1);
+  transformController.clearVertexMarker();
   if (!PARAMS.editMode) {
-    if (vertexCloud) { scene.remove(vertexCloud); vertexCloud = null; }
+    transformController.clearVertexCloud();
   } else {
     updateVertexCloud(selectedInstance);
   }
@@ -2834,225 +632,92 @@ function setEditMode(active: boolean) {
 }
 
 function updateTransformActionButtons() {
-  const buttons: { mode: TransformMode; el: HTMLButtonElement | null; }[] = [
-    { mode: 'move', el: transformMoveButton },
-    { mode: 'rotate', el: transformRotateButton },
-    { mode: 'scale', el: transformScaleButton },
-  ];
-  const hasTarget = getObjectVisible(selectedInstance);
-  const busy = transformOp.mode !== 'none';
-
-  for (const entry of buttons) {
-    if (!entry.el) continue;
-    entry.el.classList.toggle('active', transformOp.mode === entry.mode);
-    entry.el.disabled = !hasTarget || busy;
-  }
+  transformController.updateActionButtons();
 }
 
-function setPaneCollapsed(collapsed: boolean) {
-  paneCollapsed = collapsed;
-  document.body.classList.toggle('pane-collapsed', paneCollapsed);
-  const paneToggleButton = getPaneToggleButton();
-  if (paneToggleButton) {
-    paneToggleButton.setAttribute('aria-expanded', String(!paneCollapsed));
-    paneToggleButton.setAttribute('aria-label', paneCollapsed ? 'Show panel details' : 'Hide panel details');
-    paneToggleButton.title = paneCollapsed ? 'Show panel details' : 'Hide panel details';
-  }
+function hasActiveSelection() {
+  return (selectedInstance === BASE_SELECTION && M > 0) || selectedInstance >= 0;
 }
 
-function syncPaneCollapsedToViewport(force = false) {
-  const isMobile = isMobilePaneViewport();
-  if (!force && isMobile === paneViewportWasMobile) return;
-  paneViewportWasMobile = isMobile;
-  setPaneCollapsed(isMobile);
+function handleTransformConstraintKey(key: string) {
+  return transformController.handleConstraintKey(key);
 }
 
-function applyProjectionMatrix() {
-  if (PARAMS.projection === 'Canonical' || M === 0) {
-    const nVis = visibleDims();
-    const axes = [PARAMS.axesX % nVis, PARAMS.axesY % nVis, PARAMS.axesZ % nVis].map(v => Math.max(0, Math.min(nVis - 1, v)));
-    const P = new Float32Array(3 * N);
-    P[0 * N + axes[0]] = 1;
-    P[1 * N + axes[1]] = 1;
-    P[2 * N + axes[2]] = 1;
-    projector.setCustomP(P);
-    pcaCache = null;
-  } else {
-    if (!pcaCache || projectionDirty) {
-      const { P } = pcaTopK(X, N, M, 3);
-      pcaCache = P;
-      projectionDirty = false;
-    }
-    projector.setCustomP(pcaCache!);
-    if (M > 0) {
-      const chooseMaxDim = (row: number) => {
-        let best = 0, bestVal = -Infinity;
-        for (let k = 0; k < N; k++) {
-          const val = Math.abs(pcaCache![row * N + k]);
-          if (val > bestVal) { bestVal = val; best = k; }
-        }
-        return best;
-      };
-      const newAxes = { x: chooseMaxDim(0), y: chooseMaxDim(1), z: chooseMaxDim(2) };
-      if (newAxes.x !== PARAMS.axesX || newAxes.y !== PARAMS.axesY || newAxes.z !== PARAMS.axesZ) {
-        PARAMS.axesX = newAxes.x; PARAMS.axesY = newAxes.y; PARAMS.axesZ = newAxes.z;
-        axesOffset = axesOrder.indexOf(PARAMS.axesX);
-        updateAxisLegend();
-        renderAxisList();
-      }
-    }
-  }
-}
+const primitiveMenuOptions: { label: string; kind: PrimitiveKind }[] = [
+  { label: 'Hypercube', kind: 'hypercube' },
+  { label: 'Cross polytope', kind: 'cross' },
+  { label: 'Simplex', kind: 'simplex' },
+  { label: 'Simplex prism', kind: 'simplexPrism' },
+];
 
-function applySliceFilter() {
-  if (M > 0 && rendererND.geometry) {
-    rendererND.filterEdgesByDimRange(X, N, M, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
-  }
-  extraInstances.forEach(inst => {
-    inst.renderer.filterEdgesByDimRange(inst.X, N, inst.M, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
-  });
-  updateSelectionOutline();
-  applySceneBackground(PARAMS.editMode);
-  if (PARAMS.editMode) {
-    updateVertexCloud(selectedInstance);
-  } else {
-    if (vertexCloud) { scene.remove(vertexCloud); vertexCloud = null; }
-  }
-}
+viewportInteraction = new ViewportInteractionController({
+  renderer,
+  camera,
+  controls,
+  raycaster,
+  ndc,
+  tooltipEl,
+  contextMenuEl: ctxMenu,
+  statusBar,
+  keyboardCamera,
+  transformController,
+  primitiveMenuOptions,
+  baseSelection: BASE_SELECTION,
+  noSelection: NO_SELECTION,
+  getParams: () => PARAMS,
+  setSliceDim: dim => { PARAMS.sliceDim = dim; },
+  getN: () => N,
+  getX: () => X,
+  getM: () => M,
+  getBaseVisible: () => baseVisible,
+  getSelectedInstance: () => selectedInstance,
+  getRendererND: () => rendererND,
+  getExtraInstances: () => extraInstances,
+  selectObject,
+  placeVertexMarker,
+  pushUndoSnapshot,
+  addPrimitiveInstanceAt,
+  deleteSelected,
+  hasActiveSelection,
+  applySliceFilter,
+  cycleAxes,
+});
 
-function recenterProjected(Yarr: Float32Array, Mloc: number) {
-  if (Mloc === 0) return tmpCenter.set(0,0,0);
-  let sumX = 0, sumY = 0, sumZ = 0;
-  for (let i = 0; i < Mloc; i++) {
-    sumX += Yarr[i];
-    sumY += Yarr[Mloc + i];
-    sumZ += Yarr[2 * Mloc + i];
-  }
-  const cx = sumX / Mloc, cy = sumY / Mloc, cz = sumZ / Mloc;
-  for (let i = 0; i < Mloc; i++) {
-    Yarr[i] -= cx;
-    Yarr[Mloc + i] -= cy;
-    Yarr[2 * Mloc + i] -= cz;
-  }
-  return tmpCenter.set(cx, cy, cz);
-}
-
-function projectAndRenderAll() {
-  const usePerspective = N >= 4;
-  if (usePerspective) {
-    const axes = [PARAMS.axesX % N, PARAMS.axesY % N, PARAMS.axesZ % N].map(v => Math.max(0, Math.min(N - 1, v)));
-    const projectOne = (
-      Xsrc: Float32Array,
-      Mloc: number,
-      Ydst: Float32Array,
-      transform: { pos: THREE.Vector3; rot: THREE.Vector3; scale: THREE.Vector3; },
-      renderer: HypercubeRenderer,
-      originalN: number,
-      axisMap: AxisMap,
-    ) => {
-      if (Mloc === 0) return;
-      const n = N;
-      const R = rot.matrix;
-      const perspectiveDims = perspectiveDimsFor(originalN, axisMap);
-      for (let m = 0; m < Mloc; m++) {
-        // rotate into tmpN
-        for (let d = 0; d < n; d++) {
-          let acc = 0;
-          for (let a = 0; a < n; a++) acc += R[d * n + a] * Xsrc[a * Mloc + m];
-          tmpN[d] = acc;
-        }
-        const scale = perspectiveScaleFrom(tmpN, perspectiveDims);
-        Ydst[0 * Mloc + m] = tmpN[axes[0]] * scale;
-        Ydst[1 * Mloc + m] = tmpN[axes[1]] * scale;
-        Ydst[2 * Mloc + m] = tmpN[axes[2]] * scale;
-      }
-      const center = recenterProjected(Ydst, Mloc);
-      const tpos = tmpVec.set(transform.pos.x + center.x, transform.pos.y + center.y, transform.pos.z + center.z);
-      renderer.setTransform(tpos, new THREE.Euler(transform.rot.x, transform.rot.y, transform.rot.z), transform.scale);
-      renderer.writeInterleavedFrom(Ydst);
-      renderer.refreshSurface();
-    };
-    if (M > 0 && rendererND.geometry) {
-      projectOne(X, M, Y, baseTransform, rendererND, baseOriginalN || visibleDims(), baseAxisMap);
-    }
-    extraInstances.forEach(inst => {
-      projectOne(inst.X, inst.M, inst.Y, inst.transform, inst.renderer, inst.originalN, inst.axisMap);
-    });
-  } else {
-    applyProjectionMatrix();
-    if (M > 0 && rendererND.geometry) {
-      projector.project(X, M, Y);
-      const center = recenterProjected(Y, M);
-      const tpos = tmpVec.set(baseTransform.pos.x + center.x, baseTransform.pos.y + center.y, baseTransform.pos.z + center.z);
-      rendererND.setTransform(tpos, new THREE.Euler(baseTransform.rot.x, baseTransform.rot.y, baseTransform.rot.z), baseTransform.scale);
-      rendererND.writeInterleavedFrom(Y);
-      rendererND.refreshSurface();
-    }
-    extraInstances.forEach(inst => {
-      projector.project(inst.X, inst.M, inst.Y);
-      const center = recenterProjected(inst.Y, inst.M);
-      const tpos = tmpVec.set(inst.transform.pos.x + center.x, inst.transform.pos.y + center.y, inst.transform.pos.z + center.z);
-      inst.renderer.setTransform(tpos, new THREE.Euler(inst.transform.rot.x, inst.transform.rot.y, inst.transform.rot.z), inst.transform.scale);
-      inst.renderer.writeInterleavedFrom(inst.Y);
-      inst.renderer.refreshSurface();
-    });
-  }
-  applyObjectVisibility();
-  updateSelectionOutline();
-  if (PARAMS.editMode) updateVertexCloud(selectedInstance);
-  updateAxisGuide();
-}
-
-function applyAutoRotation(dt: number) {
-  const gizmoPlanes = currentExtraAxisGizmoPlanes();
-  if (!gizmoPlanes.length || autoRotateExtraAxisSpeeds.size === 0) return;
-
-  let rotated = false;
-  for (const plane of gizmoPlanes) {
-    const speed = autoRotateExtraAxisSpeeds.get(plane.depthDim) ?? 0;
-    if (speed <= 0) continue;
-    if (plane.planeAxis < 0 || plane.planeAxis === plane.depthDim) continue;
-    const delta = EXTRA_AXIS_AUTO_ROTATE_SPEED * speed * dt;
-    rot.applyGivensLeft(plane.planeAxis, plane.depthDim, delta);
-    const prev = getExtraAxisGizmoAngle(plane.depthDim);
-    extraAxisGizmoAngles.set(plane.depthDim, normalizeSignedAngleDelta(prev + delta));
-    rotated = true;
-  }
-
-  if (!rotated) return;
-  projectionDirty = true;
-  applySceneBackground(PARAMS.editMode);
-}
-
-function showDeleteConfirm(ev?: MouseEvent) {
-  if (!ctxMenu) return;
-  deletePending = true;
-  ctxMenu.innerHTML = '';
-  const title = document.createElement('div');
-  title.textContent = 'Delete?';
-  title.style.padding = '8px 12px';
-  title.style.fontWeight = '700';
-  ctxMenu.appendChild(title);
-  const confirm = document.createElement('button');
-  confirm.textContent = 'Confirm';
-  confirm.onclick = () => {
-    ctxMenu.style.display = 'none';
-    deletePending = false;
-    deleteSelected();
+function createPrimitiveData(kind: PrimitiveKind, dimension: number): InstanceGeometryData {
+  const data = buildPrimitive(kind, dimension);
+  const axisMap = currentAxisMap(dimension);
+  return {
+    verts: embedToMax(data.verts, dimension, axisMap),
+    edges: data.edges,
+    V: data.V,
+    kind,
+    axisMap,
+    originalN: dimension,
   };
-  const cancel = document.createElement('button');
-  cancel.textContent = 'Cancel';
-  cancel.onclick = () => {
-    deletePending = false;
-    ctxMenu.style.display = 'none';
-  };
-  ctxMenu.appendChild(confirm);
-  ctxMenu.appendChild(cancel);
-  const x = ev?.clientX ?? lastPointer.x;
-  const y = ev?.clientY ?? lastPointer.y;
-  ctxMenu.style.left = `${x}px`;
-  ctxMenu.style.top = `${y}px`;
-  ctxMenu.style.display = 'block';
+}
+
+function insertInstance(data: InstanceGeometryData, offset: THREE.Vector3, label: string, surface: SurfaceState, syncMode = true) {
+  extraInstances.push(createSceneInstance({
+    scene,
+    projector,
+    data,
+    offset,
+    label,
+    surface,
+    renderMode: PARAMS.renderMode,
+    sliceDim: PARAMS.sliceDim,
+    sliceMin: PARAMS.sliceMin,
+    sliceMax: PARAMS.sliceMax,
+    projectionN: MAX_N,
+  }));
+  projectAndRenderAll();
+  applySliceFilter();
+  if (syncMode && setViewMode) setViewMode(PARAMS.renderMode);
+  updateObjectList();
+}
+
+function addPrimitiveInstanceAt(kind: PrimitiveKind, label: string, offset: THREE.Vector3, syncMode = true) {
+  insertInstance(createPrimitiveData(kind, PARAMS.N), offset, label, cloneSurface(DEFAULT_SURFACE), syncMode);
 }
 
 function clearExtraInstances() {
@@ -3063,7 +728,7 @@ function clearExtraInstances() {
 
 function addInstanceAt(offset: THREE.Vector3, recordUndo = true) {
   if (recordUndo) pushUndoSnapshot();
-  let data: { verts: Float32Array; edges: Uint32Array; V: number; kind: PrimitiveKind; axisMap: AxisMap; originalN: number };
+  let data: InstanceGeometryData;
   if (M > 0 && baseVisible) {
     data = {
       verts: new Float32Array(X),
@@ -3074,48 +739,16 @@ function addInstanceAt(offset: THREE.Vector3, recordUndo = true) {
       originalN: baseOriginalN || PARAMS.N,
     };
   } else {
-    const local = buildPrimitive(PARAMS.primitive, PARAMS.N);
-    const axisMap = currentAxisMap(PARAMS.N);
-    const embedded = embedToMax(local.verts, PARAMS.N, axisMap);
-    data = { verts: embedded, edges: local.edges, V: local.V, kind: PARAMS.primitive, axisMap, originalN: PARAMS.N };
+    data = createPrimitiveData(PARAMS.primitive, PARAMS.N);
   }
-  const instRenderer = new HypercubeRenderer(scene);
-  instRenderer.build(data.V, data.edges);
   const surface = M > 0 && baseVisible ? cloneSurface(baseSurface) : cloneSurface(DEFAULT_SURFACE);
-  instRenderer.setSurface(surface);
-  const Yloc = new Float32Array(3 * data.V);
   const label = `${data.kind} #${extraInstances.length + 1}`;
-  const t = { pos: offset.clone(), rot: new THREE.Vector3(), scale: new THREE.Vector3(1,1,1) };
-  extraInstances.push({
-    renderer: instRenderer,
-    Y: Yloc,
-    X: data.verts,
-    E: data.edges,
-    M: data.V,
-    offset: offset.clone(),
-    label,
-    kind: data.kind,
-    transform: t,
-    originalN: data.originalN,
-    axisMap: [...data.axisMap],
-    visible: true,
-    surface,
-  });
-  projector.project(data.verts, data.V, Yloc);
-  instRenderer.setTransform(t.pos, new THREE.Euler(t.rot.x, t.rot.y, t.rot.z), t.scale);
-  instRenderer.writeInterleavedFrom(Yloc);
-  instRenderer.filterEdgesByDimRange(data.verts, MAX_N, data.V, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
-  instRenderer.setMode(PARAMS.renderMode);
-  projectAndRenderAll();
-  applySliceFilter();
-  if (setViewMode) setViewMode(PARAMS.renderMode);
-  updateObjectList();
+  insertInstance(data, offset, label, surface);
 }
 
-function rebuildState(newN: number, newX: Float32Array, newE: Uint32Array, source: 'primitive' | 'custom', localN?: number, axisMap?: AxisMap) {
-  autoRotateExtraAxisSpeeds.clear();
-  extraAxisGizmoAngles.clear();
-  endAxisShiftDrag();
+function rebuildState(newN: number, newX: Float32Array, newE: Uint32Array, source: DataSource, localN?: number, axisMap?: AxisMap) {
+  axisController.clearDynamicState();
+  viewportInteraction?.cancelAxisShiftDrag();
   controls.enableZoom = true;
   controls.enablePan = true;
   controls.enableRotate = true;
@@ -3144,11 +777,10 @@ function rebuildState(newN: number, newX: Float32Array, newE: Uint32Array, sourc
   baseOriginalN = localN ?? visibleDims();
   baseAxisMap = normalizeAxisMap(axisMap, baseOriginalN);
   baseSurface = cloneSurface(DEFAULT_SURFACE);
-  axesOrder = Array.from({ length: N }, (_, i) => i);
-  axesOffset = 0;
-  PARAMS.axesX = axesOrder[0] ?? 0;
-  PARAMS.axesY = axesOrder[1] ?? 1;
-  PARAMS.axesZ = axesOrder[2] ?? 2;
+  axisController.resetAxisOrder(N);
+  PARAMS.axesX = axisController.axesOrder[0] ?? 0;
+  PARAMS.axesY = axisController.axesOrder[1] ?? 1;
+  PARAMS.axesZ = axisController.axesOrder[2] ?? 2;
   if (PARAMS.sliceDim >= ambientN) PARAMS.sliceDim = ambientN - 1;
   if (M > 0) {
     rendererND.build(M, E);
@@ -3169,382 +801,12 @@ function rebuildState(newN: number, newX: Float32Array, newE: Uint32Array, sourc
   renderAxisList();
 }
 
-function downloadText(name: string, text: string, mime = 'text/plain') {
-  const blob = new Blob([text], { type: mime });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-function downloadBlob(name: string, blob: Blob) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-const VIDEO_RECORDER_MIME_CANDIDATES = [
-  'video/webm;codecs=vp9,opus',
-  'video/webm;codecs=vp8,opus',
-  'video/webm;codecs=h264,opus',
-  'video/webm',
-  'video/mp4',
-] as const;
-const VIDEO_RECORDER_FPS = 60;
-const VIDEO_RECORDER_MIN_BITRATE = 28_000_000;
-const VIDEO_RECORDER_MAX_BITRATE = 140_000_000;
-const recorderBufferSize = new THREE.Vector2();
-
-let viewportRecorder: MediaRecorder | null = null;
-let viewportRecorderStream: MediaStream | null = null;
-let viewportRecorderChunks: Blob[] = [];
-let viewportRecorderMimeType = 'video/webm';
-let viewportGridVisibleBeforeCapture = true;
-let viewportAxesVisibleBeforeCapture = true;
-let viewportRecordingFinalized = false;
-let viewportRecordingStartedAt = 0;
-let viewportRecordingTimerIntervalId: number | null = null;
-
-function captureTimestamp() {
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-}
-
-function recordingFileExtensionFromMime(mimeType: string) {
-  if (mimeType.includes('mp4')) return 'mp4';
-  return 'webm';
-}
-
-function formatRecordingElapsed(ms: number) {
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  if (hours > 0) {
-    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-  }
-  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-}
-
-function updateViewportRecordingTimer() {
-  if (!recordViewportTimer || viewportRecordingStartedAt <= 0) return;
-  const elapsed = performance.now() - viewportRecordingStartedAt;
-  recordViewportTimer.textContent = formatRecordingElapsed(elapsed);
-}
-
-function stopViewportRecordingTimer() {
-  if (viewportRecordingTimerIntervalId != null) {
-    window.clearInterval(viewportRecordingTimerIntervalId);
-    viewportRecordingTimerIntervalId = null;
-  }
-  viewportRecordingStartedAt = 0;
-  if (!recordViewportTimer) return;
-  recordViewportTimer.classList.remove('active');
-  recordViewportTimer.textContent = '00:00';
-  recordViewportTimer.setAttribute('aria-hidden', 'true');
-}
-
-function startViewportRecordingTimer() {
-  stopViewportRecordingTimer();
-  viewportRecordingStartedAt = performance.now();
-  if (!recordViewportTimer) return;
-  recordViewportTimer.classList.add('active');
-  recordViewportTimer.setAttribute('aria-hidden', 'false');
-  updateViewportRecordingTimer();
-  viewportRecordingTimerIntervalId = window.setInterval(updateViewportRecordingTimer, 250);
-}
-
-function setRecordViewportButtonState(recording: boolean) {
-  if (!recordViewportButton) return;
-  recordViewportButton.classList.toggle('recording', recording);
-  recordViewportButton.classList.toggle('active', recording);
-  const label = recording ? 'Stop viewport recording (Shift+R)' : 'Record viewport (Shift+R)';
-  recordViewportButton.title = label;
-  recordViewportButton.setAttribute('aria-label', label);
-  const icon = recordViewportButton.querySelector('.material-symbols-rounded');
-  if (icon) icon.textContent = recording ? 'stop' : 'movie';
-}
-
-function pickRecorderMimeType() {
-  if (typeof MediaRecorder === 'undefined') return '';
-  for (const candidate of VIDEO_RECORDER_MIME_CANDIDATES) {
-    try {
-      if (MediaRecorder.isTypeSupported(candidate)) return candidate;
-    } catch {
-      // Ignore and try next.
-    }
-  }
-  return '';
-}
-
-function recommendedRecordingBitrate() {
-  renderer.getDrawingBufferSize(recorderBufferSize);
-  const pixelCount = Math.max(1, recorderBufferSize.x * recorderBufferSize.y);
-  const bitsPerPixelFrame = pixelCount >= (3840 * 2160)
-    ? 0.16
-    : pixelCount >= (2560 * 1440)
-      ? 0.2
-      : 0.24;
-  const target = Math.round(pixelCount * VIDEO_RECORDER_FPS * bitsPerPixelFrame);
-  return Math.max(VIDEO_RECORDER_MIN_BITRATE, Math.min(VIDEO_RECORDER_MAX_BITRATE, target));
-}
-
-function finalizeViewportRecording(downloadVideo: boolean) {
-  if (viewportRecordingFinalized) return;
-  viewportRecordingFinalized = true;
-
-  const mimeType = viewportRecorderMimeType;
-  const chunks = viewportRecorderChunks;
-  const stream = viewportRecorderStream;
-
-  viewportRecorder = null;
-  viewportRecorderStream = null;
-  viewportRecorderChunks = [];
-
-  stream?.getTracks().forEach(track => track.stop());
-  gridGroup.visible = viewportGridVisibleBeforeCapture;
-  axes.visible = viewportAxesVisibleBeforeCapture;
-  renderer.render(scene, camera);
-  stopViewportRecordingTimer();
-  setRecordViewportButtonState(false);
-
-  if (!downloadVideo) return;
-  if (chunks.length === 0) {
-    alert('Recording stopped, but no video data was captured.');
-    return;
-  }
-  const blob = new Blob(chunks, { type: mimeType || 'video/webm' });
-  const ext = recordingFileExtensionFromMime(blob.type || mimeType);
-  downloadBlob(`blend-viewport-${captureTimestamp()}.${ext}`, blob);
-}
-
-function stopViewportRecording() {
-  if (!viewportRecorder) return;
-  try {
-    if (viewportRecorder.state !== 'inactive') {
-      viewportRecorder.stop();
-    } else {
-      finalizeViewportRecording(true);
-    }
-  } catch {
-    finalizeViewportRecording(false);
-  }
-}
-
-function startViewportRecording() {
-  if (typeof MediaRecorder === 'undefined') {
-    alert('Viewport recording is not supported in this browser.');
-    return;
-  }
-  const captureStream = renderer.domElement.captureStream?.bind(renderer.domElement);
-  if (!captureStream) {
-    alert('Viewport recording is not supported in this browser.');
-    return;
-  }
-
-  const stream = captureStream(VIDEO_RECORDER_FPS);
-  const mimeType = pickRecorderMimeType();
-  const videoBitsPerSecond = recommendedRecordingBitrate();
-  let recorder: MediaRecorder;
-  try {
-    recorder = mimeType
-      ? new MediaRecorder(stream, { mimeType, videoBitsPerSecond })
-      : new MediaRecorder(stream, { videoBitsPerSecond });
-  } catch {
-    try {
-      recorder = mimeType
-        ? new MediaRecorder(stream, { mimeType })
-        : new MediaRecorder(stream);
-    } catch {
-      stream.getTracks().forEach(track => track.stop());
-      alert('Unable to start viewport recording.');
-      return;
-    }
-  }
-
-  viewportRecorder = recorder;
-  viewportRecorderStream = stream;
-  viewportRecorderChunks = [];
-  viewportRecorderMimeType = recorder.mimeType || mimeType || 'video/webm';
-  viewportGridVisibleBeforeCapture = gridGroup.visible;
-  viewportAxesVisibleBeforeCapture = axes.visible;
-  viewportRecordingFinalized = false;
-
-  recorder.ondataavailable = ev => {
-    if (ev.data && ev.data.size > 0) viewportRecorderChunks.push(ev.data);
-  };
-  recorder.onerror = () => {
-    alert('Viewport recording failed.');
-    finalizeViewportRecording(false);
-  };
-  recorder.onstop = () => {
-    finalizeViewportRecording(true);
-  };
-
-  gridGroup.visible = false;
-  axes.visible = false;
-  renderer.render(scene, camera);
-  setRecordViewportButtonState(true);
-  startViewportRecordingTimer();
-
-  try {
-    recorder.start(200);
-  } catch {
-    finalizeViewportRecording(false);
-    alert('Unable to start viewport recording.');
-  }
-}
-
-function captureViewportFrame() {
-  const previousGridVisibility = gridGroup.visible;
-  const previousAxesVisibility = axes.visible;
-  gridGroup.visible = false;
-  axes.visible = false;
-  renderer.render(scene, camera);
-  try {
-    const dataUrl = renderer.domElement.toDataURL('image/png');
-    const a = document.createElement('a');
-    a.href = dataUrl;
-    a.download = `blend-frame-${captureTimestamp()}.png`;
-    a.click();
-  } catch {
-    alert('Unable to capture frame.');
-  } finally {
-    gridGroup.visible = previousGridVisibility;
-    axes.visible = previousAxesVisibility;
-    renderer.render(scene, camera);
-  }
-}
-
-async function handleImport(file: File) {
-  try {
-    const text = await file.text();
-    const parsed = parseGeometryJson(text);
-    if (parsed.N < 3 || parsed.N > 8) {
-      alert('Only datasets between 3 and 8 dimensions can be visualized.');
-      return;
-    }
-    pushUndoSnapshot();
-    PARAMS.N = parsed.N;
-    const axisMap = canonicalAxisMap(parsed.N);
-    const embedded = embedToMax(parsed.X, parsed.N, axisMap);
-    const edges = parsed.edges.length ? parsed.edges : edgesFallback;
-    rebuildState(MAX_N, embedded, edges, 'custom', parsed.N, axisMap);
-  } catch (err) {
-    console.error(err);
-    alert(`Import failed: ${(err as Error).message}`);
-  } finally {
-    if (fileInput) fileInput.value = '';
-  }
-}
-
-function exportProjectionJSON() {
-  const { Xsrc, count, Esrc } = getCurrentExportData();
-  if (count === 0) { alert('No data to export'); return; }
-  downloadText('data.json', serializeGeometryJson(Xsrc, count, N, Esrc), 'application/json');
-}
-
-function getCurrentExportData() {
-  if (selectedInstance >= 0 && extraInstances[selectedInstance]) {
-    const inst = extraInstances[selectedInstance];
-    return { Xsrc: inst.X, count: inst.M, Esrc: inst.E };
-  }
-  if (M > 0) return { Xsrc: X, count: M, Esrc: E };
-  return { Xsrc: new Float32Array(), count: 0, Esrc: new Uint32Array() };
-}
-
-function formatCoords(Nloc: number, coords: Float32Array, count: number, idx: number) {
-  const parts: string[] = [];
-  for (let d = 0; d < Nloc; d++) {
-    const v = coords[d * count + idx];
-    parts.push(`d${d}: ${v.toFixed(3)}`);
-  }
-  return parts;
-}
-
-function pickPointOnTargetPlane(ev: PointerEvent) {
-  const rect = renderer.domElement.getBoundingClientRect();
-  ndc.set(
-    ((ev.clientX - rect.left) / rect.width) * 2 - 1,
-    -((ev.clientY - rect.top) / rect.height) * 2 + 1,
-  );
-  clickPlane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(tmpVec).normalize(), controls.target);
-  raycaster.setFromCamera(ndc, camera);
-  const hit = raycaster.ray.intersectPlane(clickPlane, clickPoint);
-  return hit ? clickPoint.clone() : controls.target.clone();
-}
-
-function handleHover(ev: PointerEvent) {
-  if (!tooltipEl) return;
-  const rect = renderer.domElement.getBoundingClientRect();
-  const mx = ev.clientX - rect.left;
-  const my = ev.clientY - rect.top;
-  const w = rect.width;
-  const h = rect.height;
-  let best = -1;
-  let bestDist2 = Number.POSITIVE_INFINITY;
-  const considerPoint = (px: number, py: number, pz: number, idx: number, instIdx: number) => {
-    tmpVec.set(px, py, pz).project(camera);
-    const sx = (tmpVec.x * 0.5 + 0.5) * w;
-    const sy = (-tmpVec.y * 0.5 + 0.5) * h;
-    const dx = sx - mx;
-    const dy = sy - my;
-    const d2 = dx * dx + dy * dy;
-    if (d2 < bestDist2) {
-      bestDist2 = d2;
-      best = idx;
-      selectedHoverInst = instIdx;
-    }
-  };
-  let selectedHoverInst = -1;
-  if (baseVisible) {
-    for (let i = 0; i < M; i++) {
-      const pIdx = i * 3;
-      considerPoint(rendererND.positions[pIdx], rendererND.positions[pIdx + 1], rendererND.positions[pIdx + 2], i, -1);
-    }
-  }
-  extraInstances.forEach((inst, instIdx) => {
-    if (!inst.visible) return;
-    const pos = inst.renderer.positions;
-    for (let i = 0; i < inst.M; i++) {
-      const pIdx = i * 3;
-      considerPoint(pos[pIdx], pos[pIdx + 1], pos[pIdx + 2], i, instIdx);
-    }
-  });
-  const thresh2 = 30 * 30; // pixels^2
-  if (best >= 0 && bestDist2 < thresh2) {
-    const hoverData = selectedHoverInst >= 0 && extraInstances[selectedHoverInst]
-      ? { coords: extraInstances[selectedHoverInst].X, count: extraInstances[selectedHoverInst].M }
-      : { coords: X, count: M };
-    const lines = formatCoords(N, hoverData.coords, hoverData.count, best);
-    tooltipEl.innerHTML = `<div style="font-weight:600;margin-bottom:4px;">v${best}</div><div>${lines.join('<br>')}</div>`;
-    tooltipEl.style.left = `${ev.clientX}px`;
-    tooltipEl.style.top = `${ev.clientY}px`;
-    tooltipEl.classList.add('visible');
-  } else {
-    tooltipEl.classList.remove('visible');
-  }
-
-  // status bar when idle
-  if (statusBar && transformOp.mode === 'none') {
-    const ndcX = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
-    const ndcY = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
-    statusBar.textContent = `Cursor NDC: (${ndcX.toFixed(3)}, ${ndcY.toFixed(3)})`;
-  }
-}
 function resetToIsometric() {
   const targetN = 6;
   PARAMS.N = targetN;
   PARAMS.primitive = 'hypercube';
   PARAMS.projection = 'PCA';
-  autoRotateExtraAxisSpeeds.clear();
-  extraAxisGizmoAngles.clear();
+  axisController.clearDynamicState();
   PARAMS.renderMode = 'faceted';
   PARAMS.sliceDim = -1;
   PARAMS.sliceMin = -0.5;
@@ -3563,837 +825,73 @@ applySliceFilter();
 updateAxisLegend();
 renderAxisList();
 updateObjectList();
-applySceneBackground(PARAMS.editMode);
+backgroundController.applySceneBackground(PARAMS.editMode);
 updateDimensionControl();
 updateEditModeToggle();
-texturePresets = loadTexturePresets();
-updateTexturePresetSelect();
-bindTextureControls();
-updateTexturePanel();
-initializeBackgroundRenderControls();
-void initializeHdrBackgroundSelector();
+textureEditor.initialize();
+backgroundController.initializeRenderControls();
+void backgroundController.initializeSelector();
 
-if (viewToggle) {
-  const btns = Array.from(viewToggle.querySelectorAll('button')) as HTMLButtonElement[];
-  const isViewMode = (mode: string | undefined): mode is ViewMode => (
-    VIEW_MODES.includes(mode as ViewMode)
-  );
-  const syncButtons = () => {
-    btns.forEach(btn => btn.classList.toggle('active', (btn.dataset.mode === PARAMS.renderMode)));
-  };
-  setViewMode = (mode: ViewMode) => {
-    PARAMS.renderMode = mode;
-    rendererND.setMode(mode);
-    rendererND.refreshSurface();
-    extraInstances.forEach(inst => {
-      inst.renderer.setMode(mode);
-      inst.renderer.refreshSurface();
-    });
-    updateTexturePanel();
-    syncButtons();
-    syncBackgroundForRenderMode();
-  };
-  btns.forEach(btn => {
-    btn.addEventListener('click', () => {
-      if (isViewMode(btn.dataset.mode)) setViewMode(btn.dataset.mode);
-    });
+const viewModeController = new ViewModeController({
+  getMode: () => PARAMS.renderMode,
+  setMode: mode => setViewMode(mode),
+});
+setViewMode = (mode: ViewMode) => {
+  PARAMS.renderMode = mode;
+  rendererND.setMode(mode);
+  rendererND.refreshSurface();
+  extraInstances.forEach(inst => {
+    inst.renderer.setMode(mode);
+    inst.renderer.refreshSurface();
   });
-  syncButtons();
-  syncBackgroundForRenderMode();
-}
+  textureEditor.updatePanel();
+  viewModeController.syncButtons();
+  backgroundController.syncForRenderMode();
+};
+viewModeController.bind();
+backgroundController.syncForRenderMode();
 
 if (M === 0 && extraInstances.length === 0) {
   addInstanceAt(new THREE.Vector3(0, 0, 0), false);
   selectObject(0);
 }
 
-if (fileInput) {
-  fileInput.addEventListener('change', () => {
-    const file = fileInput.files?.[0];
-    if (file) handleImport(file);
-  });
-}
-
-setRecordViewportButtonState(false);
-importJsonButton?.addEventListener('click', () => fileInput?.click());
-recordViewportButton?.addEventListener('click', () => {
-  if (viewportRecorder && viewportRecorder.state !== 'inactive') {
-    stopViewportRecording();
-    return;
-  }
-  startViewportRecording();
-});
-captureFrameButton?.addEventListener('click', () => captureViewportFrame());
-exportJsonButton?.addEventListener('click', () => exportProjectionJSON());
+viewportCapture.bindControls();
+modalOverlayController.bindControls();
 editModeToggle?.addEventListener('click', () => setEditMode(!PARAMS.editMode));
-helpToggleButton?.addEventListener('click', ev => {
-  ev.stopPropagation();
-  setHelpOverlayOpen(true);
-});
-helpCloseButton?.addEventListener('click', () => setHelpOverlayOpen(false));
-helpOverlay?.addEventListener('click', ev => {
-  if (ev.target === helpOverlay) setHelpOverlayOpen(false);
-});
-mobileOnboardingOpenButton?.addEventListener('click', ev => {
-  ev.preventDefault();
-  setHelpOverlayOpen(false);
-  openMobileOnboarding(0);
-});
-mobileOnboardingCloseButton?.addEventListener('click', () => closeMobileOnboarding(true));
-mobileOnboardingSkipButton?.addEventListener('click', () => closeMobileOnboarding(true));
-mobileOnboardingPrevButton?.addEventListener('click', () => setMobileOnboardingStep(mobileOnboardingStep - 1));
-mobileOnboardingNextButton?.addEventListener('click', () => setMobileOnboardingStep(mobileOnboardingStep + 1));
-mobileOnboardingFinishButton?.addEventListener('click', () => closeMobileOnboarding(true));
-mobileOnboardingOverlay?.addEventListener('click', ev => {
-  if (ev.target === mobileOnboardingOverlay) closeMobileOnboarding(true);
-});
-mobileOnboardingProgressButtons.forEach(button => {
-  button.addEventListener('click', () => {
-    const step = Number.parseInt(button.dataset.step ?? '', 10);
-    if (Number.isNaN(step)) return;
-    setMobileOnboardingStep(step);
-  });
-});
 [
   { el: transformMoveButton, mode: 'move' as TransformMode },
   { el: transformRotateButton, mode: 'rotate' as TransformMode },
   { el: transformScaleButton, mode: 'scale' as TransformMode },
 ].forEach(entry => {
-  entry.el?.addEventListener('pointerdown', ev => beginToolbarTransformDrag(entry.mode, ev));
+  entry.el?.addEventListener('pointerdown', ev => transformController.beginToolbarDrag(entry.mode, ev));
 });
 dimensionDownButton?.addEventListener('click', () => setNewPrimitiveDimension(PARAMS.N - 1));
 dimensionUpButton?.addEventListener('click', () => setNewPrimitiveDimension(PARAMS.N + 1));
+new KeyboardShortcutController({
+  isModalOpen: () => modalOverlayController.isOpen(),
+  getTransformMode: () => transformController.mode,
+  handleTransformConstraintKey,
+  keyboardCamera,
+  setViewMode: mode => setViewMode(mode),
+  toggleRecording: () => viewportCapture.toggleRecording(),
+  captureFrame: () => viewportCapture.captureFrame(),
+  toggleEditMode: () => setEditMode(!PARAMS.editMode),
+  startTransformFromPointer: mode => viewportInteraction.startTransformFromLastPointer(mode),
+  showAddObjectMenuAtPointer: () => viewportInteraction.showAddObjectMenuAtLastPointer(),
+  deleteOrConfirmSelection: () => viewportInteraction.deleteOrConfirmSelection(),
+  hasSelection: hasActiveSelection,
+  undo: undoSceneSnapshot,
+  redo: redoSceneSnapshot,
+}).bind();
 
 updateTransformActionButtons();
-syncPaneCollapsedToViewport(true);
-setMobileOnboardingStep(0);
-maybeOpenMobileOnboarding();
-
-function applyTransformPointer(clientX: number, clientY: number) {
-  if (transformOp.mode === 'none') return;
-
-  const dx = clientX - transformOp.startMouse.x;
-  const dy = clientY - transformOp.startMouse.y;
-  if (transformOp.targetVertex >= 0) {
-    const inst = transformOp.instIdx === -1 ? null : extraInstances[transformOp.instIdx];
-    const posArr = inst ? inst.renderer.positions : rendererND.positions;
-    const idx = transformOp.targetVertex * 3;
-    const rect = renderer.domElement.getBoundingClientRect();
-    ndc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
-    raycaster.setFromCamera(ndc, camera);
-    // plane always facing camera through start point to follow cursor
-    transformOp.plane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(tmpVec).normalize(), transformOp.planeHitStart);
-    const hit = raycaster.ray.intersectPlane(transformOp.plane, tmpVec);
-    if (!hit) return;
-    const dragWorld = dragWorldTarget;
-    if (transformOp.mode === 'move') {
-      const locked = transformOp.lockAxis;
-      dragWorld.set(
-        locked === 1 || locked === 2 ? transformOp.vertexStart.x : hit.x,
-        locked === 0 || locked === 2 ? transformOp.vertexStart.y : hit.y,
-        locked === 0 || locked === 1 ? transformOp.vertexStart.z : hit.z,
-      );
-      transformOp.lastHit.copy(dragWorld);
-    } else if (transformOp.mode === 'scale') {
-      const fromOrigin = hit.clone().sub(transformOp.planeHitStart);
-      const base = transformOp.vertexStart.clone().sub(transformOp.planeHitStart);
-      const baseLen = base.length();
-      const newLen = fromOrigin.length();
-      const s = baseLen > 1e-6 ? newLen / baseLen : 1;
-      const scaled = base.multiplyScalar(s).add(transformOp.planeHitStart);
-      dragWorld.copy(scaled);
-      transformOp.lastHit.copy(scaled);
-    } else if (transformOp.mode === 'rotate') {
-      const base = transformOp.vertexStart.clone().sub(transformOp.planeHitStart);
-      const cur = hit.clone().sub(transformOp.planeHitStart);
-      const angle = Math.atan2(cur.y, cur.x) - Math.atan2(base.y, base.x);
-      const q = new THREE.Quaternion().setFromAxisAngle(transformOp.axis, angle);
-      base.applyQuaternion(q).add(transformOp.planeHitStart);
-      dragWorld.copy(base);
-      transformOp.lastHit.copy(base);
-    } else {
-      return;
-    }
-    if (!setDraggedVertexFromWorldPosition(transformOp.instIdx, transformOp.targetVertex, dragWorld)) return;
-    projectAndRenderAll();
-    applySliceFilter();
-    const refreshed = inst ? inst.renderer.positions : rendererND.positions;
-    if (vertexMarker) vertexMarker.position.set(refreshed[idx], refreshed[idx + 1], refreshed[idx + 2]);
-    if (statusBar) statusBar.textContent = `Vertex (${transformOp.targetVertex}): (${refreshed[idx].toFixed(3)}, ${refreshed[idx+1].toFixed(3)}, ${refreshed[idx+2].toFixed(3)})`;
-  } else {
-    const target = transformOp.instIdx === -1 ? baseTransform : extraInstances[transformOp.instIdx].transform;
-    if (transformOp.mode === 'move') {
-      const src = transformOp.instIdx === -1 ? X : extraInstances[transformOp.instIdx].X;
-      const baseData = transformOp.objectDataStart;
-      const count = transformOp.instIdx === -1 ? M : extraInstances[transformOp.instIdx].M;
-      if (baseData && count > 0) {
-        const rect = renderer.domElement.getBoundingClientRect();
-        ndc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
-        raycaster.setFromCamera(ndc, camera);
-        const hit = raycaster.ray.intersectPlane(transformOp.plane, tmpVec);
-        if (!hit) return;
-        const delta = hit.clone().add(transformOp.moveOffset).sub(transformOp.planeHitStart);
-        if (transformOp.lockAxis === 0) {
-          delta.y = 0;
-          delta.z = 0;
-        } else if (transformOp.lockAxis === 1) {
-          delta.x = 0;
-          delta.z = 0;
-        } else if (transformOp.lockAxis === 2) {
-          delta.x = 0;
-          delta.y = 0;
-        }
-        const axes = [PARAMS.axesX, PARAMS.axesY, PARAMS.axesZ];
-        for (let i = 0; i < count; i++) {
-          for (let c = 0; c < 3; c++) {
-            const dim = axes[c] % N;
-            const idxD = dim * count + i;
-            src[idxD] = baseData[idxD] + delta.getComponent(c);
-          }
-        }
-        transformOp.lastHit.copy(hit);
-        projectionDirty = true;
-      }
-    } else if (transformOp.mode === 'rotate') {
-      if (transformOp.wPlane && transformOp.objectDataStart) {
-        const inst = transformOp.instIdx === -1 ? null : extraInstances[transformOp.instIdx];
-        const src = inst ? inst.X : X;
-        const baseData = transformOp.objectDataStart;
-        const count = inst ? inst.M : M;
-        if (count > 0) {
-          const originalN = inst ? inst.originalN : baseOriginalN || visibleDims();
-          const axisMap = inst ? inst.axisMap : baseAxisMap;
-          const perspectiveDims = perspectiveDimsFor(originalN, axisMap);
-          const dimB = perspectiveDims[0] ?? perspectiveDepthDim(originalN, axisMap);
-          const dimA = wRotationPlaneAxis(transformOp.lockAxis, dimB);
-          if (dimA < 0 || dimB < 0 || dimA === dimB) return;
-          const angle = (dx - dy) * 0.01;
-          const c = Math.cos(angle), s = Math.sin(angle);
-          for (let i = 0; i < count; i++) {
-            const a0 = baseData[dimA * count + i];
-            const b0 = baseData[dimB * count + i];
-            src[dimA * count + i] = a0 * c - b0 * s;
-            src[dimB * count + i] = a0 * s + b0 * c;
-          }
-          projectionDirty = true;
-        }
-      } else {
-        const deltaX = dx * 0.005;
-        const deltaY = dy * 0.005;
-        const lx = transformOp.startRot.x;
-        const ly = transformOp.startRot.y;
-        const lz = transformOp.startRot.z;
-        if (transformOp.lockAxis === 0) {
-          target.rot.set(lx + deltaY, ly, lz);
-        } else if (transformOp.lockAxis === 1) {
-          target.rot.set(lx, ly + deltaX, lz);
-        } else if (transformOp.lockAxis === 2) {
-          target.rot.set(lx, ly, lz + deltaX);
-        } else {
-          target.rot.set(lx + deltaY, ly + deltaX, lz);
-        }
-      }
-    } else if (transformOp.mode === 'scale') {
-      const delta = (dx - dy) * 0.005;
-      const s = Math.max(0.1, Math.min(5, transformOp.startScale + delta));
-      target.scale.set(s, s, s);
-    }
-    if (statusBar) statusBar.textContent = `Object: pos(${target.pos.x.toFixed(3)}, ${target.pos.y.toFixed(3)}, ${target.pos.z.toFixed(3)}) rot(${target.rot.x.toFixed(3)}, ${target.rot.y.toFixed(3)}, ${target.rot.z.toFixed(3)})`;
-  }
-  projectAndRenderAll();
-  applySliceFilter();
-  updateSelectionOutline();
-  updateAxisGuide();
-}
-
-function finishTransformInteraction(commit: boolean) {
-  if (transformOp.mode === 'none') return;
-
-  if (commit) {
-    if (transformOp.targetVertex >= 0) {
-      const inst = transformOp.instIdx === -1 ? null : extraInstances[transformOp.instIdx];
-      const posArr = inst ? inst.renderer.positions : rendererND.positions;
-      const idx = transformOp.targetVertex * 3;
-      dragWorldTarget.set(posArr[idx], posArr[idx + 1], posArr[idx + 2]);
-      setDraggedVertexFromWorldPosition(transformOp.instIdx, transformOp.targetVertex, dragWorldTarget);
-    }
-    if (statusBar) {
-      if (transformOp.targetVertex >= 0) {
-        const inst = transformOp.instIdx === -1 ? null : extraInstances[transformOp.instIdx];
-        const posArr = inst ? inst.renderer.positions : rendererND.positions;
-        const idx = transformOp.targetVertex * 3;
-        statusBar.textContent = `Vertex (${transformOp.targetVertex}) commit: (${posArr[idx].toFixed(3)}, ${posArr[idx+1].toFixed(3)}, ${posArr[idx+2].toFixed(3)})`;
-      } else {
-        const target = transformOp.instIdx === -1 ? baseTransform : extraInstances[transformOp.instIdx].transform;
-        statusBar.textContent = `Object commit: pos(${target.pos.x.toFixed(3)}, ${target.pos.y.toFixed(3)}, ${target.pos.z.toFixed(3)})`;
-      }
-    }
-  } else {
-    if (transformOp.targetVertex >= 0) {
-      const inst = transformOp.instIdx === -1 ? null : extraInstances[transformOp.instIdx];
-      const posArr = inst ? inst.renderer.positions : rendererND.positions;
-      const idx = transformOp.targetVertex * 3;
-      posArr[idx] = transformOp.vertexStart.x;
-      posArr[idx + 1] = transformOp.vertexStart.y;
-      posArr[idx + 2] = transformOp.vertexStart.z;
-      const targetRenderer = inst ? inst.renderer : rendererND;
-      if (transformOp.vertexDataStart) {
-        const src = inst ? inst.X : X;
-        const mcount = inst ? inst.M : M;
-        for (let d = 0; d < N; d++) src[d * mcount + transformOp.targetVertex] = transformOp.vertexDataStart[d];
-      }
-      if (inst) {
-        projector.project(inst.X, inst.M, inst.Y);
-        inst.renderer.writeInterleavedFrom(inst.Y);
-        inst.renderer.filterEdgesByDimRange(inst.X, N, inst.M, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
-      } else {
-        projector.project(X, M, Y);
-        rendererND.writeInterleavedFrom(Y);
-        rendererND.filterEdgesByDimRange(X, N, M, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
-      }
-      (targetRenderer.geometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
-      targetRenderer.geometry.computeBoundingBox();
-      targetRenderer.geometry.computeBoundingSphere();
-      if (vertexMarker) vertexMarker.position.set(posArr[idx], posArr[idx + 1], posArr[idx + 2]);
-    } else {
-      const target = transformOp.instIdx === -1 ? baseTransform : extraInstances[transformOp.instIdx].transform;
-      if (transformOp.objectDataStart) {
-        const src = transformOp.instIdx === -1 ? X : extraInstances[transformOp.instIdx].X;
-        src.set(transformOp.objectDataStart);
-        projectionDirty = true;
-      }
-      target.pos.copy(transformOp.startPos);
-      target.rot.copy(transformOp.startRot);
-      target.scale.set(transformOp.startScale, transformOp.startScale, transformOp.startScale);
-    }
-  }
-
-  transformOp.mode = 'none';
-  transformOp.vertexDataStart = null;
-  transformOp.lockAxis = -1;
-  transformOp.objectDataStart = null;
-  transformOp.wPlane = false;
-  clearAxisGuide();
-  transformOp.moveOffset.set(0, 0, 0);
-  projectAndRenderAll();
-  applySliceFilter();
-  if (PARAMS.editMode && selectedVertex >= 0) placeVertexMarker(selectedInstance, selectedVertex);
-  updateSelectionOutline();
-  updateTransformActionButtons();
-}
-
-function beginToolbarTransformDrag(mode: TransformMode, ev: PointerEvent) {
-  if (mode === 'none') return;
-  if (transformOp.mode !== 'none') return;
-  if (!getObjectVisible(selectedInstance)) return;
-
-  ev.preventDefault();
-  ev.stopPropagation();
-  toolbarTransformDrag.active = true;
-  toolbarTransformDrag.started = false;
-  toolbarTransformDrag.pointerId = ev.pointerId;
-  toolbarTransformDrag.mode = mode;
-  toolbarTransformDrag.startX = ev.clientX;
-  toolbarTransformDrag.startY = ev.clientY;
-  toolbarTransformDrag.sourceButton = ev.currentTarget as HTMLButtonElement | null;
-  try {
-    toolbarTransformDrag.sourceButton?.setPointerCapture(ev.pointerId);
-  } catch {
-    // Some browsers may reject capture when pointerdown starts from nested SVG nodes.
-  }
-}
+paneController.syncToViewport(true);
+modalOverlayController.initializeMobileOnboarding();
+viewportInteraction.bind();
 
 // --- Animation ---
 const clock = new THREE.Clock();
-renderer.domElement.addEventListener('pointermove', handleHover);
-renderer.domElement.addEventListener('pointermove', (ev) => {
-  lastPointer = { x: ev.clientX, y: ev.clientY };
-  if (transformOp.mode === 'none') return;
-  ev.preventDefault();
-  applyTransformPointer(ev.clientX, ev.clientY);
-});
-renderer.domElement.addEventListener('pointerleave', () => tooltipEl?.classList.remove('visible'));
-renderer.domElement.addEventListener('contextmenu', (ev) => {
-  if (!ctxMenu) return;
-  ev.preventDefault();
-  lastPointer = { x: ev.clientX, y: ev.clientY };
-  deletePending = false;
-  ctxMenu.innerHTML = '';
-  const spawnPoint = pickPointOnTargetPlane(ev);
-  if (PARAMS.editMode) {
-    if (selectedVertex < 0) return;
-    const actions: { label: string; mode?: TransformMode }[] = [
-      { label: 'Move vertex', mode: 'move' },
-    ];
-    actions.forEach(action => {
-      const btn = document.createElement('button');
-      btn.textContent = action.label;
-      btn.onclick = () => {
-        ctxMenu.style.display = 'none';
-        startTransform(action.mode! as TransformMode, ev);
-      };
-      ctxMenu.appendChild(btn);
-    });
-  } else {
-    const hasSelection = (selectedInstance === BASE_SELECTION && M > 0) || selectedInstance >= 0;
-    if (!hasSelection) {
-      const opts: { label: string; kind: PrimitiveKind }[] = [
-        { label: 'Hypercube', kind: 'hypercube' },
-        { label: 'Cross polytope', kind: 'cross' },
-        { label: 'Simplex', kind: 'simplex' },
-        { label: 'Simplex prism', kind: 'simplexPrism' },
-      ];
-      opts.forEach(opt => {
-        const btn = document.createElement('button');
-        btn.textContent = `Add ${opt.label}`;
-        btn.onclick = () => {
-          ctxMenu.style.display = 'none';
-          pushUndoSnapshot();
-          const data = buildPrimitive(opt.kind, PARAMS.N);
-          const axisMap = currentAxisMap(PARAMS.N);
-          const embedded = embedToMax(data.verts, PARAMS.N, axisMap);
-          const instRenderer = new HypercubeRenderer(scene);
-          instRenderer.build(data.V, data.edges);
-          tmpOffset.copy(spawnPoint);
-          const Yloc = new Float32Array(3 * data.V);
-          const label = `${opt.label} #${extraInstances.length + 1}`;
-          const t = { pos: tmpOffset.clone(), rot: new THREE.Vector3(), scale: new THREE.Vector3(1,1,1) };
-          const surface = cloneSurface(DEFAULT_SURFACE);
-          instRenderer.setSurface(surface);
-          extraInstances.push({ renderer: instRenderer, Y: Yloc, X: embedded, E: data.edges, M: data.V, offset: tmpOffset.clone(), label, kind: opt.kind, transform: t, originalN: PARAMS.N, axisMap, visible: true, surface });
-          projector.project(embedded, data.V, Yloc);
-          instRenderer.setTransform(t.pos, new THREE.Euler(t.rot.x, t.rot.y, t.rot.z), t.scale);
-          instRenderer.writeInterleavedFrom(Yloc);
-          instRenderer.filterEdgesByDimRange(embedded, MAX_N, data.V, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
-          instRenderer.setMode(PARAMS.renderMode);
-          projectAndRenderAll();
-          applySliceFilter();
-          if (setViewMode) setViewMode(PARAMS.renderMode);
-          updateObjectList();
-        };
-        ctxMenu.appendChild(btn);
-      });
-    } else {
-      const actions: { label: string; mode?: TransformMode; onClick?: () => void }[] = [
-        { label: 'Move', mode: 'move' },
-        { label: 'Rotate', mode: 'rotate' },
-        { label: 'Scale', mode: 'scale' },
-        { label: 'Delete', onClick: () => showDeleteConfirm(ev) },
-      ];
-      actions.forEach(action => {
-        const btn = document.createElement('button');
-        btn.textContent = action.label;
-        btn.onclick = () => {
-          ctxMenu.style.display = 'none';
-          if (action.onClick) { action.onClick(); return; }
-          startTransform(action.mode! as TransformMode, ev);
-        };
-        ctxMenu.appendChild(btn);
-      });
-    }
-  }
-  const x = Math.min(ev.clientX, window.innerWidth - 180);
-  const y = Math.min(ev.clientY, window.innerHeight - 150);
-  ctxMenu.style.left = `${x}px`;
-  ctxMenu.style.top = `${y}px`;
-  ctxMenu.style.display = ctxMenu.innerHTML ? 'block' : 'none';
-});
-window.addEventListener('click', () => {
-  if (deletePending) return;
-  if (ctxMenu) ctxMenu.style.display = 'none';
-  deletePending = false;
-});
-renderer.domElement.addEventListener('wheel', (ev) => {
-  if (!PARAMS.editMode) return;
-  ev.preventDefault();
-  const dir = ev.deltaY > 0 ? 1 : -1;
-  let v = PARAMS.sliceDim + dir;
-  v = Math.max(-1, Math.min(N - 1, v));
-  PARAMS.sliceDim = v;
-  applySliceFilter();
-});
-renderer.domElement.addEventListener('mousedown', (ev) => {
-  if (ev.button === 1) {
-    ev.preventDefault();
-    ev.stopPropagation();
-    axisDrag.active = true;
-    axisDrag.lastX = ev.clientX;
-    axisDrag.accum = 0;
-    axisDrag.prevZoom = controls.enableZoom;
-    axisDrag.prevPan = controls.enablePan;
-    controls.enableZoom = false;
-    controls.enablePan = false;
-    return;
-  }
-}, { capture: true });
-renderer.domElement.addEventListener('pointerdown', (ev) => {
-  if (axisDrag.active) return;
-  lastPointer = { x: ev.clientX, y: ev.clientY };
-  if (transformOp.mode !== 'none') {
-    if (ev.button === 0) {
-      pushUndoSnapshot();
-      finishTransformInteraction(true);
-    } else if (ev.button === 2) {
-      finishTransformInteraction(false);
-    }
-    ev.preventDefault();
-    return;
-  }
-  if (ev.button !== 0) return;
-  const rect = renderer.domElement.getBoundingClientRect();
-  const mx = ev.clientX - rect.left;
-  const my = ev.clientY - rect.top;
-  const w = rect.width;
-  const h = rect.height;
-
-  const screenBounds = (positions: Float32Array, count: number) => {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (let i = 0; i < count; i++) {
-      const pIdx = i * 3;
-      tmpVec.set(positions[pIdx], positions[pIdx + 1], positions[pIdx + 2]).project(camera);
-      const sx = (tmpVec.x * 0.5 + 0.5) * w;
-      const sy = (-tmpVec.y * 0.5 + 0.5) * h;
-      if (sx < minX) minX = sx; if (sx > maxX) maxX = sx;
-      if (sy < minY) minY = sy; if (sy > maxY) maxY = sy;
-    }
-    return { minX, maxX, minY, maxY };
-  };
-
-  const candidates: { instIdx: number; contains: boolean; area: number; nearestDist2: number; }[] = [];
-
-  if (M > 0) {
-    const box = screenBounds(rendererND.positions, M);
-    const contains = mx >= box.minX && mx <= box.maxX && my >= box.minY && my <= box.maxY;
-    const area = (box.maxX - box.minX) * (box.maxY - box.minY);
-    candidates.push({ instIdx: -1, contains, area, nearestDist2: Number.POSITIVE_INFINITY });
-  }
-  extraInstances.forEach((inst, idx) => {
-    if (!inst.visible) return;
-    const box = screenBounds(inst.renderer.positions, inst.M);
-    const contains = mx >= box.minX && mx <= box.maxX && my >= box.minY && my <= box.maxY;
-    const area = (box.maxX - box.minX) * (box.maxY - box.minY);
-    candidates.push({ instIdx: idx, contains, area, nearestDist2: Number.POSITIVE_INFINITY });
-  });
-
-  let bestInst = -1;
-  // Prefer objects whose screen bbox contains the click; pick the smallest area
-  const containing = candidates.filter(c => c.contains && isFinite(c.area));
-  if (containing.length) {
-    containing.sort((a, b) => a.area - b.area);
-    bestInst = containing[0].instIdx;
-  } else {
-    // fallback to nearest vertex
-    let bestDist2 = Number.POSITIVE_INFINITY;
-    const consider = (px: number, py: number, pz: number, instIdx: number) => {
-      tmpVec.set(px, py, pz).project(camera);
-      const sx = (tmpVec.x * 0.5 + 0.5) * w;
-      const sy = (-tmpVec.y * 0.5 + 0.5) * h;
-      const dx = sx - mx;
-      const dy = sy - my;
-      const d2 = dx * dx + dy * dy;
-      if (d2 < bestDist2) {
-        bestDist2 = d2;
-        bestInst = instIdx;
-      }
-    };
-    if (baseVisible) {
-      for (let i = 0; i < M; i++) {
-        const pIdx = i * 3;
-        consider(rendererND.positions[pIdx], rendererND.positions[pIdx + 1], rendererND.positions[pIdx + 2], -1);
-      }
-    }
-    extraInstances.forEach((inst, idx) => {
-      if (!inst.visible) return;
-      const pos = inst.renderer.positions;
-      for (let i = 0; i < inst.M; i++) {
-        const pIdx = i * 3;
-        consider(pos[pIdx], pos[pIdx + 1], pos[pIdx + 2], idx);
-      }
-    });
-    const thresh = 35 * 35;
-    if (bestDist2 >= thresh) bestInst = -999; // none
-  }
-
-  if (bestInst !== -999) {
-    selectObject(bestInst);
-    if (PARAMS.editMode && ev.button === 0) {
-      const targetRenderer = bestInst === -1 ? rendererND : extraInstances[bestInst].renderer;
-      const posArr = targetRenderer.positions;
-      let nearest = -1, nearestD2 = Number.POSITIVE_INFINITY;
-      const count = bestInst === -1 ? M : extraInstances[bestInst].M;
-      for (let i = 0; i < count; i++) {
-        const pIdx = i * 3;
-        tmpVec.set(posArr[pIdx], posArr[pIdx + 1], posArr[pIdx + 2]).project(camera);
-        const sx = (tmpVec.x * 0.5 + 0.5) * w;
-        const sy = (-tmpVec.y * 0.5 + 0.5) * h;
-        const dx = sx - mx, dy = sy - my;
-        const d2 = dx*dx + dy*dy;
-        if (d2 < nearestD2) { nearestD2 = d2; nearest = i; }
-      }
-      selectedVertex = nearest;
-      placeVertexMarker(bestInst, nearest);
-    }
-  } else {
-    // click on empty space: clear selections
-    selectObject(NO_SELECTION);
-    selectedVertex = -1;
-    if (vertexMarker) { scene.remove(vertexMarker); vertexMarker = null; }
-    if (selectionOutline) { scene.remove(selectionOutline); selectionOutline = null; }
-  }
-});
-
-window.addEventListener('pointermove', (ev) => {
-  if (toolbarTransformDrag.active && ev.pointerId === toolbarTransformDrag.pointerId) {
-    ev.preventDefault();
-    lastPointer = { x: ev.clientX, y: ev.clientY };
-    if (!toolbarTransformDrag.started) {
-      const moved = Math.hypot(ev.clientX - toolbarTransformDrag.startX, ev.clientY - toolbarTransformDrag.startY);
-      if (moved < 3) return;
-      pushUndoSnapshot();
-      startTransform(toolbarTransformDrag.mode, new PointerEvent('pointerdown', { clientX: ev.clientX, clientY: ev.clientY }));
-      toolbarTransformDrag.started = transformOp.mode !== 'none';
-      if (!toolbarTransformDrag.started) {
-        toolbarTransformDrag.active = false;
-        toolbarTransformDrag.pointerId = -1;
-        toolbarTransformDrag.mode = 'none';
-        return;
-      }
-      updateTransformActionButtons();
-    }
-    applyTransformPointer(ev.clientX, ev.clientY);
-    return;
-  }
-  if (!axisDrag.active) return;
-  if ((ev.buttons & 4) === 0) {
-    endAxisShiftDrag();
-    return;
-  }
-  ev.preventDefault();
-  const dx = ev.clientX - axisDrag.lastX;
-  axisDrag.lastX = ev.clientX;
-  axisDrag.accum += dx;
-  const threshold = 35;
-  let steps = 0;
-  while (axisDrag.accum > threshold) { steps++; axisDrag.accum -= threshold; }
-  while (axisDrag.accum < -threshold) { steps--; axisDrag.accum += threshold; }
-  if (steps !== 0) cycleAxes(steps);
-});
-
-window.addEventListener('pointerup', (ev) => {
-  if (toolbarTransformDrag.active && ev.pointerId === toolbarTransformDrag.pointerId) {
-    if (toolbarTransformDrag.sourceButton?.hasPointerCapture(ev.pointerId)) {
-      toolbarTransformDrag.sourceButton.releasePointerCapture(ev.pointerId);
-    }
-    const shouldCommit = toolbarTransformDrag.started && transformOp.mode !== 'none';
-    if (shouldCommit) finishTransformInteraction(true);
-    toolbarTransformDrag.active = false;
-    toolbarTransformDrag.started = false;
-    toolbarTransformDrag.pointerId = -1;
-    toolbarTransformDrag.mode = 'none';
-    toolbarTransformDrag.sourceButton = null;
-    ev.preventDefault();
-    return;
-  }
-  if (axisDrag.active) {
-    endAxisShiftDrag();
-  }
-});
-
-window.addEventListener('pointercancel', (ev) => {
-  if (toolbarTransformDrag.active && ev.pointerId === toolbarTransformDrag.pointerId) {
-    if (toolbarTransformDrag.sourceButton?.hasPointerCapture(ev.pointerId)) {
-      toolbarTransformDrag.sourceButton.releasePointerCapture(ev.pointerId);
-    }
-    const shouldCancel = toolbarTransformDrag.started && transformOp.mode !== 'none';
-    if (shouldCancel) finishTransformInteraction(false);
-    toolbarTransformDrag.active = false;
-    toolbarTransformDrag.started = false;
-    toolbarTransformDrag.pointerId = -1;
-    toolbarTransformDrag.mode = 'none';
-    toolbarTransformDrag.sourceButton = null;
-  }
-  if (axisDrag.active) {
-    endAxisShiftDrag();
-  }
-});
-window.addEventListener('blur', () => {
-  if (axisDrag.active) endAxisShiftDrag();
-  clearKeyboardCameraKeys();
-});
-
-window.addEventListener('keydown', (ev) => {
-  if (ev.key !== 'Escape') return;
-  if (isMobileOnboardingOpen()) {
-    ev.preventDefault();
-    closeMobileOnboarding(true);
-    return;
-  }
-  if (!isHelpOverlayOpen()) return;
-  ev.preventDefault();
-  setHelpOverlayOpen(false);
-});
-
-window.addEventListener('keydown', (ev) => {
-  if (isModalUIOpen()) return;
-  const key = ev.key.toLowerCase();
-  const hasMod = ev.ctrlKey || ev.metaKey;
-  if (!hasMod) return;
-  const wantsUndo = key === 'z' && !ev.shiftKey;
-  const wantsRedo = key === 'y' || (key === 'z' && ev.shiftKey);
-  if (!wantsUndo && !wantsRedo) return;
-  if (isPlainTextEditTarget(ev.target)) return;
-  if (transformOp.mode !== 'none') return;
-
-  ev.preventDefault();
-  if (wantsUndo) {
-    const snap = undoStack.pop();
-    if (snap) {
-      redoStack.push(captureSnapshot());
-      applySnapshot(snap);
-    }
-  } else if (wantsRedo) {
-    const snap = redoStack.pop();
-    if (snap) {
-      undoStack.push(captureSnapshot());
-      applySnapshot(snap);
-    }
-  }
-});
-
-window.addEventListener('keydown', (ev) => {
-  if (isModalUIOpen()) return;
-  if (isTextEntryTarget(ev.target)) return;
-  if (transformOp.mode === 'none') return;
-  const key = ev.key.toLowerCase();
-  if (key === 'w') {
-    if (transformOp.mode === 'rotate') {
-      ev.preventDefault();
-      transformOp.wPlane = !transformOp.wPlane;
-      updateAxisGuide();
-    }
-    return;
-  }
-  if (key === 'x' || key === 'y' || key === 'z') {
-    transformOp.lockAxis = key === 'x' ? 0 : key === 'y' ? 1 : 2;
-    updateAxisGuide();
-  }
-});
-
-window.addEventListener('keydown', (ev) => {
-  if (isModalUIOpen()) return;
-  if (isTextEntryTarget(ev.target)) return;
-  const key = ev.key.toLowerCase();
-  const hasSystemMod = ev.ctrlKey || ev.metaKey || ev.altKey;
-
-  if (!hasSystemMod && !ev.shiftKey && transformOp.mode === 'none') {
-    const mode = VIEW_MODES[viewModeShortcutIndex(ev)];
-    if (mode && setViewMode) {
-      ev.preventDefault();
-      setViewMode(mode);
-      return;
-    }
-  }
-
-  if (handleKeyboardCameraShortcut(ev, key)) return;
-
-  if (!hasSystemMod && ev.shiftKey && transformOp.mode === 'none') {
-    if (key === 'r') {
-      ev.preventDefault();
-      if (viewportRecorder && viewportRecorder.state !== 'inactive') {
-        stopViewportRecording();
-      } else {
-        startViewportRecording();
-      }
-      return;
-    }
-    if (key === 's') {
-      ev.preventDefault();
-      captureViewportFrame();
-      return;
-    }
-  }
-
-  if (ev.key === 'Tab') {
-    ev.preventDefault();
-    setEditMode(!PARAMS.editMode);
-  }
-  if (hasSystemMod) return;
-  // Transform hotkeys
-  if (transformOp.mode === 'none') {
-    if (!ev.shiftKey && (key === 'g' || key === 'r' || key === 's')) {
-      ev.preventDefault();
-      const modeMap: Record<'g' | 'r' | 's', TransformMode> = { g: 'move', r: 'rotate', s: 'scale' };
-      const fakeEvent = new PointerEvent('pointerdown', { clientX: lastPointer.x, clientY: lastPointer.y });
-      startTransform(modeMap[key as 'g' | 'r' | 's'], fakeEvent);
-    } else if (key === 'a' && ev.shiftKey) {
-      ev.preventDefault();
-      // open add-object menu at last pointer position
-      if (!ctxMenu) return;
-      ctxMenu.innerHTML = '';
-      const opts: { label: string; kind: PrimitiveKind }[] = [
-        { label: 'Hypercube', kind: 'hypercube' },
-        { label: 'Cross polytope', kind: 'cross' },
-        { label: 'Simplex', kind: 'simplex' },
-        { label: 'Simplex prism', kind: 'simplexPrism' },
-      ];
-      const spawnPoint = pickPointOnTargetPlane(new PointerEvent('pointerdown', { clientX: lastPointer.x, clientY: lastPointer.y }));
-      opts.forEach(opt => {
-        const btn = document.createElement('button');
-        btn.textContent = `Add ${opt.label}`;
-        btn.onclick = () => {
-          ctxMenu.style.display = 'none';
-          pushUndoSnapshot();
-          const data = buildPrimitive(opt.kind, PARAMS.N);
-          const axisMap = currentAxisMap(PARAMS.N);
-          const embedded = embedToMax(data.verts, PARAMS.N, axisMap);
-          const instRenderer = new HypercubeRenderer(scene);
-          instRenderer.build(data.V, data.edges);
-          tmpOffset.copy(spawnPoint);
-          const Yloc = new Float32Array(3 * data.V);
-          const label = `${opt.label} #${extraInstances.length + 1}`;
-          const t = { pos: tmpOffset.clone(), rot: new THREE.Vector3(), scale: new THREE.Vector3(1,1,1) };
-          const surface = cloneSurface(DEFAULT_SURFACE);
-          instRenderer.setSurface(surface);
-          extraInstances.push({ renderer: instRenderer, Y: Yloc, X: embedded, E: data.edges, M: data.V, offset: tmpOffset.clone(), label, kind: opt.kind, transform: t, originalN: PARAMS.N, axisMap, visible: true, surface });
-          projector.project(embedded, data.V, Yloc);
-          instRenderer.setTransform(t.pos, new THREE.Euler(t.rot.x, t.rot.y, t.rot.z), t.scale);
-          instRenderer.writeInterleavedFrom(Yloc);
-          instRenderer.filterEdgesByDimRange(embedded, MAX_N, data.V, PARAMS.sliceDim, PARAMS.sliceMin, PARAMS.sliceMax);
-          instRenderer.setMode(PARAMS.renderMode);
-          projectAndRenderAll();
-          applySliceFilter();
-          updateObjectList();
-        };
-        ctxMenu.appendChild(btn);
-      });
-      ctxMenu.style.left = `${lastPointer.x}px`;
-      ctxMenu.style.top = `${lastPointer.y}px`;
-      ctxMenu.style.display = 'block';
-    } else if (!ev.shiftKey && key === 'x') {
-      ev.preventDefault();
-      const hasSel = (selectedInstance === BASE_SELECTION && M > 0) || selectedInstance >= 0;
-      if (!hasSel) return;
-      if (deletePending) {
-        deletePending = false;
-        if (ctxMenu) ctxMenu.style.display = 'none';
-        deleteSelected();
-      } else {
-        showDeleteConfirm();
-      }
-    }
-  }
-});
-
-window.addEventListener('keyup', (ev) => {
-  const key = ev.key.toLowerCase();
-  if (key === 'control') {
-    keyboardCameraKeys.ctrl = false;
-    return;
-  }
-  setKeyboardCameraArrowKey(key, false);
-});
-
-// vertex drag disabled; edit mode uses transform menu
 
 function animate() {
   const dt = Math.min(clock.getDelta(), 0.05);
@@ -4402,8 +900,7 @@ function animate() {
   projectAndRenderAll();
 
   controls.update();
-  applyKeyboardCameraInput(dt);
-  applyKeyboardCameraSmoothing(dt);
+  keyboardCamera.update(dt);
   updateTransformActionButtons();
   updateAxisGizmo();
   renderer.render(scene, camera);
@@ -4411,71 +908,12 @@ function animate() {
 }
 animate();
 
-function startTransform(mode: TransformMode, ev: PointerEvent) {
-  if (!getObjectVisible(selectedInstance)) return;
-  transformOp.mode = mode;
-  transformOp.instIdx = selectedInstance;
-  transformOp.targetVertex = PARAMS.editMode ? selectedVertex : -1;
-  transformOp.startMouse.set(ev.clientX, ev.clientY);
-  if (transformOp.targetVertex >= 0) {
-    if (transformOp.targetVertex < 0) { transformOp.mode = 'none'; return; }
-    const inst = transformOp.instIdx === -1 ? null : extraInstances[transformOp.instIdx];
-    const posArr = inst ? inst.renderer.positions : rendererND.positions;
-    const idx = transformOp.targetVertex * 3;
-    transformOp.vertexStart.set(posArr[idx], posArr[idx+1], posArr[idx+2]);
-    const src = inst ? inst.X : X;
-    transformOp.vertexDataStart = new Float32Array(N);
-    for (let d = 0; d < N; d++) transformOp.vertexDataStart[d] = src[d * (inst ? inst.M : M) + transformOp.targetVertex];
-    transformOp.startScale = 1;
-    transformOp.plane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(tmpVec).normalize(), transformOp.vertexStart);
-    transformOp.planeHitStart.copy(transformOp.vertexStart);
-    transformOp.lastHit.copy(transformOp.vertexStart);
-    transformOp.lockAxis = -1;
-    transformOp.wPlane = false;
-  } else {
-    const target = selectedInstance === BASE_SELECTION ? baseTransform : extraInstances[selectedInstance]?.transform;
-    if (!target) return;
-    transformOp.startPos.copy(target.pos);
-    transformOp.startRot.copy(target.rot);
-    transformOp.startScale = target.scale.x;
-    transformOp.lockAxis = -1;
-    transformOp.wPlane = false;
-    if (mode === 'move' || mode === 'rotate') {
-      const src = selectedInstance === BASE_SELECTION ? X : extraInstances[selectedInstance].X;
-      const count = selectedInstance === BASE_SELECTION ? M : extraInstances[selectedInstance].M;
-      transformOp.objectDataStart = new Float32Array(src.length);
-      transformOp.objectDataStart.set(src);
-      transformOp.lastHit.set(0,0,0);
-      if (mode === 'move') {
-        const positions = selectedInstance === BASE_SELECTION ? rendererND.positions : extraInstances[selectedInstance].renderer.positions;
-        const ctr = computeCenterFromPositions(positions, count);
-        transformOp.planeHitStart.copy(ctr);
-        transformOp.plane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(tmpVec).normalize(), ctr);
-        // compute initial cursor offset so movement stays relative to click
-        const rect = renderer.domElement.getBoundingClientRect();
-        ndc.set(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1);
-        raycaster.setFromCamera(ndc, camera);
-        const hit = raycaster.ray.intersectPlane(transformOp.plane, tmpVec);
-        if (hit) {
-          transformOp.lastHit.copy(hit);
-          transformOp.moveOffset.copy(transformOp.planeHitStart).sub(hit);
-        } else {
-          transformOp.lastHit.copy(ctr);
-          transformOp.moveOffset.set(0,0,0);
-        }
-      }
-    } else {
-      transformOp.objectDataStart = null;
-    }
-  }
-}
-
 // --- Resize ---
 window.addEventListener('resize', () => {
   const w = window.innerWidth, h = window.innerHeight;
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   renderer.setSize(w, h);
-  syncPaneCollapsedToViewport();
-  updateTexturePanel();
+  paneController.syncToViewport();
+  textureEditor.updatePanel();
 });
