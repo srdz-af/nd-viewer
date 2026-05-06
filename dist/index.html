@@ -1552,7 +1552,7 @@
           align-items: center;
           justify-content: space-between;
           flex-wrap: nowrap;
-          gap: 8px;
+          gap: 6px;
           pointer-events: none;
         }
         #bottom-controls > * {
@@ -1570,11 +1570,11 @@
         }
         #top-left-controls {
           box-sizing: border-box;
-          height: 44px;
+          height: 38px;
           flex: 0 1 auto;
           min-width: 0;
-          gap: 2px;
-          padding: 6px;
+          gap: 1px;
+          padding: 4px;
           border-radius: 6px;
           max-width: 100%;
           overflow-x: auto;
@@ -1705,21 +1705,30 @@
         }
         #view-toggle button,
         #scene-actions button {
-          width: 30px;
-          height: 30px;
+          width: 26px;
+          height: 26px;
+        }
+        #view-toggle .material-symbols-rounded,
+        #scene-actions .material-symbols-rounded,
+        #transform-actions .material-symbols-rounded {
+          font-size: 16px;
         }
         #transform-actions {
           flex: 0 0 auto;
-          gap: 6px;
+          gap: 3px;
           order: 1;
+        }
+        #transform-actions button {
+          width: 36px;
+          height: 36px;
         }
         #quick-links {
           order: 3;
           display: none;
         }
         #record-viewport-timer {
-          height: 30px;
-          line-height: 30px;
+          height: 26px;
+          line-height: 26px;
           font-size: 10px;
         }
         #object-list {
