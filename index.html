@@ -64,6 +64,11 @@
         flex-direction: column;
         gap: 8px;
         align-items: center;
+        padding: 8px 6px;
+        border-radius: 8px;
+        border: 1px solid var(--ui-border);
+        background: var(--ui-bg);
+        box-shadow: var(--ui-shadow);
       }
       #extra-axis-gizmos {
         display: flex;
@@ -220,7 +225,7 @@
         box-shadow: var(--ui-shadow);
       }
       #axis-gizmo button.negative {
-        background: rgba(34,36,42,0.72);
+        background: color-mix(in srgb, var(--axis-color) 28%, transparent);
         color: var(--axis-color);
       }
       #axis-gizmo button.back {
@@ -298,7 +303,7 @@
         color: #11141a;
       }
       .extra-axis-gizmo button.negative {
-        background: rgba(24, 20, 34, 0.72);
+        background: color-mix(in srgb, var(--extra-axis-color) 28%, transparent);
         color: var(--extra-axis-color);
       }
       .extra-axis-gizmo button.back {
@@ -326,7 +331,7 @@
         border-radius: 50%;
         border-width: 1px;
         border-color: var(--extra-axis-color);
-        background: #171c25;
+        background: color-mix(in srgb, var(--extra-axis-color) 22%, transparent);
         color: var(--extra-axis-color);
         font: 700 8px/1 system-ui, sans-serif;
         transform: none;
@@ -371,7 +376,7 @@
         border-radius: 50%;
         border-width: 1px;
         border-color: var(--extra-axis-color);
-        background: #171c25;
+        background: color-mix(in srgb, var(--extra-axis-color) 22%, transparent);
         color: var(--extra-axis-color);
         transform: none;
         z-index: 4;
@@ -399,10 +404,12 @@
         letter-spacing: 0.2px;
       }
       #axis-list {
-        background: transparent;
+        background: var(--ui-bg);
         color: var(--ui-text);
-        padding: 0;
-        border: none;
+        padding: 8px;
+        border-radius: 5px;
+        border: 1px solid var(--ui-border);
+        box-shadow: var(--ui-shadow);
         font: 12px/1.4 system-ui, sans-serif;
         max-height: 220px;
         overflow: visible;
@@ -424,7 +431,7 @@
         align-items: center;
         gap: 4px;
       }
-      #axis-list h4 { margin: 0 0 6px 0; font-size: 12px; font-weight: 700; letter-spacing: 0.2px; color: var(--ui-text-strong); }
+      #axis-list h4 { margin: 0 0 8px 0; font-size: 12px; font-weight: 700; letter-spacing: 0.2px; line-height: 1.2; color: var(--ui-text-strong); }
       #axis-list .axis-list-head h4 {
         margin: 0;
       }
@@ -469,8 +476,9 @@
         margin: 0;
         padding: 6px 8px;
         border-radius: 6px;
-        background: var(--ui-bg-soft);
+        background: color-mix(in srgb, var(--axis-color) 24%, transparent);
         border: 1px solid var(--ui-border-soft);
+        border-color: color-mix(in srgb, var(--axis-color) 56%, var(--ui-border-soft));
         cursor: grab;
         text-align: center;
         user-select: none;
@@ -481,10 +489,10 @@
         touch-action: none;
       }
       #axis-list li.active {
-        background: transparent;
+        background: var(--axis-color);
         border-color: var(--axis-color);
-        color: var(--axis-color);
-        box-shadow: inset 0 0 0 1px var(--axis-color);
+        color: #11141a;
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, #000000 18%, transparent);
       }
       #axis-list li.has-gizmo {
         box-shadow: inset 0 -2px 0 0 var(--axis-color);
@@ -502,7 +510,8 @@
         padding: 6px 8px;
         border-radius: 6px;
         border: 1px solid var(--ui-border-soft);
-        background: var(--ui-bg-soft);
+        background: color-mix(in srgb, var(--axis-color) 24%, transparent);
+        border-color: color-mix(in srgb, var(--axis-color) 56%, var(--ui-border-soft));
         color: var(--ui-text);
         text-align: center;
         font: 12px/1.4 system-ui, sans-serif;
@@ -513,10 +522,10 @@
         cursor: grabbing;
       }
       .axis-drag-ghost.active {
-        background: transparent;
+        background: var(--axis-color);
         border-color: var(--axis-color);
-        color: var(--axis-color);
-        box-shadow: inset 0 0 0 1px var(--axis-color), var(--ui-shadow);
+        color: #11141a;
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, #000000 18%, transparent), var(--ui-shadow);
       }
       body.axis-list-dragging {
         user-select: none;
@@ -574,13 +583,13 @@
         max-height: 180px;
         overflow-y: auto;
       }
-      #object-list h4 { margin: 0 0 6px 0; font-size: 12px; font-weight: 700; letter-spacing: 0.2px; color: var(--ui-text-strong); }
+      #object-list h4 { margin: 0 0 8px 0; font-size: 12px; font-weight: 700; letter-spacing: 0.2px; line-height: 1.2; color: var(--ui-text-strong); }
       #dimension-control .dimension-label {
-        color: var(--ui-muted);
-        font-size: 10px;
-        font-weight: 700;
-        letter-spacing: 0.45px;
-        text-transform: uppercase;
+        color: var(--ui-text);
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.2px;
+        line-height: 1.2;
       }
       #dimension-control .dimension-stepper {
         display: inline-flex;
@@ -636,6 +645,7 @@
         font-size: 12px;
         font-weight: 700;
         letter-spacing: 0.2px;
+        line-height: 1.2;
         color: var(--ui-text-strong);
       }
       #background-swatches {
@@ -685,6 +695,10 @@
       }
       #background-controls label {
         color: var(--ui-text);
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.2px;
+        line-height: 1.2;
       }
       #background-controls input[type="range"] {
         width: 100%;
@@ -694,6 +708,8 @@
         text-align: right;
         color: var(--ui-muted);
         font-variant-numeric: tabular-nums;
+        font-size: 11px;
+        line-height: 1.2;
       }
       #texture-panel {
         background: var(--ui-bg);
@@ -710,6 +726,7 @@
         font-size: 12px;
         font-weight: 700;
         letter-spacing: 0.2px;
+        line-height: 1.2;
         color: var(--ui-text-strong);
       }
       #texture-panel.disabled {
@@ -755,6 +772,10 @@
       }
       #texture-controls label {
         color: var(--ui-text);
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.2px;
+        line-height: 1.2;
       }
       #texture-controls input[type="color"] {
         width: 100%;
@@ -775,6 +796,8 @@
         text-align: right;
         color: var(--ui-muted);
         font-variant-numeric: tabular-nums;
+        font-size: 11px;
+        line-height: 1.2;
         overflow: hidden;
         white-space: nowrap;
         text-overflow: clip;
@@ -786,11 +809,13 @@
       #object-list table { width: 100%; border-collapse: collapse; table-layout: fixed; }
       #object-list th {
         color: var(--ui-muted);
-        font-size: 10px;
-        font-weight: 700;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.2px;
+        line-height: 1.2;
         padding: 2px 4px 5px;
         text-align: left;
-        text-transform: uppercase;
+        text-transform: none;
       }
       #object-list th:first-child,
       #object-list td:first-child { width: 26px; }

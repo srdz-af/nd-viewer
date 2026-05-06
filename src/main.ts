@@ -1584,7 +1584,7 @@ function updateObjectList() {
 
   const table = document.createElement('table');
   const thead = document.createElement('thead');
-  thead.innerHTML = '<tr><th></th><th aria-label="Object name"></th><th>Dim</th></tr>';
+  thead.innerHTML = '<tr><th aria-label="Visibility"></th><th>Name</th><th>Dim</th></tr>';
   table.appendChild(thead);
 
   const tbody = document.createElement('tbody');
