@@ -10,7 +10,7 @@ BleND is an interactive N-dimensional geometry viewer built with **Three.js**.
 
 It lets you create, inspect, transform, and edit high-dimensional objects, then project them into 3D.
 
-![preview](public/preview.gif)
+<video src="public/preview.webm" controls autoplay loop muted playsinline width="100%"></video>
 
 Live demo:
 https://srdz-af.github.io/BleND/
