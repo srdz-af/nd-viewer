@@ -55,10 +55,22 @@
         width: min(320px, calc(100vw - 24px));
         max-width: calc(100vw - 24px);
       }
+      #axis-shell {
+        box-sizing: border-box;
+        width: 100%;
+        min-width: 0;
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 8px;
+        border-radius: 6px;
+        border: 1px solid var(--ui-border);
+        background: var(--ui-bg);
+        box-shadow: var(--ui-shadow);
+        margin-bottom: 8px;
+      }
       #gizmo-dock {
-        position: absolute;
-        right: calc(100% + 10px);
-        top: 0;
+        position: static;
         z-index: 10;
         display: flex;
         flex-direction: column;
@@ -83,6 +95,7 @@
         padding-right: 2px;
       }
       #axis-list,
+      #axis-shell,
       #object-list,
       #dimension-control,
       #background-selector {
@@ -413,7 +426,7 @@
         font: 12px/1.4 system-ui, sans-serif;
         max-height: 220px;
         overflow: visible;
-        margin-bottom: 8px;
+        margin-bottom: 0;
         user-select: none;
         -webkit-user-select: none;
         -moz-user-select: none;
@@ -546,7 +559,6 @@
       #background-controls output,
       #texture-panel,
       #texture-panel h4,
-      #texture-empty,
       #texture-controls label,
       #texture-controls output {
         user-select: none;
@@ -668,6 +680,12 @@
         padding: 0;
         transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
       }
+      #background-swatches .background-swatch[data-hdri="plain"] {
+        background-image: none;
+        background:
+          radial-gradient(110% 80% at 20% 15%, rgba(112, 156, 255, 0.24), transparent 60%),
+          linear-gradient(145deg, #10151d 0%, #192230 55%, #111821 100%);
+      }
       #background-swatches .background-swatch:hover {
         transform: translateY(-1px);
       }
@@ -681,6 +699,12 @@
       #background-swatches .background-swatch:focus-visible {
         outline: 2px solid rgba(255,255,255,0.9);
         outline-offset: 2px;
+      }
+      #background-selector.plain-only #background-swatches .background-swatch:not([data-hdri="plain"]) {
+        display: none;
+      }
+      #background-controls.disabled {
+        opacity: 0.52;
       }
       #background-controls {
         margin-top: 10px;
@@ -746,19 +770,9 @@
         width: 100%;
         height: 100%;
       }
-      #texture-empty {
-        display: none;
-        margin: 0;
-        padding: 14px 8px;
-        color: var(--ui-muted);
-        text-align: center;
-      }
-      #texture-panel.empty #texture-empty {
-        display: block;
-      }
       #texture-panel.empty #texture-controls,
       #texture-panel.empty #texture-preview-wrap {
-        display: none;
+        opacity: 0.46;
       }
       #texture-controls {
         display: grid;
@@ -1212,11 +1226,14 @@
           overscroll-behavior: contain;
         }
         #gizmo-dock {
-          position: static;
           flex-direction: row;
           justify-content: flex-end;
           gap: 6px;
           margin: 0 0 8px 0;
+        }
+        #axis-shell {
+          display: block;
+          padding: 8px;
         }
         #extra-axis-gizmos {
           flex-direction: row;
@@ -1281,6 +1298,9 @@
           justify-content: flex-start;
         }
         #axis-list {
+          margin-bottom: 0;
+        }
+        #axis-shell {
           margin-bottom: 6px;
         }
         #object-list {
@@ -1314,7 +1334,7 @@
         }
       }
     </style>
-    <script type="module" crossorigin src="/BleND/assets/index-CDWRkBvE.js"></script>
+    <script type="module" crossorigin src="/BleND/assets/index-C6207XZ2.js"></script>
   </head>
   <body>
     <div id="top-left-controls">
@@ -1325,10 +1345,10 @@
         <button data-mode="transparent" aria-label="Transparent mode" title="Transparent">
           <span class="material-symbols-rounded" aria-hidden="true">opacity</span>
         </button>
-        <button data-mode="solid" aria-label="Solid mode" title="Solid">
+        <button data-mode="solid" class="active" aria-label="Solid mode" title="Solid">
           <span class="material-symbols-rounded" aria-hidden="true">radio_button_checked</span>
         </button>
-        <button data-mode="faceted" class="active" aria-label="Faceted mode" title="Faceted">
+        <button data-mode="faceted" aria-label="Faceted mode" title="Faceted">
           <span class="material-symbols-rounded" aria-hidden="true">view_in_ar</span>
         </button>
       </div>
@@ -1356,12 +1376,14 @@
       </div>
     </div>
     <div id="pane">
-      <div id="gizmo-dock">
-        <div id="axis-gizmo" aria-label="View axis gizmo"></div>
-        <div id="extra-axis-gizmos" aria-label="Extra axis gizmos"></div>
+      <div id="axis-shell">
+        <div id="gizmo-dock">
+          <div id="axis-gizmo" aria-label="View axis gizmo"></div>
+          <div id="extra-axis-gizmos" aria-label="Extra axis gizmos"></div>
+        </div>
+        <div id="axis-legend" style="display:none;"></div>
+        <div id="axis-list"></div>
       </div>
-      <div id="axis-legend" style="display:none;"></div>
-      <div id="axis-list"></div>
       <div id="object-list"></div>
       <div id="dimension-control" role="group" aria-label="New object dimension">
         <span class="dimension-label">Dimension</span>
@@ -1378,6 +1400,13 @@
       <div id="background-selector" role="group" aria-label="Background environment selector">
         <h4>Background</h4>
         <div id="background-swatches">
+          <button
+            type="button"
+            class="background-swatch"
+            data-hdri="plain"
+            aria-label="Plain background"
+            title="Plain background"
+          ></button>
           <button
             type="button"
             class="background-swatch"
@@ -1425,7 +1454,6 @@
         <div id="texture-preview-wrap">
           <canvas id="texture-preview" aria-label="Texture preview"></canvas>
         </div>
-        <p id="texture-empty">No object selected</p>
         <div id="texture-controls">
           <div class="texture-row">
             <label for="texture-base-color">Base color</label>
@@ -1434,8 +1462,8 @@
           </div>
           <div class="texture-row">
             <label for="texture-metallic">Metallic</label>
-            <input id="texture-metallic" type="range" min="0" max="1" step="0.001" value="0.2" />
-            <output id="texture-metallic-value">0.200</output>
+            <input id="texture-metallic" type="range" min="0" max="1" step="0.001" value="1" />
+            <output id="texture-metallic-value">1.000</output>
           </div>
           <div class="texture-row">
             <label for="texture-roughness">Roughness</label>

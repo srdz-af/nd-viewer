@@ -50,6 +50,7 @@ const backgroundBlurInput = document.getElementById('background-blur') as HTMLIn
 const backgroundBlurValue = document.getElementById('background-blur-value') as HTMLOutputElement | null;
 const backgroundLightnessInput = document.getElementById('background-lightness') as HTMLInputElement | null;
 const backgroundLightnessValue = document.getElementById('background-lightness-value') as HTMLOutputElement | null;
+const backgroundControlsEl = document.getElementById('background-controls') as HTMLDivElement | null;
 const texturePanel = document.getElementById('texture-panel') as HTMLDivElement | null;
 const texturePreviewCanvas = document.getElementById('texture-preview') as HTMLCanvasElement | null;
 const textureBaseColorInput = document.getElementById('texture-base-color') as HTMLInputElement | null;
@@ -183,6 +184,8 @@ let activeEnvironmentTarget: THREE.WebGLRenderTarget = fallbackEnvironmentTarget
 scene.environment = fallbackEnvironmentTarget.texture;
 const HDR_BACKGROUND_BLUR_DEFAULT = 0.35;
 const HDR_BACKGROUND_LIGHTNESS_DEFAULT = 1.0;
+const PLAIN_BACKGROUND_KEY = 'plain' as const;
+const DEFAULT_SOLID_BACKGROUND_KEY = 'ferndale' as const;
 const APP_BASE_URL = (() => {
   try {
     const path = new URL('.', document.baseURI).pathname;
@@ -239,6 +242,12 @@ const HDR_BACKGROUND_OPTIONS = [
 ] as const;
 type HdriBackgroundOption = (typeof HDR_BACKGROUND_OPTIONS)[number];
 type HdriBackgroundKey = HdriBackgroundOption['key'];
+type BackgroundKey = HdriBackgroundKey | typeof PLAIN_BACKGROUND_KEY;
+type BackgroundOption = HdriBackgroundOption | { key: typeof PLAIN_BACKGROUND_KEY; label: 'Plain background'; };
+const backgroundOptionByKey = new Map<BackgroundKey, BackgroundOption>([
+  [PLAIN_BACKGROUND_KEY, { key: PLAIN_BACKGROUND_KEY, label: 'Plain background' }],
+  ...HDR_BACKGROUND_OPTIONS.map(option => [option.key, option] as const),
+]);
 const hdrBackgroundOptionByKey = new Map<HdriBackgroundKey, HdriBackgroundOption>(
   HDR_BACKGROUND_OPTIONS.map(option => [option.key, option]),
 );
@@ -246,7 +255,7 @@ const hdrLoader = new RGBELoader();
 const hdrBackgroundTextureCache = new Map<HdriBackgroundKey, THREE.Texture>();
 const hdrEnvironmentTargetCache = new Map<HdriBackgroundKey, THREE.WebGLRenderTarget>();
 let hdrBackgroundTexture: THREE.Texture | null = null;
-let activeHdrBackgroundKey: HdriBackgroundKey | null = null;
+let activeBackgroundKey: BackgroundKey | null = null;
 let hdrBackgroundLoadingKey: HdriBackgroundKey | null = null;
 let hdrBackgroundBlur = HDR_BACKGROUND_BLUR_DEFAULT;
 let hdrBackgroundLightness = HDR_BACKGROUND_LIGHTNESS_DEFAULT;
@@ -374,17 +383,26 @@ function applySceneBackground(useEditMode: boolean) {
   renderer.setClearColor(sceneBackgroundColor);
 }
 
-function normalizeHdrBackgroundKey(value: string | null | undefined): HdriBackgroundKey {
-  if (!value) return HDR_BACKGROUND_OPTIONS[0].key;
+function isHdriBackgroundKey(key: BackgroundKey): key is HdriBackgroundKey {
+  return key !== PLAIN_BACKGROUND_KEY;
+}
+
+function normalizeSolidBackgroundKey(value: string | null | undefined): HdriBackgroundKey {
+  if (!value) return DEFAULT_SOLID_BACKGROUND_KEY;
   const match = HDR_BACKGROUND_OPTIONS.find(option => option.key === value);
-  return match?.key ?? HDR_BACKGROUND_OPTIONS[0].key;
+  return match?.key ?? DEFAULT_SOLID_BACKGROUND_KEY;
+}
+
+function normalizeBackgroundKey(value: string | null | undefined): BackgroundKey {
+  if (value === PLAIN_BACKGROUND_KEY) return PLAIN_BACKGROUND_KEY;
+  return normalizeSolidBackgroundKey(value);
 }
 
 function getStoredHdrBackgroundKey(): HdriBackgroundKey {
   try {
-    return normalizeHdrBackgroundKey(window.localStorage.getItem(HDR_BACKGROUND_SELECTION_KEY));
+    return normalizeSolidBackgroundKey(window.localStorage.getItem(HDR_BACKGROUND_SELECTION_KEY));
   } catch {
-    return HDR_BACKGROUND_OPTIONS[0].key;
+    return DEFAULT_SOLID_BACKGROUND_KEY;
   }
 }
 
@@ -397,13 +415,21 @@ function storeHdrBackgroundKey(key: HdriBackgroundKey) {
 }
 
 function updateBackgroundSwatchUI() {
+  const plainOnly = PARAMS.renderMode !== 'solid';
+  const controlsEnabled = PARAMS.renderMode === 'solid' && activeBackgroundKey !== PLAIN_BACKGROUND_KEY;
+  backgroundSelectorEl?.classList.toggle('plain-only', plainOnly);
+  backgroundControlsEl?.classList.toggle('disabled', !controlsEnabled);
+  if (backgroundBlurInput) backgroundBlurInput.disabled = !controlsEnabled;
+  if (backgroundLightnessInput) backgroundLightnessInput.disabled = !controlsEnabled;
+
   backgroundSwatchButtons.forEach(button => {
-    const key = normalizeHdrBackgroundKey(button.dataset.hdri);
-    const loading = key === hdrBackgroundLoadingKey;
-    const active = key === activeHdrBackgroundKey;
+    const key = normalizeBackgroundKey(button.dataset.hdri);
+    const available = !plainOnly || key === PLAIN_BACKGROUND_KEY;
+    const loading = isHdriBackgroundKey(key) && key === hdrBackgroundLoadingKey;
+    const active = key === activeBackgroundKey;
     button.classList.toggle('loading', loading);
     button.classList.toggle('active', active);
-    button.toggleAttribute('disabled', loading);
+    button.disabled = !available || loading;
     button.setAttribute('aria-pressed', active ? 'true' : 'false');
   });
 }
@@ -437,11 +463,25 @@ function hdrCandidateUrls(rawPath: string) {
   return [primary, `/${clean}`];
 }
 
-async function setActiveHdrBackground(key: HdriBackgroundKey) {
-  const option = hdrBackgroundOptionByKey.get(key);
+async function setActiveBackground(key: BackgroundKey) {
+  const option = backgroundOptionByKey.get(key);
   if (!option) return false;
+
+  if (!isHdriBackgroundKey(key)) {
+    if (activeBackgroundKey === PLAIN_BACKGROUND_KEY && !hdrBackgroundTexture) return true;
+    activeBackgroundKey = PLAIN_BACKGROUND_KEY;
+    activeEnvironmentTarget = fallbackEnvironmentTarget;
+    scene.environment = fallbackEnvironmentTarget.texture;
+    hdrBackgroundTexture = null;
+    applySceneBackground(PARAMS.editMode);
+    updateBackgroundSwatchUI();
+    return true;
+  }
+
+  const hdriOption = hdrBackgroundOptionByKey.get(key);
+  if (!hdriOption) return false;
   if (hdrBackgroundLoadingKey === key) return false;
-  if (activeHdrBackgroundKey === key && hdrBackgroundTexture) return true;
+  if (activeBackgroundKey === key && hdrBackgroundTexture) return true;
 
   hdrBackgroundLoadingKey = key;
   updateBackgroundSwatchUI();
@@ -449,7 +489,7 @@ async function setActiveHdrBackground(key: HdriBackgroundKey) {
     let hdrTexture = hdrBackgroundTextureCache.get(key);
     if (!hdrTexture) {
       const candidates = new Set<string>();
-      for (const rawPath of option.urls) {
+      for (const rawPath of hdriOption.urls) {
         hdrCandidateUrls(rawPath).forEach(url => candidates.add(url));
       }
       for (const candidateUrl of candidates) {
@@ -473,7 +513,7 @@ async function setActiveHdrBackground(key: HdriBackgroundKey) {
       hdrEnvironmentTargetCache.set(key, environmentTarget);
     }
 
-    activeHdrBackgroundKey = key;
+    activeBackgroundKey = key;
     activeEnvironmentTarget = environmentTarget;
     scene.environment = environmentTarget.texture;
     hdrBackgroundTexture = hdrTexture;
@@ -488,32 +528,59 @@ async function setActiveHdrBackground(key: HdriBackgroundKey) {
   }
 }
 
+function syncBackgroundForRenderMode() {
+  const plainOnly = PARAMS.renderMode !== 'solid';
+  if (plainOnly) {
+    if (activeBackgroundKey !== PLAIN_BACKGROUND_KEY) {
+      void setActiveBackground(PLAIN_BACKGROUND_KEY);
+      return;
+    }
+    updateBackgroundSwatchUI();
+    return;
+  }
+
+  if (activeBackgroundKey == null || activeBackgroundKey === PLAIN_BACKGROUND_KEY) {
+    void setActiveBackground(getStoredHdrBackgroundKey());
+    return;
+  }
+  updateBackgroundSwatchUI();
+}
+
 async function initializeHdrBackgroundSelector() {
   if (!backgroundSelectorEl || backgroundSwatchButtons.length === 0) return;
 
   backgroundSwatchButtons.forEach(button => {
-    const key = normalizeHdrBackgroundKey(button.dataset.hdri);
-    const option = hdrBackgroundOptionByKey.get(key);
+    const key = normalizeBackgroundKey(button.dataset.hdri);
+    const option = backgroundOptionByKey.get(key);
     if (option) {
       button.title = option.label;
       button.setAttribute('aria-label', option.label);
-      button.style.setProperty('--swatch-image', `url('${APP_BASE_URL}${option.preview}')`);
+      if ('preview' in option) {
+        button.style.setProperty('--swatch-image', `url('${APP_BASE_URL}${option.preview}')`);
+      } else {
+        button.style.removeProperty('--swatch-image');
+      }
     }
     button.addEventListener('click', () => {
-      void setActiveHdrBackground(key);
+      void setActiveBackground(key);
     });
   });
 
   updateBackgroundSwatchUI();
 
+  if (PARAMS.renderMode !== 'solid') {
+    await setActiveBackground(PLAIN_BACKGROUND_KEY);
+    return;
+  }
+
   const preferred = getStoredHdrBackgroundKey();
-  if (await setActiveHdrBackground(preferred)) {
+  if (await setActiveBackground(preferred)) {
     return;
   }
 
   for (const option of HDR_BACKGROUND_OPTIONS) {
     if (option.key === preferred) continue;
-    if (await setActiveHdrBackground(option.key)) return;
+    if (await setActiveBackground(option.key)) return;
   }
 }
 
@@ -1189,7 +1256,7 @@ type AxisMap = number[];
 type SurfaceState = SurfaceMaterial;
 const DEFAULT_SURFACE: SurfaceState = {
   color: 0xbfc7d5,
-  metalness: 0.2,
+  metalness: 1,
   roughness: 0.05,
   alpha: 1,
 };
@@ -1744,7 +1811,7 @@ function updateTexturePanel() {
   if (!texturePanel) return;
 
   const target = getSurfaceTarget(selectedInstance);
-  const editable = !!target && PARAMS.renderMode !== 'faceted';
+  const editable = !!target;
   texturePanel.classList.toggle('empty', !target);
   texturePanel.classList.toggle('disabled', !editable);
   setTextureInputsEnabled(editable);
@@ -1753,12 +1820,12 @@ function updateTexturePanel() {
     syncTextureControls(target.surface);
     renderTexturePreview(target.surface);
   } else {
-    renderTexturePreview(null);
+    syncTextureControls(DEFAULT_SURFACE);
+    renderTexturePreview(DEFAULT_SURFACE);
   }
 }
 
 function applyTextureFromInputs(recordUndo: boolean) {
-  if (PARAMS.renderMode === 'faceted') return;
   if (syncingTextureUI) return;
   const target = getSurfaceTarget(selectedInstance);
   if (!target) return;
@@ -2362,7 +2429,7 @@ function restoreInstanceSnapshot(snap: InstanceSnapshot): Instance {
 const rendererND = new HypercubeRenderer(scene);
 if (M > 0) {
   rendererND.build(M, E);
-  rendererND.setMode('faceted');
+  rendererND.setMode('solid');
 }
 
 // --- UI state ---
@@ -2374,7 +2441,7 @@ const PARAMS = {
   sliceDim: -1,
   sliceMin: -0.5,
   sliceMax: 0.5,
-  renderMode: 'faceted' as ViewMode,
+  renderMode: 'solid' as ViewMode,
   editMode: false,
   axesX: 0,
   axesY: 1,
@@ -2940,6 +3007,7 @@ if (viewToggle) {
     });
     updateTexturePanel();
     syncButtons();
+    syncBackgroundForRenderMode();
   };
   btns.forEach(btn => {
     btn.addEventListener('click', () => {
@@ -2947,6 +3015,7 @@ if (viewToggle) {
     });
   });
   syncButtons();
+  syncBackgroundForRenderMode();
 }
 
 if (M === 0 && extraInstances.length === 0) {
