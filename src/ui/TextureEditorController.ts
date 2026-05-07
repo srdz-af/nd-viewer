@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import type { HypercubeRenderer } from '../rendering/HypercubeRenderer';
 import {
   DEFAULT_SURFACE,
@@ -49,6 +50,7 @@ export class TextureEditorController {
   private previewScene: THREE.Scene | null = null;
   private previewCamera: THREE.PerspectiveCamera | null = null;
   private previewCube: THREE.Mesh<THREE.BoxGeometry, THREE.MeshStandardMaterial> | null = null;
+  private previewEnvironmentTarget: THREE.WebGLRenderTarget | null = null;
 
   constructor(private readonly options: TextureEditorControllerOptions) {}
 
@@ -148,7 +150,11 @@ export class TextureEditorController {
     rendererRef.setClearColor(0x000000, 0);
 
     const sceneRef = new THREE.Scene();
-    sceneRef.environment = this.options.scene.environment;
+    sceneRef.background = null;
+    const previewPmrem = new THREE.PMREMGenerator(rendererRef);
+    this.previewEnvironmentTarget = previewPmrem.fromScene(new RoomEnvironment(), 0.04);
+    previewPmrem.dispose();
+    sceneRef.environment = this.previewEnvironmentTarget.texture;
 
     const cameraRef = new THREE.PerspectiveCamera(36, 1, 0.1, 10);
     cameraRef.position.set(1.8, 1.35, 1.9);
@@ -167,15 +173,19 @@ export class TextureEditorController {
     cube.rotation.set(0.45, 0.68, 0);
     sceneRef.add(cube);
 
-    const previewLight = new THREE.DirectionalLight(0xffffff, this.options.light.intensity);
-    previewLight.position.copy(this.options.light.position);
-    const previewAmbient = new THREE.AmbientLight(0xffffff, this.options.ambient.intensity);
+    const previewLight = new THREE.DirectionalLight(0xffffff, Math.max(1.2, this.options.light.intensity * 1.25));
+    previewLight.position.set(2.4, 2.2, 2.8);
+    const previewFill = new THREE.DirectionalLight(0xc6d8ff, 0.55);
+    previewFill.position.set(-2.1, 1.0, 1.5);
+    const previewRim = new THREE.DirectionalLight(0xffe6c4, 0.42);
+    previewRim.position.set(0.7, 1.35, -2.6);
+    const previewAmbient = new THREE.AmbientLight(0xffffff, Math.max(0.42, this.options.ambient.intensity));
     const previewHemi = new THREE.HemisphereLight(
       this.options.hemi.color.getHex(),
       this.options.hemi.groundColor.getHex(),
-      this.options.hemi.intensity,
+      Math.max(0.72, this.options.hemi.intensity),
     );
-    sceneRef.add(previewAmbient, previewHemi, previewLight);
+    sceneRef.add(previewAmbient, previewHemi, previewLight, previewFill, previewRim);
 
     this.previewRenderer = rendererRef;
     this.previewScene = sceneRef;
