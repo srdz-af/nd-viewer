@@ -155,7 +155,7 @@ Render Options are the rectangular bottom toolbar.
 - I: insert keyframe at the current frame
 - U: remove the last keyframe at or before the current frame
 
-Keyframes capture the current N-D rotation, projection axis order, render mode, bloom, motion blur, camera position, camera target, FOV, and zoom. The render button exports the animation from frame 0 through the configured frame count. Live recording captures the viewport until stopped or until the configured frame count elapses.
+Keyframes capture the current N-D rotation, projection axis order, render mode, bloom, motion blur, camera position, camera target, FOV, and zoom. The render button exports the animation from frame 0 through the configured frame count. Live recording captures the viewport until you stop it.
 
 Shortcuts:
 

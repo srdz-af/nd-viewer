@@ -22,6 +22,7 @@ type StartRecordingOptions = {
   mode: RecordingMode;
   filePrefix: string;
   autoStopMs: number | null;
+  manualFrameCapture?: boolean;
   onStart?: () => void;
   onStop?: () => void;
 };
@@ -93,12 +94,14 @@ export class ViewportCaptureController {
   private recordingStartedAt = 0;
   private recordingTimerIntervalId: number | null = null;
   private recordingStopTimeoutId: number | null = null;
+  private finalStopTimeoutId: number | null = null;
   private animationRenderTimeoutId: number | null = null;
   private recordingFps = DEFAULT_VIDEO_RECORDER_FPS;
   private recordingFrameCount = 180;
   private recordingMode: RecordingMode | null = null;
   private recordingFilePrefix = 'blend-viewport';
   private recordingStopCallback: (() => void) | null = null;
+  private manualFrameCapture = false;
 
   constructor(private readonly options: ViewportCaptureControllerOptions) {}
 
@@ -123,7 +126,7 @@ export class ViewportCaptureController {
     this.startRecording({
       mode: 'viewport',
       filePrefix: 'blend-viewport',
-      autoStopMs: Math.ceil((this.recordingFrameCount / this.recordingFps) * 1000),
+      autoStopMs: null,
     });
   }
 
@@ -150,7 +153,7 @@ export class ViewportCaptureController {
 
       frame += 1;
       if (frame >= frameCount) {
-        this.animationRenderTimeoutId = window.setTimeout(() => this.stopRecording(), frameDelayMs);
+        this.scheduleFinalRecordingStop(frameDelayMs);
         return;
       }
       this.animationRenderTimeoutId = window.setTimeout(renderNextFrame, frameDelayMs);
@@ -160,6 +163,7 @@ export class ViewportCaptureController {
       mode: 'animation',
       filePrefix: 'blend-animation',
       autoStopMs: null,
+      manualFrameCapture: true,
       onStart: () => {
         this.options.onAnimationRenderStart?.();
         renderNextFrame();
@@ -220,6 +224,12 @@ export class ViewportCaptureController {
     this.recordingStopTimeoutId = null;
   }
 
+  private clearFinalStopTimeout() {
+    if (this.finalStopTimeoutId == null) return;
+    window.clearTimeout(this.finalStopTimeoutId);
+    this.finalStopTimeoutId = null;
+  }
+
   private clearAnimationRenderTimeout() {
     if (this.animationRenderTimeoutId == null) return;
     window.clearTimeout(this.animationRenderTimeoutId);
@@ -273,8 +283,23 @@ export class ViewportCaptureController {
   }
 
   private requestCanvasStreamFrame() {
+    if (!this.manualFrameCapture) return;
     const track = this.recorderStream?.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack | undefined;
     track?.requestFrame?.();
+  }
+
+  private requestRecorderData() {
+    try {
+      if (this.recorder?.state === 'recording') this.recorder.requestData();
+    } catch {
+      // Some encoders reject explicit flush requests; stopping still flushes data.
+    }
+  }
+
+  private scheduleFinalRecordingStop(frameDelayMs: number) {
+    this.clearFinalStopTimeout();
+    this.requestRecorderData();
+    this.finalStopTimeoutId = window.setTimeout(() => this.stopRecording(), Math.ceil(frameDelayMs));
   }
 
   private recommendedRecordingBitrate() {
@@ -304,6 +329,7 @@ export class ViewportCaptureController {
     this.recorderStream = null;
     this.recorderChunks = [];
     this.clearRecordingStopTimeout();
+    this.clearFinalStopTimeout();
     this.clearAnimationRenderTimeout();
 
     stream?.getTracks().forEach(track => track.stop());
@@ -313,6 +339,7 @@ export class ViewportCaptureController {
     this.stopRecordingTimer();
     this.recordingMode = null;
     this.recordingStopCallback = null;
+    this.manualFrameCapture = false;
     this.setRecordButtonState(false);
     this.setRenderButtonState(false);
     stopCallback?.();
@@ -329,9 +356,11 @@ export class ViewportCaptureController {
 
   private stopRecording() {
     if (!this.recorder) return;
+    this.clearFinalStopTimeout();
     this.clearAnimationRenderTimeout();
     try {
       if (this.recorder.state !== 'inactive') {
+        this.requestRecorderData();
         this.recorder.stop();
       } else {
         this.finalizeRecording(true);
@@ -353,7 +382,14 @@ export class ViewportCaptureController {
       return false;
     }
 
-    const stream = captureStream(this.recordingFps);
+    let stream = captureStream(options.manualFrameCapture ? 0 : this.recordingFps);
+    this.manualFrameCapture = !!options.manualFrameCapture
+      && typeof (stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack | undefined)?.requestFrame === 'function';
+    if (options.manualFrameCapture && !this.manualFrameCapture) {
+      stream.getTracks().forEach(track => track.stop());
+      stream = captureStream(this.recordingFps);
+    }
+
     const mimeType = pickRecorderMimeType();
     const videoBitsPerSecond = this.recommendedRecordingBitrate();
     let recorder: MediaRecorder;
