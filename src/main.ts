@@ -1313,6 +1313,9 @@ animationTimeline = new KeyframeTimelineController({
       settings.frameCount,
       settings.fullResolution,
     );
+    if (!settings.fullResolution) {
+      backgroundController.setHdrQuality('sd');
+    }
     setCaptureResolutionMode(settings.fullResolution);
   },
 });

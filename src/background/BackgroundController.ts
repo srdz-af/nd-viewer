@@ -323,6 +323,18 @@ export class BackgroundController {
     this.updateSwatchUI();
   }
 
+  setHdrQuality(quality: 'sd' | 'hd') {
+    const next = normalizeHdrQuality(quality);
+    if (next === this.hdrQuality) return;
+    this.hdrQuality = next;
+    this.storeRenderSettings();
+    this.updateSwatchUI();
+    const activeKey = this.activeBackgroundKey;
+    if (activeKey && isHdriBackgroundKey(activeKey)) {
+      void this.setActiveBackground(activeKey);
+    }
+  }
+
   private syncRenderControls() {
     if (this.blurInput) this.blurInput.value = this.hdrBackgroundBlur.toFixed(2);
     if (this.blurValue) this.blurValue.textContent = this.hdrBackgroundBlur.toFixed(2);
