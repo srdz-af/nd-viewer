@@ -63,6 +63,38 @@ function combinations(count: number, choose: number): number[][] {
   return result;
 }
 
+function isHypercubeGraph(vertexCount: number, dimension: number, edges: Uint32Array) {
+  if (dimension < 0 || dimension > 30 || vertexCount !== (1 << dimension)) return false;
+  if ((edges.length / 2) !== (vertexCount * dimension) / 2) return false;
+  const degree = new Uint16Array(vertexCount);
+  for (let i = 0; i < edges.length; i += 2) {
+    const a = edges[i];
+    const b = edges[i + 1];
+    if (a >= vertexCount || b >= vertexCount || a === b) return false;
+    const diff = a ^ b;
+    if (diff === 0 || (diff & (diff - 1)) !== 0) return false;
+    degree[a]++;
+    degree[b]++;
+  }
+  for (let vertex = 0; vertex < vertexCount; vertex++) {
+    if (degree[vertex] !== dimension) return false;
+  }
+  return true;
+}
+
+function isSimplexGraph(vertexCount: number, dimension: number, edges: Uint32Array) {
+  if (dimension < 1 || vertexCount !== dimension + 1) return false;
+  if ((edges.length / 2) !== (vertexCount * (vertexCount - 1)) / 2) return false;
+  const seen = new Set<string>();
+  for (let i = 0; i < edges.length; i += 2) {
+    const a = edges[i];
+    const b = edges[i + 1];
+    if (a >= vertexCount || b >= vertexCount || a === b) return false;
+    seen.add(a < b ? `${a}:${b}` : `${b}:${a}`);
+  }
+  return seen.size === edges.length / 2;
+}
+
 function orderedHypercubeCellVertices(fixedMask: number, freeAxes: number[]) {
   if (freeAxes.length === 2) {
     const [a, b] = freeAxes;
@@ -169,10 +201,10 @@ export function buildGeneratedCellTopology(
   edges: Uint32Array,
   surfaceTopology?: PrimitiveSurfaceTopology,
 ): CellTopology {
-  if (kind === 'hypercube' && dimension >= 0 && vertexCount === (1 << dimension)) {
+  if (kind === 'hypercube' && isHypercubeGraph(vertexCount, dimension, edges)) {
     return buildHypercubeCellTopology(dimension);
   }
-  if (kind === 'simplex' && dimension >= 1 && vertexCount === dimension + 1) {
+  if (kind === 'simplex' && isSimplexGraph(vertexCount, dimension, edges)) {
     return buildSimplexCellTopology(dimension);
   }
   return buildCellTopologyFromEdgesAndSurface(vertexCount, edges, surfaceTopology);

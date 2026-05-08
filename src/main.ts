@@ -25,6 +25,7 @@ import { buildProductMesh, type ProductMeshFactor } from './geometry/productMesh
 import {
   buildGeneratedCellTopology,
   cloneCellTopology,
+  maxCellDimension,
   surfaceTopologyFromCellTopology,
   type CellTopology,
 } from './geometry/cellTopology';
@@ -2077,8 +2078,16 @@ function handleTransformConstraintKey(key: string) {
   return transformController.handleConstraintKey(key);
 }
 
-function setEditSelectionMode(mode: 'vertex' | 'edge' | 'face') {
-  transformController.setEditSelectionMode(mode);
+function maxEditableCellDimensionForSelection() {
+  const rendererRef = selectedInstance === BASE_SELECTION
+    ? rendererND
+    : extraInstances[selectedInstance]?.renderer;
+  return maxCellDimension(rendererRef?.getCellTopologyForSelection());
+}
+
+function setEditCellDimension(dimension: number) {
+  const maxDim = maxEditableCellDimensionForSelection();
+  transformController.setEditCellDimension(Math.max(0, Math.min(maxDim, Math.floor(dimension))));
   if (PARAMS.editMode && getObjectVisible(selectedInstance)) updateVertexCloud(selectedInstance);
   updateTransformActionButtons();
 }
@@ -2387,7 +2396,7 @@ new KeyboardShortcutController({
   undo: undoSceneSnapshot,
   redo: redoSceneSnapshot,
   togglePerfOverlay,
-  setEditSelectionMode,
+  setEditCellDimension,
 }).bind();
 
 updateTransformActionButtons();
