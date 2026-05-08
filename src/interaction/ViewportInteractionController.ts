@@ -249,9 +249,10 @@ export class ViewportInteractionController {
       if (this.options.transformController.getSelectedVertex() < 0) return;
       this.appendTransformAction(menu, 'Move vertex', 'move', ev);
     } else if (!this.options.hasActiveSelection()) {
+      menu.classList.add('primitive-menu');
       this.appendKeyframeActions(menu);
       this.appendMenuSeparator(menu);
-      this.appendAddSubmenu(menu, spawnPoint);
+      this.appendPrimitiveButtons(menu, spawnPoint);
     } else {
       this.appendTransformAction(menu, 'Move', 'move', ev);
       this.appendTransformAction(menu, 'Rotate', 'rotate', ev);
@@ -279,8 +280,7 @@ export class ViewportInteractionController {
     }
 
     const primitiveMenu = menu.classList.contains('primitive-menu');
-    const hasAddSubmenu = !!menu.querySelector('.context-menu-submenu-panel');
-    this.placeMenu(menu, ev.clientX, ev.clientY, primitiveMenu ? 196 : 180, hasAddSubmenu ? 196 : 0, hasAddSubmenu ? 320 : 150);
+    this.placeMenu(menu, ev.clientX, ev.clientY, primitiveMenu ? 196 : 180, 0, primitiveMenu ? 320 : 150);
     menu.style.display = menu.childElementCount ? (primitiveMenu ? 'grid' : 'block') : 'none';
   }
 
@@ -321,27 +321,6 @@ export class ViewportInteractionController {
     const separator = document.createElement('div');
     separator.className = 'context-menu-separator';
     menu.appendChild(separator);
-  }
-
-  private appendAddSubmenu(menu: HTMLDivElement, spawnPoint: THREE.Vector3) {
-    const item = document.createElement('div');
-    item.className = 'context-menu-submenu';
-
-    const trigger = document.createElement('button');
-    trigger.type = 'button';
-    trigger.className = 'context-menu-submenu-trigger';
-    trigger.textContent = 'Add';
-    trigger.onclick = ev => {
-      ev.stopPropagation();
-      item.classList.toggle('open');
-    };
-
-    const submenu = document.createElement('div');
-    submenu.className = 'context-menu-submenu-panel';
-    this.appendPrimitiveButtons(submenu, spawnPoint);
-
-    item.append(trigger, submenu);
-    menu.appendChild(item);
   }
 
   private appendPrimitiveButtons(container: HTMLElement, spawnPoint: THREE.Vector3, syncMode = true) {

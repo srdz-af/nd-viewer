@@ -1,5 +1,5 @@
 import type { RotND } from '../RotND';
-import { AXIS_PALETTE } from '../constants';
+import { AXIS_PALETTE, MAX_N } from '../constants';
 import type { AxisMap } from '../geometry/projectionUtils';
 import {
   axisLabel,
@@ -41,6 +41,7 @@ const AUTO_ROTATE_BUTTON_ACTIONS = [
   'Set auto-rotate 2x',
   'Stop auto-rotate',
 ] as const;
+const DEFAULT_PERSPECTIVE_DIMS = Array.from({ length: MAX_N }, (_, dim) => dim);
 
 type ExtraAxisGizmoControllerOptions = {
   rootEl: HTMLDivElement | null;
@@ -61,6 +62,7 @@ type ExtraAxisGizmoControllerOptions = {
 
 export type ExtraAxisGizmoState = {
   perspectiveDims: number[];
+  disabledPerspectiveDims?: number[];
   autoRotateSpeeds: Array<[number, number]>;
   pausedAutoRotateSpeeds: Array<[number, number]>;
   angles: Array<[number, number]>;
@@ -85,7 +87,8 @@ export class ExtraAxisGizmoController {
   private readonly uis = new Map<number, ExtraAxisGizmoUI>();
   private readonly angles = new Map<number, number>();
   private readonly anglePlaneKeys = new Map<number, string>();
-  private readonly selectedPerspectiveDims = new Set<number>([3]);
+  private readonly selectedPerspectiveDims = new Set<number>(DEFAULT_PERSPECTIVE_DIMS);
+  private readonly disabledPerspectiveDims = new Set<number>();
   private readonly autoRotateSpeeds = new Map<number, number>();
   private readonly pausedAutoRotateSpeeds = new Map<number, number>();
   private readonly drag = {
@@ -237,6 +240,7 @@ export class ExtraAxisGizmoController {
     );
     return {
       perspectiveDims: Array.from(this.selectedPerspectiveDims).sort((a, b) => a - b),
+      disabledPerspectiveDims: Array.from(this.disabledPerspectiveDims).sort((a, b) => a - b),
       autoRotateSpeeds: sortedEntries(this.autoRotateSpeeds),
       pausedAutoRotateSpeeds: sortedEntries(this.pausedAutoRotateSpeeds),
       angles: sortedEntries(this.angles),
@@ -248,14 +252,28 @@ export class ExtraAxisGizmoController {
     const normalizeDim = (value: number) => (
       Number.isInteger(value) && value >= 0 && value < this.options.getVisibleDims() ? value : -1
     );
+    const normalizePersistentDim = (value: number) => (
+      Number.isInteger(value) && value >= 0 && value < MAX_N ? value : -1
+    );
     const normalizeSpeed = (value: number) => (
       Number.isFinite(value) ? Math.max(0, Math.min(3, Math.round(value))) : 0
     );
 
     this.selectedPerspectiveDims.clear();
-    for (const dim of state.perspectiveDims ?? []) {
-      const normalized = normalizeDim(dim);
-      if (normalized >= 3) this.selectedPerspectiveDims.add(normalized);
+    this.disabledPerspectiveDims.clear();
+    if (state.disabledPerspectiveDims) {
+      DEFAULT_PERSPECTIVE_DIMS.forEach(dim => this.selectedPerspectiveDims.add(dim));
+      for (const dim of state.disabledPerspectiveDims) {
+        const normalized = normalizePersistentDim(dim);
+        if (normalized < 0) continue;
+        this.selectedPerspectiveDims.delete(normalized);
+        this.disabledPerspectiveDims.add(normalized);
+      }
+    } else {
+      for (const dim of state.perspectiveDims ?? DEFAULT_PERSPECTIVE_DIMS) {
+        const normalized = normalizePersistentDim(dim);
+        if (normalized >= 0) this.selectedPerspectiveDims.add(normalized);
+      }
     }
 
     this.autoRotateSpeeds.clear();
@@ -636,8 +654,13 @@ export class ExtraAxisGizmoController {
   }
 
   private setPerspectiveDepth(depthDim: number, active: boolean) {
-    if (active) this.selectedPerspectiveDims.add(depthDim);
-    else this.selectedPerspectiveDims.delete(depthDim);
+    if (active) {
+      this.selectedPerspectiveDims.add(depthDim);
+      this.disabledPerspectiveDims.delete(depthDim);
+    } else {
+      this.selectedPerspectiveDims.delete(depthDim);
+      this.disabledPerspectiveDims.add(depthDim);
+    }
     const ui = this.uis.get(depthDim);
     if (!ui) return;
 
