@@ -282,7 +282,7 @@ export function deleteCellAndPrune(
   }
 
   let highestRemainingDimension = -1;
-  for (let dim = keep.length - 1; dim >= 0; dim--) {
+  for (let dim = keep.length - 1; dim >= dimension; dim--) {
     if (keep[dim].some(Boolean)) {
       highestRemainingDimension = dim;
       break;
