@@ -242,6 +242,16 @@ export class TransformController {
     return this.selectedEditVertices.length > 0;
   }
 
+  getEditSelection() {
+    if (!this.hasEditSelection()) return null;
+    return {
+      dimension: this.editCellDimension,
+      cellId: this.selectedCellId,
+      vertices: [...this.selectedEditVertices],
+      label: this.editSelectionLabel(),
+    };
+  }
+
   editSelectionLabel() {
     return editCellLabel(this.editCellDimension);
   }
