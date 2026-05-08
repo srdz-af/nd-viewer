@@ -431,8 +431,23 @@ const renderAxisList = () => axisController.renderAxisList();
 const updateAxisLegend = () => axisController.updateAxisLegend();
 const updateAxisGizmo = () => axisController.updateAxisGizmo();
 const applyAutoRotation = (dt: number) => axisController.applyAutoRotation(dt);
-let projectionPipeline: ProjectionPipeline;
-const projectAndRenderAll = () => projectionPipeline.projectAndRenderAll();
+let projectionPipeline: ProjectionPipeline | null = null;
+let projectionDirty = true;
+
+function markProjectionDirty() {
+  projectionDirty = true;
+}
+
+function projectIfDirty() {
+  if (!projectionDirty || !projectionPipeline) return;
+  projectionPipeline.projectAndRenderAll();
+  projectionDirty = false;
+}
+
+const projectAndRenderAll = () => {
+  markProjectionDirty();
+  projectIfDirty();
+};
 let transformController: TransformController;
 let viewportInteraction: ViewportInteractionController;
 
@@ -1738,7 +1753,7 @@ function renderEffectsFrame() {
 }
 
 function renderViewportFrame() {
-  projectAndRenderAll();
+  projectIfDirty();
   controls.update();
   updateTransformActionButtons();
   updateAxisGizmo();
@@ -2251,7 +2266,10 @@ function animate() {
   if (animationTimeline?.isPlaying()) {
     animationTimeline.update(dt);
   } else if (!animationVideoRendering) {
-    if (applyAutoRotation(dt)) requestSceneUrlUpdate();
+    if (applyAutoRotation(dt)) {
+      markProjectionDirty();
+      requestSceneUrlUpdate();
+    }
   }
 
   if (!animationVideoRendering) keyboardCamera.update(dt);
