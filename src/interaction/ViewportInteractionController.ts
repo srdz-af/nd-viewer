@@ -16,6 +16,9 @@ type PrimitiveMenuOption = {
   kind: PrimitiveKind;
 };
 
+const OBJECT_FOCUS_DOUBLE_CLICK_MS = 220;
+const OBJECT_FOCUS_DOUBLE_CLICK_MAX_DIST = 8;
+
 type ViewportInteractionControllerOptions = {
   renderer: THREE.WebGLRenderer;
   camera: THREE.PerspectiveCamera;
@@ -46,6 +49,8 @@ type ViewportInteractionControllerOptions = {
   removeLastKeyframe: () => void;
   deleteSelected: () => void;
   hasActiveSelection: () => boolean;
+  recalculateSelectedOrigin: () => void;
+  focusObjectOrigin: (idx: number) => void;
   applySliceFilter: () => void;
   cycleAxes: (step: number) => void;
 };
@@ -56,6 +61,12 @@ export class ViewportInteractionController {
   private readonly tmpVec = new THREE.Vector3();
   private lastPointer = { x: window.innerWidth - 180, y: window.innerHeight - 80 };
   private deletePending = false;
+  private readonly lastObjectClick = {
+    time: Number.NEGATIVE_INFINITY,
+    x: 0,
+    y: 0,
+    instIdx: Number.NaN,
+  };
   private readonly axisDrag = {
     active: false,
     lastX: 0,
@@ -265,6 +276,13 @@ export class ViewportInteractionController {
       this.appendTransformAction(menu, 'Move', 'move', ev);
       this.appendTransformAction(menu, 'Rotate', 'rotate', ev);
       this.appendTransformAction(menu, 'Scale', 'scale', ev);
+      const recalculateOriginButton = document.createElement('button');
+      recalculateOriginButton.textContent = 'Recalculate origin';
+      recalculateOriginButton.onclick = () => {
+        menu.style.display = 'none';
+        this.options.recalculateSelectedOrigin();
+      };
+      menu.appendChild(recalculateOriginButton);
       const deleteButton = document.createElement('button');
       deleteButton.textContent = 'Delete';
       deleteButton.onclick = () => this.showDeleteConfirm(ev);
@@ -345,7 +363,14 @@ export class ViewportInteractionController {
     }
 
     if (ev.button !== 0) return;
-    this.selectObjectFromPointer(ev);
+    const selected = this.selectObjectFromPointer(ev);
+    if (selected !== this.options.noSelection && this.isObjectFocusDoubleClick(ev, selected)) {
+      ev.preventDefault();
+      this.options.focusObjectOrigin(selected);
+      this.resetLastObjectClick();
+    } else {
+      this.recordObjectClick(ev, selected);
+    }
   }
 
   private handleWindowPointerMove(ev: PointerEvent) {
@@ -394,7 +419,7 @@ export class ViewportInteractionController {
     this.deletePending = false;
   }
 
-  private selectObjectFromPointer(ev: PointerEvent) {
+  private selectObjectFromPointer(ev: { clientX: number; clientY: number }) {
     const rect = this.options.renderer.domElement.getBoundingClientRect();
     const mx = ev.clientX - rect.left;
     const my = ev.clientY - rect.top;
@@ -448,11 +473,35 @@ export class ViewportInteractionController {
 
     if (bestInst === this.options.noSelection) {
       this.options.selectObject(this.options.noSelection);
-      return;
+      return this.options.noSelection;
     }
 
     this.options.selectObject(bestInst);
     if (this.options.getParams().editMode) this.selectNearestVertex(bestInst, mx, my, w, h);
+    return bestInst;
+  }
+
+  private isObjectFocusDoubleClick(ev: PointerEvent, instIdx: number) {
+    const now = performance.now();
+    const dt = now - this.lastObjectClick.time;
+    const dx = ev.clientX - this.lastObjectClick.x;
+    const dy = ev.clientY - this.lastObjectClick.y;
+    return this.lastObjectClick.instIdx === instIdx
+      && dt > 0
+      && dt <= OBJECT_FOCUS_DOUBLE_CLICK_MS
+      && ((dx * dx) + (dy * dy)) <= OBJECT_FOCUS_DOUBLE_CLICK_MAX_DIST * OBJECT_FOCUS_DOUBLE_CLICK_MAX_DIST;
+  }
+
+  private recordObjectClick(ev: PointerEvent, instIdx: number) {
+    this.lastObjectClick.time = performance.now();
+    this.lastObjectClick.x = ev.clientX;
+    this.lastObjectClick.y = ev.clientY;
+    this.lastObjectClick.instIdx = instIdx;
+  }
+
+  private resetLastObjectClick() {
+    this.lastObjectClick.time = Number.NEGATIVE_INFINITY;
+    this.lastObjectClick.instIdx = Number.NaN;
   }
 
   private nearestInstanceByVertex(mx: number, my: number, width: number, height: number) {
