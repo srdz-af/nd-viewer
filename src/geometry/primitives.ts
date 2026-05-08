@@ -2,11 +2,18 @@ export type PrimitiveKind =
   | 'hypercube'
   | 'spikedHypercube'
   | 'cross'
+  | 'spikedCross'
   | 'simplex'
+  | 'spikedSimplex'
   | 'simplexPrism'
+  | 'spikedSimplexPrism'
   | 'demicube'
+  | 'spikedDemicube'
   | 'cell24'
-  | 'duoprism';
+  | 'spikedCell24'
+  | 'duoprism'
+  | 'spikedDuoprism'
+  | 'productMesh';
 
 export type PrimitiveSurfaceTopology = {
   triangles: Uint32Array;
@@ -23,6 +30,71 @@ export type PrimitiveGeometry = {
 function addEdge(edges: number[], a: number, b: number) {
   if (a === b) return;
   edges.push(a, b);
+}
+
+function edgeKey(a: number, b: number) {
+  return a < b ? `${a}:${b}` : `${b}:${a}`;
+}
+
+function addUniqueEdge(edges: number[], edgeKeys: Set<string>, a: number, b: number) {
+  if (a === b) return;
+  const key = edgeKey(a, b);
+  if (edgeKeys.has(key)) return;
+  edgeKeys.add(key);
+  addEdge(edges, a, b);
+}
+
+function dedupeEdges(source: ArrayLike<number>) {
+  const edges: number[] = [];
+  const edgeKeys = new Set<string>();
+  for (let i = 0; i < source.length; i += 2) {
+    addUniqueEdge(edges, edgeKeys, source[i], source[i + 1]);
+  }
+  return new Uint32Array(edges);
+}
+
+function makeSurfaceTopology(triangles: number[], facetIds: number[]): PrimitiveSurfaceTopology | undefined {
+  if (triangles.length < 3 || facetIds.length * 3 !== triangles.length) return undefined;
+  return {
+    triangles: new Uint32Array(triangles),
+    facetIds: new Uint16Array(facetIds),
+  };
+}
+
+function completeGraphTriangleTopology(vertexCount: number, edges: ArrayLike<number>) {
+  const edgeKeys = new Set<string>();
+  for (let i = 0; i < edges.length; i += 2) edgeKeys.add(edgeKey(edges[i], edges[i + 1]));
+
+  const triangles: number[] = [];
+  const facetIds: number[] = [];
+  let facetId = 0;
+  for (let a = 0; a < vertexCount; a++) {
+    for (let b = a + 1; b < vertexCount; b++) {
+      if (!edgeKeys.has(edgeKey(a, b))) continue;
+      for (let c = b + 1; c < vertexCount; c++) {
+        if (!edgeKeys.has(edgeKey(a, c)) || !edgeKeys.has(edgeKey(b, c))) continue;
+        triangles.push(a, b, c);
+        facetIds.push(facetId++);
+      }
+    }
+  }
+
+  return makeSurfaceTopology(triangles, facetIds);
+}
+
+function simplexTriangleTopology(vertexCount: number) {
+  const triangles: number[] = [];
+  const facetIds: number[] = [];
+  let facetId = 0;
+  for (let a = 0; a < vertexCount; a++) {
+    for (let b = a + 1; b < vertexCount; b++) {
+      for (let c = b + 1; c < vertexCount; c++) {
+        triangles.push(a, b, c);
+        facetIds.push(facetId++);
+      }
+    }
+  }
+  return makeSurfaceTopology(triangles, facetIds);
 }
 
 export function clonePrimitiveSurfaceTopology(
@@ -63,6 +135,88 @@ function parity(mask: number) {
     rest >>= 1;
   }
   return p;
+}
+
+function spikedPrimitive(base: PrimitiveGeometry, N: number, spikeLength = 0.22): PrimitiveGeometry {
+  const topology = base.surfaceTopology ?? completeGraphTriangleTopology(base.V, base.edges);
+  if (!topology) return base;
+
+  const sourceTriangles = topology.triangles;
+  const sourceTriangleCount = sourceTriangles.length / 3;
+  const V = base.V + sourceTriangleCount;
+  const verts = new Float32Array(N * V);
+
+  for (let d = 0; d < N; d++) {
+    for (let v = 0; v < base.V; v++) {
+      verts[d * V + v] = base.verts[d * base.V + v];
+    }
+  }
+
+  const center = new Float32Array(N);
+  for (let d = 0; d < N; d++) {
+    let sum = 0;
+    for (let v = 0; v < base.V; v++) sum += base.verts[d * base.V + v];
+    center[d] = sum / base.V;
+  }
+
+  const edges: number[] = [];
+  const edgeKeys = new Set<string>();
+  for (let i = 0; i < base.edges.length; i += 2) {
+    addUniqueEdge(edges, edgeKeys, base.edges[i], base.edges[i + 1]);
+  }
+
+  const triangles: number[] = [];
+  const facetIds: number[] = [];
+  const centroid = new Float32Array(N);
+  const direction = new Float32Array(N);
+
+  for (let t = 0; t < sourceTriangles.length; t += 3) {
+    const a = sourceTriangles[t];
+    const b = sourceTriangles[t + 1];
+    const c = sourceTriangles[t + 2];
+    const apex = base.V + (t / 3);
+    let directionLengthSq = 0;
+
+    for (let d = 0; d < N; d++) {
+      const baseOffset = d * base.V;
+      centroid[d] = (base.verts[baseOffset + a] + base.verts[baseOffset + b] + base.verts[baseOffset + c]) / 3;
+      direction[d] = centroid[d] - center[d];
+      directionLengthSq += direction[d] * direction[d];
+    }
+
+    if (directionLengthSq < 1e-10) {
+      directionLengthSq = 0;
+      for (let d = 0; d < N; d++) {
+        direction[d] = base.verts[d * base.V + a] - center[d];
+        directionLengthSq += direction[d] * direction[d];
+      }
+    }
+
+    if (directionLengthSq < 1e-10) {
+      direction[0] = 1;
+      directionLengthSq = 1;
+    }
+
+    const scale = spikeLength / Math.sqrt(directionLengthSq);
+    for (let d = 0; d < N; d++) verts[d * V + apex] = centroid[d] + (direction[d] * scale);
+
+    addUniqueEdge(edges, edgeKeys, apex, a);
+    addUniqueEdge(edges, edgeKeys, apex, b);
+    addUniqueEdge(edges, edgeKeys, apex, c);
+
+    triangles.push(apex, a, b, apex, b, c, apex, c, a);
+    facetIds.push(t / 3, t / 3, t / 3);
+  }
+
+  return {
+    verts,
+    edges: new Uint32Array(edges),
+    surfaceTopology: {
+      triangles: new Uint32Array(triangles),
+      facetIds: new Uint16Array(facetIds),
+    },
+    V,
+  };
 }
 
 export function hypercubeEdges(N: number): PrimitiveGeometry {
@@ -180,7 +334,17 @@ export function crossPolytopeEdges(N: number): PrimitiveGeometry {
     }
   }
 
-  return { verts, edges: new Uint32Array(edges), V };
+  const edgeArray = new Uint32Array(edges);
+  return {
+    verts,
+    edges: edgeArray,
+    surfaceTopology: completeGraphTriangleTopology(V, edgeArray),
+    V,
+  };
+}
+
+export function spikedCrossPolytopeEdges(N: number): PrimitiveGeometry {
+  return spikedPrimitive(crossPolytopeEdges(N), N);
 }
 
 export function simplexEdges(N: number): PrimitiveGeometry {
@@ -210,27 +374,16 @@ export function simplexEdges(N: number): PrimitiveGeometry {
     for (let b = a + 1; b < V; b++) addEdge(edges, a, b);
   }
 
-  const triangles: number[] = [];
-  const facetIds: number[] = [];
-  let facetId = 0;
-  for (let a = 0; a < V; a++) {
-    for (let b = a + 1; b < V; b++) {
-      for (let c = b + 1; c < V; c++) {
-        triangles.push(a, b, c);
-        facetIds.push(facetId++);
-      }
-    }
-  }
-
   return {
     verts,
     edges: new Uint32Array(edges),
-    surfaceTopology: {
-      triangles: new Uint32Array(triangles),
-      facetIds: new Uint16Array(facetIds),
-    },
+    surfaceTopology: simplexTriangleTopology(V),
     V,
   };
+}
+
+export function spikedSimplexEdges(N: number): PrimitiveGeometry {
+  return spikedPrimitive(simplexEdges(N), N);
 }
 
 export function simplexPrismEdges(N: number): PrimitiveGeometry {
@@ -262,7 +415,39 @@ export function simplexPrismEdges(N: number): PrimitiveGeometry {
 
   for (let v = 0; v < baseV; v++) addEdge(edges, v, v + baseV);
 
-  return { verts, edges: new Uint32Array(edges), V };
+  const triangles: number[] = [];
+  const facetIds: number[] = [];
+  let facetId = 0;
+
+  for (let a = 0; a < baseV; a++) {
+    for (let b = a + 1; b < baseV; b++) {
+      for (let c = b + 1; c < baseV; c++) {
+        triangles.push(a, b, c);
+        facetIds.push(facetId++);
+        triangles.push(a + baseV, c + baseV, b + baseV);
+        facetIds.push(facetId++);
+      }
+    }
+  }
+
+  for (let e = 0; e < base.edges.length; e += 2) {
+    const a = base.edges[e];
+    const b = base.edges[e + 1];
+    const sideFacetId = facetId++;
+    triangles.push(a, b, b + baseV, a, b + baseV, a + baseV);
+    facetIds.push(sideFacetId, sideFacetId);
+  }
+
+  return {
+    verts,
+    edges: dedupeEdges(edges),
+    surfaceTopology: makeSurfaceTopology(triangles, facetIds),
+    V,
+  };
+}
+
+export function spikedSimplexPrismEdges(N: number): PrimitiveGeometry {
+  return spikedPrimitive(simplexPrismEdges(N), N);
 }
 
 export function demicubeEdges(N: number): PrimitiveGeometry {
@@ -298,7 +483,17 @@ export function demicubeEdges(N: number): PrimitiveGeometry {
     }
   }
 
-  return { verts, edges: new Uint32Array(edges), V };
+  const edgeArray = new Uint32Array(edges);
+  return {
+    verts,
+    edges: edgeArray,
+    surfaceTopology: completeGraphTriangleTopology(V, edgeArray),
+    V,
+  };
+}
+
+export function spikedDemicubeEdges(N: number): PrimitiveGeometry {
+  return spikedPrimitive(demicubeEdges(N), N);
 }
 
 export function cell24Edges(N: number): PrimitiveGeometry {
@@ -329,7 +524,17 @@ export function cell24Edges(N: number): PrimitiveGeometry {
     }
   }
 
-  return { verts, edges: new Uint32Array(edges), V };
+  const edgeArray = new Uint32Array(edges);
+  return {
+    verts,
+    edges: edgeArray,
+    surfaceTopology: completeGraphTriangleTopology(V, edgeArray),
+    V,
+  };
+}
+
+export function spikedCell24Edges(N: number): PrimitiveGeometry {
+  return spikedPrimitive(cell24Edges(N), N);
 }
 
 export function duoprismEdges(N: number): PrimitiveGeometry {
@@ -355,15 +560,34 @@ export function duoprismEdges(N: number): PrimitiveGeometry {
   }
 
   const edges: number[] = [];
+  const triangles: number[] = [];
+  const facetIds: number[] = [];
+  let facetId = 0;
   for (let a = 0; a < segmentsA; a++) {
     for (let b = 0; b < segmentsB; b++) {
       const v = index(a, b);
       addEdge(edges, v, index(a + 1, b));
       addEdge(edges, v, index(a, b + 1));
+
+      const v10 = index(a + 1, b);
+      const v11 = index(a + 1, b + 1);
+      const v01 = index(a, b + 1);
+      triangles.push(v, v10, v11, v, v11, v01);
+      facetIds.push(facetId, facetId);
+      facetId++;
     }
   }
 
-  return { verts, edges: new Uint32Array(edges), V };
+  return {
+    verts,
+    edges: new Uint32Array(edges),
+    surfaceTopology: makeSurfaceTopology(triangles, facetIds),
+    V,
+  };
+}
+
+export function spikedDuoprismEdges(N: number): PrimitiveGeometry {
+  return spikedPrimitive(duoprismEdges(N), N);
 }
 
 function polygonRingEdges(N: number, segments: number): PrimitiveGeometry {
@@ -377,7 +601,20 @@ function polygonRingEdges(N: number, segments: number): PrimitiveGeometry {
 
   const edges: number[] = [];
   for (let v = 0; v < V; v++) addEdge(edges, v, (v + 1) % V);
-  return { verts, edges: new Uint32Array(edges), V };
+
+  const triangles: number[] = [];
+  const facetIds: number[] = [];
+  for (let v = 1; v < V - 1; v++) {
+    triangles.push(0, v, v + 1);
+    facetIds.push(v - 1);
+  }
+
+  return {
+    verts,
+    edges: new Uint32Array(edges),
+    surfaceTopology: makeSurfaceTopology(triangles, facetIds),
+    V,
+  };
 }
 
 export function buildPrimitive(kind: PrimitiveKind, N: number): PrimitiveGeometry {
@@ -388,15 +625,29 @@ export function buildPrimitive(kind: PrimitiveKind, N: number): PrimitiveGeometr
       return spikedHypercubeEdges(N);
     case 'cross':
       return crossPolytopeEdges(N);
+    case 'spikedCross':
+      return spikedCrossPolytopeEdges(N);
     case 'simplex':
       return simplexEdges(N);
+    case 'spikedSimplex':
+      return spikedSimplexEdges(N);
     case 'simplexPrism':
       return simplexPrismEdges(N);
+    case 'spikedSimplexPrism':
+      return spikedSimplexPrismEdges(N);
     case 'demicube':
       return demicubeEdges(N);
+    case 'spikedDemicube':
+      return spikedDemicubeEdges(N);
     case 'cell24':
       return cell24Edges(N);
+    case 'spikedCell24':
+      return spikedCell24Edges(N);
     case 'duoprism':
       return duoprismEdges(N);
+    case 'spikedDuoprism':
+      return spikedDuoprismEdges(N);
+    case 'productMesh':
+      return hypercubeEdges(N);
   }
 }

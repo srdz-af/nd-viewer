@@ -4,7 +4,7 @@ import { MAX_N, AXIS_PALETTE, type ViewMode } from '../constants';
 import type { RotND } from '../RotND';
 import { canonicalAxisMap, type AxisMap } from '../geometry/projectionUtils';
 import type { ProjectionAxes } from '../scene/types';
-import { ExtraAxisGizmoController } from './ExtraAxisGizmoController';
+import { ExtraAxisGizmoController, type ExtraAxisGizmoState } from './ExtraAxisGizmoController';
 import {
   axisGizmoCenter,
   axisGizmoRadius,
@@ -41,6 +41,7 @@ type AxisGizmoControllerOptions = {
   applySceneBackground: () => void;
   setPaneCollapsed: (collapsed: boolean) => void;
   getPaneCollapsed: () => boolean;
+  onStateChange?: () => void;
 };
 
 export class AxisGizmoController {
@@ -85,6 +86,7 @@ export class AxisGizmoController {
       swapExtraAxisWithProjection: (depthDim, targetSlot) => {
         this.swapExtraAxisWithProjection(depthDim, targetSlot);
       },
+      onStateChange: () => this.options.onStateChange?.(),
     });
 
     const isoCamera = new THREE.PerspectiveCamera();
@@ -114,6 +116,14 @@ export class AxisGizmoController {
 
   clearDynamicState() {
     this.extraAxisGizmos.clearDynamicState();
+  }
+
+  getExtraAxisState(): ExtraAxisGizmoState {
+    return this.extraAxisGizmos.getState();
+  }
+
+  applyExtraAxisState(state: Partial<ExtraAxisGizmoState> | null | undefined) {
+    this.extraAxisGizmos.applyState(state);
   }
 
   normalizeVisibleAxes(nVis = this.visibleDims()) {
@@ -192,6 +202,7 @@ export class AxisGizmoController {
     this.updateAxisLegend();
     this.renderAxisList();
     this.options.projectAndRenderAll();
+    this.options.onStateChange?.();
   }
 
   cycleAxes(step: number) {
@@ -242,7 +253,7 @@ export class AxisGizmoController {
   }
 
   applyAutoRotation(dt: number) {
-    this.extraAxisGizmos.applyAutoRotation(dt);
+    return this.extraAxisGizmos.applyAutoRotation(dt);
   }
 
   toggleActiveAutoRotations() {
@@ -260,6 +271,7 @@ export class AxisGizmoController {
     camera.lookAt(target);
     controls.update();
     this.updateAxisGizmo();
+    this.options.onStateChange?.();
   }
 
   updateAxisGizmo() {
@@ -444,6 +456,7 @@ export class AxisGizmoController {
     this.axisSyncRotationsButton?.addEventListener('click', () => this.extraAxisGizmos.resetRotations());
     this.paneToggleButton?.addEventListener('click', () => {
       this.options.setPaneCollapsed(!this.options.getPaneCollapsed());
+      this.options.onStateChange?.();
     });
     this.projectionControlsBound = true;
   }
@@ -564,6 +577,7 @@ export class AxisGizmoController {
     camera.lookAt(controls.target);
     controls.update();
     this.updateAxisGizmo();
+    this.options.onStateChange?.();
   }
 }
 

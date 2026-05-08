@@ -8,7 +8,8 @@ type ObjectListRow = {
 type ObjectListControllerOptions = {
   getRows: () => ObjectListRow[];
   getSelectedIndex: () => number;
-  onSelect: (idx: number) => void;
+  getSelectedIndices: () => number[];
+  onSelect: (idx: number, additive: boolean) => void;
   onToggleVisibility: (idx: number, visible: boolean) => void;
   onRename: (idx: number, value: string) => void;
   onAfterUpdate?: () => void;
@@ -35,10 +36,13 @@ export class ObjectListController {
 
     const table = document.createElement('table');
     const tbody = document.createElement('tbody');
+    const selectedIndices = new Set(this.options.getSelectedIndices());
     rows.forEach(row => {
       const tr = document.createElement('tr');
-      tr.className = `object-row${row.idx === this.options.getSelectedIndex() ? ' active' : ''}${row.visible ? '' : ' hidden'}`;
-      tr.addEventListener('click', () => this.options.onSelect(row.idx));
+      const primary = row.idx === this.options.getSelectedIndex();
+      const secondary = !primary && selectedIndices.has(row.idx);
+      tr.className = `object-row${primary ? ' active' : ''}${secondary ? ' secondary' : ''}${row.visible ? '' : ' hidden'}`;
+      tr.addEventListener('click', ev => this.options.onSelect(row.idx, ev.shiftKey));
 
       const visibilityCell = document.createElement('td');
       const visibilityButton = document.createElement('button');

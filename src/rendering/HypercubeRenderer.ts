@@ -22,6 +22,7 @@ const FACET_HUE_STOPS = [0, 20, 40, 55, 80, 105, 130, 155, 180, 205, 230, 255, 2
 const FACET_LIGHTNESS_STOPS = [0.40, 0.54, 0.68];
 const FACET_SATURATION = 0.92;
 const FACET_COLOR_COUNT = FACET_HUE_STOPS.length * FACET_LIGHTNESS_STOPS.length;
+const OPAQUE_ALPHA_THRESHOLD = 0.999;
 
 export type SurfaceTopology = {
   triangles: Uint32Array;
@@ -42,7 +43,6 @@ export class HypercubeRenderer {
   positions!: Float32Array;
   M!: number;
   allEdges!: Uint32Array;
-  visibleEdges!: Uint32Array;
   offset = new THREE.Vector3();
   originPosition = new THREE.Vector3();
   private lineMaterial: THREE.LineBasicMaterial;
@@ -51,7 +51,6 @@ export class HypercubeRenderer {
   private mode: ViewMode = 'wireframe';
   private surfaceNeedsUpdate = false;
   private points: VertexPoint[] = [];
-  private visibleVertexMask?: Uint8Array;
   private transform = new THREE.Matrix4();
   private tmp = new THREE.Vector3();
   private surface: SurfaceMaterial = { ...DEFAULT_SURFACE };
@@ -92,11 +91,10 @@ export class HypercubeRenderer {
     this.dispose();
     this.M = M;
     this.allEdges = edges;
-    this.visibleEdges = edges;
     this.geometry = new THREE.BufferGeometry();
     this.positions = new Float32Array(3 * M);
     this.geometry.setAttribute('position', new THREE.BufferAttribute(this.positions, 3));
-    this.setIndexAttribute(this.visibleEdges);
+    this.setIndexAttribute(this.allEdges);
 
     this.line = new THREE.LineSegments(this.geometry, this.lineMaterial);
     this.line.visible = this.mode === 'wireframe';
@@ -113,7 +111,6 @@ export class HypercubeRenderer {
     this.group.add(this.mesh);
 
     this.surfaceNeedsUpdate = true;
-    this.visibleVertexMask = undefined;
     this.surfaceTopology = surfaceTopology ? {
       triangles: new Uint32Array(surfaceTopology.triangles),
       facetIds: new Uint16Array(surfaceTopology.facetIds),
@@ -187,36 +184,6 @@ export class HypercubeRenderer {
     return { ...this.surface };
   }
 
-  filterEdgesByDimRange(X: Float32Array, N: number, M: number, dim: number, minV: number, maxV: number): void {
-    if (dim < 0 || dim >= N) {
-      this.visibleEdges = this.allEdges;
-      this.visibleVertexMask = undefined;
-      this.setIndexAttribute(this.allEdges);
-      this.refreshSurface();
-      return;
-    }
-
-    const keep = new Uint8Array(M);
-    const base = dim * M;
-    for (let m = 0; m < M; m++) {
-      const v = X[base + m];
-      keep[m] = v >= minV && v <= maxV ? 1 : 0;
-    }
-
-    const arr: number[] = [];
-    for (let e = 0; e < this.allEdges.length; e += 2) {
-      const a = this.allEdges[e];
-      const b = this.allEdges[e + 1];
-      if (keep[a] && keep[b]) arr.push(a, b);
-    }
-
-    this.visibleEdges = new Uint32Array(arr.length ? arr : [0, 0]);
-    this.visibleVertexMask = keep;
-    this.setIndexAttribute(this.visibleEdges);
-    this.geometry.index!.needsUpdate = true;
-    this.refreshSurface();
-  }
-
   refreshSurface(): void {
     if (this.mode === 'wireframe' || !this.mesh) return;
     this.surfaceNeedsUpdate = true;
@@ -249,9 +216,11 @@ export class HypercubeRenderer {
     material.color.setHex(this.surface.color);
     material.metalness = this.surface.metalness;
     material.roughness = this.surface.roughness;
-    material.transparent = this.surface.alpha < 0.999;
     material.opacity = this.surface.alpha;
-    material.depthWrite = !material.transparent;
+    material.transparent = this.surface.alpha < OPAQUE_ALPHA_THRESHOLD;
+    material.alphaHash = false;
+    material.alphaToCoverage = false;
+    material.depthWrite = true;
     material.needsUpdate = true;
   }
 
@@ -281,13 +250,7 @@ export class HypercubeRenderer {
   }
 
   private buildSurfaceGeometryFromHullFallback(): THREE.BufferGeometry {
-    const indices = this.visibleVertexMask
-      ? this.points.reduce<number[]>((acc, _p, idx) => {
-          if (this.visibleVertexMask![idx] === 1) acc.push(idx);
-          return acc;
-        }, [])
-      : this.points.map((_p, idx) => idx);
-
+    const indices = this.points.map((_p, idx) => idx);
     if (indices.length < 4) return new THREE.BufferGeometry();
     return this.hullBuilder.build(indices.map(idx => this.points[idx]));
   }
@@ -297,13 +260,8 @@ export class HypercubeRenderer {
     const facetIds = topology.facetIds;
     if (triangles.length < 3 || facetIds.length * 3 !== triangles.length) return new THREE.BufferGeometry();
 
-    const keep = this.visibleVertexMask;
     let visibleTriangleCount = 0;
     for (let i = 0; i < triangles.length; i += 3) {
-      const a = triangles[i];
-      const b = triangles[i + 1];
-      const c = triangles[i + 2];
-      if (keep && !(keep[a] && keep[b] && keep[c])) continue;
       visibleTriangleCount++;
     }
     if (visibleTriangleCount <= 0) return new THREE.BufferGeometry();
@@ -318,7 +276,6 @@ export class HypercubeRenderer {
       const a = triangles[i];
       const b = triangles[i + 1];
       const c = triangles[i + 2];
-      if (keep && !(keep[a] && keep[b] && keep[c])) continue;
 
       const pa = this.points[a];
       const pb = this.points[b];

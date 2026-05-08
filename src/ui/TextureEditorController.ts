@@ -11,6 +11,7 @@ import {
 import { TexturePresetStore, texturePresetLabel } from './texturePresets';
 
 type SurfaceTarget = { surface: SurfaceState; renderer: HypercubeRenderer };
+const OPAQUE_ALPHA_THRESHOLD = 0.999;
 
 type TextureEditorControllerOptions = {
   renderer: THREE.WebGLRenderer;
@@ -212,9 +213,11 @@ export class TextureEditorController {
     material.color.setHex(surface.color);
     material.metalness = surface.metalness;
     material.roughness = surface.roughness;
-    material.transparent = surface.alpha < 0.999;
     material.opacity = surface.alpha;
-    material.depthWrite = !material.transparent;
+    material.transparent = surface.alpha < OPAQUE_ALPHA_THRESHOLD;
+    material.alphaHash = false;
+    material.alphaToCoverage = false;
+    material.depthWrite = true;
     material.needsUpdate = true;
 
     this.previewRenderer.render(this.previewScene, this.previewCamera);

@@ -8,7 +8,6 @@ import type { TransformController } from './TransformController';
 
 type ViewportParams = {
   editMode: boolean;
-  sliceDim: number;
 };
 
 type PrimitiveMenuOption = {
@@ -33,7 +32,6 @@ type ViewportInteractionControllerOptions = {
   baseSelection: number;
   noSelection: number;
   getParams: () => ViewportParams;
-  setSliceDim: (dim: number) => void;
   getN: () => number;
   getX: () => Float32Array;
   getM: () => number;
@@ -41,7 +39,7 @@ type ViewportInteractionControllerOptions = {
   getSelectedInstance: () => number;
   getRendererND: () => HypercubeRenderer;
   getExtraInstances: () => Instance[];
-  selectObject: (idx: number) => void;
+  selectObject: (idx: number, additive?: boolean) => void;
   placeVertexMarker: (instIdx: number, vertexIdx: number) => void;
   pushUndoSnapshot: () => void;
   addPrimitiveInstanceAt: (kind: PrimitiveKind, label: string, offset: THREE.Vector3, syncMode?: boolean) => void;
@@ -49,9 +47,10 @@ type ViewportInteractionControllerOptions = {
   removeLastKeyframe: () => void;
   deleteSelected: () => void;
   hasActiveSelection: () => boolean;
+  canAddProductMesh: () => boolean;
+  addProductMesh: () => void;
   recalculateSelectedOrigin: () => void;
   focusObjectOrigin: (idx: number) => void;
-  applySliceFilter: () => void;
   cycleAxes: (step: number) => void;
 };
 
@@ -83,7 +82,6 @@ export class ViewportInteractionController {
     canvas.addEventListener('pointermove', ev => this.handleTransformPointerMove(ev));
     canvas.addEventListener('pointerleave', () => this.options.tooltipEl?.classList.remove('visible'));
     canvas.addEventListener('contextmenu', ev => this.handleContextMenu(ev));
-    canvas.addEventListener('wheel', ev => this.handleWheel(ev));
     canvas.addEventListener('mousedown', ev => this.handleMiddleMouseDown(ev), { capture: true });
     canvas.addEventListener('pointerdown', ev => this.handlePointerDown(ev));
 
@@ -102,21 +100,13 @@ export class ViewportInteractionController {
     const menu = this.options.contextMenuEl;
     if (!menu) return;
     menu.replaceChildren();
+    menu.classList.remove('submenu-left');
     menu.classList.add('primitive-menu');
     const spawnPoint = this.pickPointOnTargetPlane({ clientX: this.lastPointer.x, clientY: this.lastPointer.y });
     this.appendKeyframeActions(menu);
     this.appendMenuSeparator(menu);
-    for (const opt of this.options.primitiveMenuOptions) {
-      const btn = document.createElement('button');
-      btn.textContent = opt.label;
-      btn.onclick = () => {
-        menu.style.display = 'none';
-        this.options.pushUndoSnapshot();
-        this.options.addPrimitiveInstanceAt(opt.kind, `${opt.label} #${this.options.getExtraInstances().length + 1}`, spawnPoint, false);
-      };
-      menu.appendChild(btn);
-    }
-    this.placeMenu(menu, this.lastPointer.x, this.lastPointer.y, 196);
+    this.appendPrimitiveButtons(menu, spawnPoint, false);
+    this.placeMenu(menu, this.lastPointer.x, this.lastPointer.y, 196, 0, 320);
     menu.style.display = 'grid';
   }
 
@@ -252,30 +242,29 @@ export class ViewportInteractionController {
     this.lastPointer = { x: ev.clientX, y: ev.clientY };
     this.deletePending = false;
     menu.replaceChildren();
-    menu.classList.remove('primitive-menu');
+    menu.classList.remove('primitive-menu', 'submenu-left');
     const spawnPoint = this.pickPointOnTargetPlane(ev);
 
     if (this.options.getParams().editMode) {
       if (this.options.transformController.getSelectedVertex() < 0) return;
       this.appendTransformAction(menu, 'Move vertex', 'move', ev);
     } else if (!this.options.hasActiveSelection()) {
-      menu.classList.add('primitive-menu');
       this.appendKeyframeActions(menu);
       this.appendMenuSeparator(menu);
-      for (const opt of this.options.primitiveMenuOptions) {
-        const btn = document.createElement('button');
-        btn.textContent = opt.label;
-        btn.onclick = () => {
-          menu.style.display = 'none';
-          this.options.pushUndoSnapshot();
-          this.options.addPrimitiveInstanceAt(opt.kind, `${opt.label} #${this.options.getExtraInstances().length + 1}`, spawnPoint);
-        };
-        menu.appendChild(btn);
-      }
+      this.appendAddSubmenu(menu, spawnPoint);
     } else {
       this.appendTransformAction(menu, 'Move', 'move', ev);
       this.appendTransformAction(menu, 'Rotate', 'rotate', ev);
       this.appendTransformAction(menu, 'Scale', 'scale', ev);
+      if (this.options.canAddProductMesh()) {
+        const productButton = document.createElement('button');
+        productButton.textContent = 'Add product mesh';
+        productButton.onclick = () => {
+          menu.style.display = 'none';
+          this.options.addProductMesh();
+        };
+        menu.appendChild(productButton);
+      }
       const recalculateOriginButton = document.createElement('button');
       recalculateOriginButton.textContent = 'Recalculate origin';
       recalculateOriginButton.onclick = () => {
@@ -290,15 +279,24 @@ export class ViewportInteractionController {
     }
 
     const primitiveMenu = menu.classList.contains('primitive-menu');
-    this.placeMenu(menu, ev.clientX, ev.clientY, primitiveMenu ? 196 : 180);
+    const hasAddSubmenu = !!menu.querySelector('.context-menu-submenu-panel');
+    this.placeMenu(menu, ev.clientX, ev.clientY, primitiveMenu ? 196 : 180, hasAddSubmenu ? 196 : 0, hasAddSubmenu ? 320 : 150);
     menu.style.display = menu.childElementCount ? (primitiveMenu ? 'grid' : 'block') : 'none';
   }
 
-  private placeMenu(menu: HTMLDivElement, clientX: number, clientY: number, estimatedWidth: number) {
+  private placeMenu(
+    menu: HTMLDivElement,
+    clientX: number,
+    clientY: number,
+    estimatedWidth: number,
+    estimatedSubmenuWidth = 0,
+    estimatedHeight = 150,
+  ) {
     const x = Math.max(12, Math.min(clientX, window.innerWidth - estimatedWidth - 12));
-    const y = Math.max(12, Math.min(clientY, window.innerHeight - 150));
+    const y = Math.max(12, Math.min(clientY, window.innerHeight - estimatedHeight));
     menu.style.left = `${x}px`;
     menu.style.top = `${y}px`;
+    menu.classList.toggle('submenu-left', x + estimatedWidth + estimatedSubmenuWidth + 18 > window.innerWidth);
   }
 
   private appendKeyframeActions(menu: HTMLDivElement) {
@@ -325,13 +323,39 @@ export class ViewportInteractionController {
     menu.appendChild(separator);
   }
 
-  private handleWheel(ev: WheelEvent) {
-    if (!this.options.getParams().editMode) return;
-    ev.preventDefault();
-    const dir = ev.deltaY > 0 ? 1 : -1;
-    const next = Math.max(-1, Math.min(this.options.getN() - 1, this.options.getParams().sliceDim + dir));
-    this.options.setSliceDim(next);
-    this.options.applySliceFilter();
+  private appendAddSubmenu(menu: HTMLDivElement, spawnPoint: THREE.Vector3) {
+    const item = document.createElement('div');
+    item.className = 'context-menu-submenu';
+
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'context-menu-submenu-trigger';
+    trigger.textContent = 'Add';
+    trigger.onclick = ev => {
+      ev.stopPropagation();
+      item.classList.toggle('open');
+    };
+
+    const submenu = document.createElement('div');
+    submenu.className = 'context-menu-submenu-panel';
+    this.appendPrimitiveButtons(submenu, spawnPoint);
+
+    item.append(trigger, submenu);
+    menu.appendChild(item);
+  }
+
+  private appendPrimitiveButtons(container: HTMLElement, spawnPoint: THREE.Vector3, syncMode = true) {
+    const menu = this.options.contextMenuEl;
+    for (const opt of this.options.primitiveMenuOptions) {
+      const btn = document.createElement('button');
+      btn.textContent = opt.label;
+      btn.onclick = () => {
+        if (menu) menu.style.display = 'none';
+        this.options.pushUndoSnapshot();
+        this.options.addPrimitiveInstanceAt(opt.kind, `${opt.label} #${this.options.getExtraInstances().length + 1}`, spawnPoint, syncMode);
+      };
+      container.appendChild(btn);
+    }
   }
 
   private handleMiddleMouseDown(ev: MouseEvent) {
@@ -364,7 +388,7 @@ export class ViewportInteractionController {
 
     if (ev.button !== 0) return;
     const selected = this.selectObjectFromPointer(ev);
-    if (selected !== this.options.noSelection && this.isObjectFocusDoubleClick(ev, selected)) {
+    if (!ev.shiftKey && selected !== this.options.noSelection && this.isObjectFocusDoubleClick(ev, selected)) {
       ev.preventDefault();
       this.options.focusObjectOrigin(selected);
       this.resetLastObjectClick();
@@ -419,7 +443,7 @@ export class ViewportInteractionController {
     this.deletePending = false;
   }
 
-  private selectObjectFromPointer(ev: { clientX: number; clientY: number }) {
+  private selectObjectFromPointer(ev: PointerEvent) {
     const rect = this.options.renderer.domElement.getBoundingClientRect();
     const mx = ev.clientX - rect.left;
     const my = ev.clientY - rect.top;
@@ -448,7 +472,7 @@ export class ViewportInteractionController {
     };
 
     const candidates: { instIdx: number; contains: boolean; area: number; }[] = [];
-    if (M > 0) {
+    if (M > 0 && this.options.getBaseVisible()) {
       const box = screenBounds(rendererND.positions, M);
       const contains = mx >= box.minX && mx <= box.maxX && my >= box.minY && my <= box.maxY;
       const area = (box.maxX - box.minX) * (box.maxY - box.minY);
@@ -472,11 +496,12 @@ export class ViewportInteractionController {
     }
 
     if (bestInst === this.options.noSelection) {
-      this.options.selectObject(this.options.noSelection);
+      this.options.selectObject(this.options.noSelection, ev.shiftKey);
       return this.options.noSelection;
     }
 
-    this.options.selectObject(bestInst);
+    const additive = ev.shiftKey && !this.options.getParams().editMode;
+    this.options.selectObject(bestInst, additive);
     if (this.options.getParams().editMode) this.selectNearestVertex(bestInst, mx, my, w, h);
     return bestInst;
   }

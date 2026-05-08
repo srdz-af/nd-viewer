@@ -47,6 +47,7 @@ export type SceneSnapshot<TPrimitiveMode> = {
   baseVisible: boolean;
   baseSurface?: SurfaceState;
   selectedInstance: number;
+  selectedInstances?: number[];
   instances: InstanceSnapshot[];
 };
 

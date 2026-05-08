@@ -29,11 +29,20 @@ type Keyframe = {
   state: AnimationKeyframeState;
 };
 
+export type AnimationTimelineState = {
+  settings: AnimationSettings;
+  currentFrame: number;
+  playing: boolean;
+  cameraDimensionsFollowViewport: boolean;
+  keyframes: Keyframe[];
+};
+
 type KeyframeTimelineControllerOptions = {
   captureState: () => AnimationKeyframeState;
   applyState: (state: AnimationKeyframeState) => void;
   interpolateState: (from: AnimationKeyframeState, to: AnimationKeyframeState, t: number) => AnimationKeyframeState;
   onSettingsChange?: (settings: AnimationSettings) => void;
+  onStateChange?: () => void;
 };
 
 const DEFAULT_FPS = 60;
@@ -66,6 +75,27 @@ function readPositiveInteger(input: HTMLInputElement | null, fallback: number, m
   if (!input) return fallback;
   const parsed = Number.parseInt(input.value, 10);
   return clamp(Number.isFinite(parsed) ? parsed : fallback, min, max);
+}
+
+function finiteNumber(value: unknown, fallback: number) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function cloneKeyframeState(state: AnimationKeyframeState): AnimationKeyframeState {
+  return {
+    dimension: state.dimension,
+    rotMatrix: new Float32Array(state.rotMatrix),
+    axesOrder: [...state.axesOrder],
+    axesOffset: state.axesOffset,
+    renderMode: state.renderMode,
+    bloomIntensity: state.bloomIntensity,
+    motionBlurIntensity: state.motionBlurIntensity,
+    cameraPosition: state.cameraPosition.clone(),
+    cameraTarget: state.cameraTarget.clone(),
+    cameraUp: state.cameraUp.clone(),
+    cameraFov: state.cameraFov,
+    cameraZoom: state.cameraZoom,
+  };
 }
 
 export class KeyframeTimelineController {
@@ -154,6 +184,51 @@ export class KeyframeTimelineController {
     return { ...this.settings };
   }
 
+  getTimelineState(): AnimationTimelineState {
+    return {
+      settings: this.getSettings(),
+      currentFrame: this.currentFrame,
+      playing: this.playing,
+      cameraDimensionsFollowViewport: this.cameraDimensionsFollowViewport,
+      keyframes: this.sortedFrames().map(frame => ({
+        frame,
+        state: cloneKeyframeState(this.keyframes.get(frame)!),
+      })),
+    };
+  }
+
+  applyTimelineState(state: Partial<AnimationTimelineState> | null | undefined, applyCurrentFrameState = false) {
+    if (!state) return;
+    const fallbackViewport = viewportDimensions();
+    const settings = state.settings ?? this.settings;
+    this.cameraDimensionsFollowViewport = typeof state.cameraDimensionsFollowViewport === 'boolean'
+      ? state.cameraDimensionsFollowViewport
+      : this.cameraDimensionsFollowViewport;
+    this.settings = {
+      fps: clamp(Math.round(finiteNumber(settings.fps, this.settings.fps)), MIN_FPS, MAX_FPS),
+      frameCount: clamp(Math.round(finiteNumber(settings.frameCount, this.settings.frameCount)), MIN_FRAME_COUNT, MAX_FRAME_COUNT),
+      fullResolution: Boolean(settings.fullResolution),
+      cameraWidth: viewportDimension(settings.cameraWidth, fallbackViewport.width),
+      cameraHeight: viewportDimension(settings.cameraHeight, fallbackViewport.height),
+    };
+
+    this.keyframes.clear();
+    for (const keyframe of state.keyframes ?? []) {
+      const frame = clamp(Math.round(finiteNumber(keyframe.frame, 0)), 0, this.settings.frameCount - 1);
+      if (keyframe.state) this.keyframes.set(frame, cloneKeyframeState(keyframe.state));
+    }
+
+    if (this.fpsInput) this.fpsInput.value = String(this.settings.fps);
+    if (this.frameCountInput) this.frameCountInput.value = String(this.settings.frameCount);
+    if (this.cameraWidthInput) this.cameraWidthInput.value = this.cameraDimensionsFollowViewport ? '' : String(this.settings.cameraWidth);
+    if (this.cameraHeightInput) this.cameraHeightInput.value = this.cameraDimensionsFollowViewport ? '' : String(this.settings.cameraHeight);
+    this.syncFullResolutionButton();
+    this.options.onSettingsChange?.(this.getSettings());
+    this.setCurrentFrame(finiteNumber(state.currentFrame, 0), applyCurrentFrameState);
+    this.setPlaying(Boolean(state.playing));
+    this.render();
+  }
+
   isPlaying() {
     return this.playing;
   }
@@ -166,6 +241,7 @@ export class KeyframeTimelineController {
     const frame = this.roundedCurrentFrame();
     this.keyframes.set(frame, this.options.captureState());
     this.render();
+    this.options.onStateChange?.();
   }
 
   removeLastKeyframe() {
@@ -173,6 +249,7 @@ export class KeyframeTimelineController {
     if (frame == null) return;
     this.keyframes.delete(frame);
     this.render();
+    this.options.onStateChange?.();
   }
 
   playFromStart() {
@@ -198,6 +275,7 @@ export class KeyframeTimelineController {
   }
 
   private setPlaying(active: boolean) {
+    const changed = this.playing !== active;
     this.playing = active;
     this.playButton?.classList.toggle('active', active);
     this.playButton?.setAttribute('aria-pressed', String(active));
@@ -208,6 +286,7 @@ export class KeyframeTimelineController {
     }
     const icon = this.playButton?.querySelector('.material-symbols-rounded');
     if (icon) icon.textContent = active ? 'pause' : 'play_arrow';
+    if (changed) this.options.onStateChange?.();
   }
 
   private toggleMenu() {
@@ -292,6 +371,7 @@ export class KeyframeTimelineController {
 
     this.options.onSettingsChange?.(this.getSettings());
     this.render();
+    this.options.onStateChange?.();
   }
 
   private handleCameraDimensionsInput() {
@@ -316,12 +396,14 @@ export class KeyframeTimelineController {
     if (this.cameraWidthInput) this.cameraWidthInput.value = String(viewport.width);
     if (this.cameraHeightInput) this.cameraHeightInput.value = String(viewport.height);
     this.options.onSettingsChange?.(this.getSettings());
+    this.options.onStateChange?.();
   };
 
   private toggleFullResolutionCapture() {
     this.settings.fullResolution = !this.settings.fullResolution;
     this.syncFullResolutionButton();
     this.options.onSettingsChange?.(this.getSettings());
+    this.options.onStateChange?.();
   }
 
   private syncFullResolutionButton() {
@@ -376,12 +458,14 @@ export class KeyframeTimelineController {
   };
 
   private setCurrentFrame(frame: number, applyState: boolean) {
+    const previousFrame = this.currentFrame;
     this.currentFrame = clamp(frame, 0, Math.max(0, this.settings.frameCount - 1));
     if (applyState) {
       const state = this.stateAtFrame(this.currentFrame);
       if (state) this.options.applyState(state);
     }
     this.render();
+    if (Math.abs(previousFrame - this.currentFrame) > 1e-6) this.options.onStateChange?.();
   }
 
   private stateAtFrame(frame: number) {

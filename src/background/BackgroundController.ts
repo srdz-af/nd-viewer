@@ -4,10 +4,10 @@ import type { ViewMode } from '../constants';
 
 const HDR_BACKGROUND_SELECTION_KEY = 'blend.hdriSelection.v1';
 const HDR_BACKGROUND_BLUR_KEY = 'blend.hdriBlur.v1';
-const HDR_BACKGROUND_LIGHTNESS_KEY = 'blend.hdriLightness.v1';
+const HDR_BACKGROUND_LIGHTNESS_KEY = 'blend.hdriLightness.v2';
 const HDR_BACKGROUND_QUALITY_KEY = 'blend.hdriQuality.v1';
 const HDR_BACKGROUND_BLUR_DEFAULT = 0;
-const HDR_BACKGROUND_LIGHTNESS_DEFAULT = 0;
+const HDR_BACKGROUND_LIGHTNESS_DEFAULT = 0.15;
 const PLAIN_BACKGROUND_KEY = 'plain' as const;
 const DEFAULT_SOLID_BACKGROUND_KEY = 'ferndale' as const;
 const DEFAULT_HDR_QUALITY = 'sd' as const;
@@ -94,6 +94,14 @@ type BackgroundControllerOptions = {
   controlsEl: HTMLDivElement | null;
   getRenderMode: () => ViewMode;
   getEditMode: () => boolean;
+  onStateChange?: () => void;
+};
+
+export type BackgroundUrlState = {
+  key: string;
+  quality: HdriQuality;
+  blur: number;
+  lightness: number;
 };
 
 const backgroundOptionByKey = new Map<BackgroundKey, BackgroundOption>([
@@ -141,6 +149,10 @@ function normalizeHdrQuality(value: string | null | undefined): HdriQuality {
   return HDR_QUALITIES.includes(value as HdriQuality) ? value as HdriQuality : DEFAULT_HDR_QUALITY;
 }
 
+function finiteNumber(value: number | undefined, fallback: number) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
 function hdrCacheKey(key: HdriBackgroundKey, quality: HdriQuality) {
   return `${quality}:${key}`;
 }
@@ -169,6 +181,7 @@ export class BackgroundController {
   private readonly controlsEl: HTMLDivElement | null;
   private readonly getRenderMode: () => ViewMode;
   private readonly getEditMode: () => boolean;
+  private readonly onStateChange?: () => void;
   private readonly hdrLoader = new RGBELoader();
   private readonly hdrBackgroundTextureCache = new Map<string, THREE.Texture>();
   private readonly hdrEnvironmentTargetCache = new Map<string, THREE.WebGLRenderTarget>();
@@ -200,6 +213,7 @@ export class BackgroundController {
     this.controlsEl = options.controlsEl;
     this.getRenderMode = options.getRenderMode;
     this.getEditMode = options.getEditMode;
+    this.onStateChange = options.onStateChange;
     this.hdrBackgroundBlur = clamp01(readStoredNumber(HDR_BACKGROUND_BLUR_KEY, this.hdrBackgroundBlur));
     this.hdrBackgroundLightness = clampHdrLightness(
       readStoredNumber(HDR_BACKGROUND_LIGHTNESS_KEY, this.hdrBackgroundLightness),
@@ -241,6 +255,7 @@ export class BackgroundController {
       if (this.blurValue) this.blurValue.textContent = next.toFixed(2);
       this.applySceneBackground(this.getEditMode());
       this.storeRenderSettings();
+      this.onStateChange?.();
     });
 
     this.lightnessInput?.addEventListener('input', () => {
@@ -250,6 +265,7 @@ export class BackgroundController {
       if (this.lightnessValue) this.lightnessValue.textContent = next.toFixed(2);
       this.applySceneBackground(this.getEditMode());
       this.storeRenderSettings();
+      this.onStateChange?.();
     });
 
     this.qualityButtons.forEach(button => {
@@ -259,6 +275,7 @@ export class BackgroundController {
         this.hdrQuality = next;
         this.storeRenderSettings();
         this.updateSwatchUI();
+        this.onStateChange?.();
         const activeKey = this.activeBackgroundKey;
         if (activeKey && isHdriBackgroundKey(activeKey)) {
           void this.setActiveBackground(activeKey);
@@ -294,7 +311,9 @@ export class BackgroundController {
         }
       }
       button.addEventListener('click', () => {
-        void this.setActiveBackground(key);
+        void this.setActiveBackground(key).then(applied => {
+          if (applied) this.onStateChange?.();
+        });
       });
     });
 
@@ -340,10 +359,32 @@ export class BackgroundController {
     this.hdrQuality = next;
     this.storeRenderSettings();
     this.updateSwatchUI();
+    this.onStateChange?.();
     const activeKey = this.activeBackgroundKey;
     if (activeKey && isHdriBackgroundKey(activeKey)) {
       void this.setActiveBackground(activeKey);
     }
+  }
+
+  getUrlState(): BackgroundUrlState {
+    return {
+      key: this.activeBackgroundKey ?? this.getStoredHdrBackgroundKey(),
+      quality: this.hdrQuality,
+      blur: this.hdrBackgroundBlur,
+      lightness: this.hdrBackgroundLightness,
+    };
+  }
+
+  async applyUrlState(state: Partial<BackgroundUrlState> | null | undefined) {
+    if (!state) return;
+    this.hdrQuality = normalizeHdrQuality(state.quality);
+    this.hdrBackgroundBlur = clamp01(finiteNumber(state.blur, this.hdrBackgroundBlur));
+    this.hdrBackgroundLightness = clampHdrLightness(
+      finiteNumber(state.lightness, this.hdrBackgroundLightness),
+    );
+    this.storeRenderSettings();
+    this.syncRenderControls();
+    await this.setActiveBackground(normalizeBackgroundKey(state.key));
   }
 
   private syncRenderControls() {

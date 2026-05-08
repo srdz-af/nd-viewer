@@ -9,9 +9,6 @@ import type { ViewMode } from '../constants';
 
 type ProjectionParams = {
   N: number;
-  sliceDim: number;
-  sliceMin: number;
-  sliceMax: number;
   renderMode: ViewMode;
   editMode: boolean;
   axesX: number;
@@ -39,8 +36,6 @@ type ProjectionPipelineOptions = {
   updateSelectionOutline: () => void;
   updateVertexCloud: () => void;
   updateAxisGuide: () => void;
-  applySceneBackground: () => void;
-  clearVertexCloud: () => void;
   tmpN: Float32Array;
   tmpVec: THREE.Vector3;
   tmpCenter: THREE.Vector3;
@@ -48,24 +43,6 @@ type ProjectionPipelineOptions = {
 
 export class ProjectionPipeline {
   constructor(private readonly options: ProjectionPipelineOptions) {}
-
-  applySliceFilter() {
-    const params = this.options.getParams();
-    const N = this.options.getN();
-    const M = this.options.getM();
-    const rendererND = this.options.getRendererND();
-    const X = this.options.getX();
-    if (M > 0 && rendererND.geometry) {
-      rendererND.filterEdgesByDimRange(X, N, M, params.sliceDim, params.sliceMin, params.sliceMax);
-    }
-    this.options.getExtraInstances().forEach(inst => {
-      inst.renderer.filterEdgesByDimRange(inst.X, N, inst.M, params.sliceDim, params.sliceMin, params.sliceMax);
-    });
-    this.options.updateSelectionOutline();
-    this.options.applySceneBackground();
-    if (params.editMode) this.options.updateVertexCloud();
-    else this.options.clearVertexCloud();
-  }
 
   projectAndRenderAll() {
     const N = this.options.getN();

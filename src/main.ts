@@ -6,7 +6,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { FullScreenQuad, Pass } from 'three/examples/jsm/postprocessing/Pass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { MAX_N, type ViewMode } from './constants';
+import { MAX_N, VIEW_MODES, type ViewMode } from './constants';
 import { RotND } from './RotND';
 import { NDProjector, canonicalP } from './geometry/NDProjector';
 import {
@@ -21,7 +21,8 @@ import {
   normalizeAxisMap,
   type AxisMap,
 } from './geometry/projectionUtils';
-import { BackgroundController } from './background/BackgroundController';
+import { buildProductMesh, type ProductMeshFactor } from './geometry/productMesh';
+import { BackgroundController, type BackgroundUrlState } from './background/BackgroundController';
 import { KeyboardCameraController } from './controls/KeyboardCameraController';
 import { KeyboardShortcutController } from './interaction/KeyboardShortcutController';
 import { TransformController } from './interaction/TransformController';
@@ -38,11 +39,26 @@ import { HypercubeRenderer } from './rendering/HypercubeRenderer';
 import {
   KeyframeTimelineController,
   type AnimationKeyframeState,
+  type AnimationTimelineState,
 } from './animation/KeyframeTimelineController';
 import { createSceneInstance, type InstanceGeometryData } from './scene/instanceFactory';
 import { cloneObjectOrigin, computeObjectOrigin, type ObjectOrigin } from './scene/objectOrigin';
 import { ProjectionPipeline } from './scene/ProjectionPipeline';
 import { SceneHistory } from './scene/SceneHistory';
+import {
+  clearScenePayloadFromCurrentUrl,
+  createSceneUrlWithPayload,
+  decodeSceneUrlPayload,
+  encodeSceneUrlPayload,
+  packF32,
+  packU16,
+  packU32,
+  readScenePayloadFromText,
+  readScenePayloadFromUrl,
+  unpackF32,
+  unpackU16,
+  unpackU32,
+} from './scene/sceneUrlState';
 import { DEFAULT_SURFACE, cloneSurface, normalizeSurface, surfacesEqual, type SurfaceState } from './scene/surface';
 import type {
   DataSource,
@@ -53,13 +69,102 @@ import type {
   TransformMode,
   TransformState,
 } from './scene/types';
+import type { ExtraAxisGizmoState } from './ui/ExtraAxisGizmoController';
 
 type PrimitiveMode = PrimitiveKind;
+type PackedVec3 = [number, number, number];
+type PackedTransform = [
+  number, number, number,
+  number, number, number,
+  number, number, number,
+];
+type PackedCamera = [
+  number, number, number,
+  number, number, number,
+  number, number, number,
+  number, number,
+];
+type PackedSurface = [number, number, number, number];
+type PackedTopology = [string, string];
+type PackedBackgroundState = [string, string, number, number];
+type PackedAnimationSettings = [number, number, 0 | 1, number, number];
+type PackedAnimationKeyframeState = {
+  d: number;
+  r: string;
+  o: number[];
+  f: number;
+  m: ViewMode;
+  b: number;
+  mb: number;
+  c: PackedCamera;
+};
+type PackedAnimationTimelineState = {
+  s: PackedAnimationSettings;
+  c: number;
+  p: 0 | 1;
+  fv: 0 | 1;
+  k: Array<[number, PackedAnimationKeyframeState]>;
+};
+type PackedInstanceState = {
+  x: string;
+  e: string;
+  st?: PackedTopology;
+  m: number;
+  o: PackedVec3;
+  l: string;
+  k: PrimitiveMode;
+  t: PackedTransform;
+  g: string;
+  n: number;
+  a: number[];
+  v: 0 | 1;
+  s: PackedSurface;
+};
+type PackedSceneUrlState = {
+  v: 1;
+  n: number;
+  x: string;
+  e: string;
+  st?: PackedTopology;
+  m: number;
+  ds: DataSource;
+  l: string;
+  pn: number;
+  pk: PrimitiveMode;
+  rm: ViewMode;
+  em: 0 | 1;
+  fx: [number, number];
+  r: string;
+  ax: [number, number, number];
+  ao: number[];
+  of: number;
+  bam: number[];
+  bt: PackedTransform;
+  bo: string;
+  bn: number;
+  bv: 0 | 1;
+  bs: PackedSurface;
+  si: number;
+  ss: number[];
+  sv: number;
+  i: PackedInstanceState[];
+  c: PackedCamera;
+  bg: PackedBackgroundState;
+  tl?: PackedAnimationTimelineState;
+  pc: 0 | 1;
+  ag?: ExtraAxisGizmoState;
+};
 
 const DEFAULT_BLOOM_INTENSITY = 0;
 const DEFAULT_MOTION_BLUR_INTENSITY = 0;
 const MAX_VIEWPORT_PIXEL_RATIO = 2;
 const LOW_RES_CAPTURE_PIXEL_RATIO_SCALE = 0.5;
+
+let sceneUrlApplying = false;
+
+function requestSceneUrlUpdate() {
+  // Scene URLs are exported explicitly from the save button.
+}
 
 class SmoothAfterimagePass extends Pass {
   uniforms: {
@@ -234,6 +339,9 @@ const bloomIntensityInput = document.getElementById('bloom-intensity') as HTMLIn
 const bloomIntensityValue = document.getElementById('bloom-intensity-value') as HTMLOutputElement | null;
 const motionBlurIntensityInput = document.getElementById('motion-blur-intensity') as HTMLInputElement | null;
 const motionBlurIntensityValue = document.getElementById('motion-blur-intensity-value') as HTMLOutputElement | null;
+const sceneSaveButton = document.getElementById('scene-save-button') as HTMLButtonElement | null;
+const sceneLoadButton = document.getElementById('scene-load-button') as HTMLButtonElement | null;
+const sceneLoadInput = document.getElementById('scene-load-input') as HTMLInputElement | null;
 const modalOverlayController = new ModalOverlayController();
 const paneController = new PaneController();
 
@@ -271,6 +379,7 @@ const backgroundController = new BackgroundController({
   controlsEl: document.getElementById('background-controls') as HTMLDivElement | null,
   getRenderMode: () => PARAMS.renderMode,
   getEditMode: () => PARAMS.editMode,
+  onStateChange: () => requestSceneUrlUpdate(),
 });
 
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.01, 100);
@@ -304,6 +413,7 @@ function setCaptureResolutionMode(fullResolution: boolean) {
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
+controls.addEventListener('change', () => requestSceneUrlUpdate());
 const worldUp = new THREE.Vector3(0, 1, 0);
 let keyboardCamera: KeyboardCameraController;
 
@@ -319,7 +429,6 @@ const updateAxisLegend = () => axisController.updateAxisLegend();
 const updateAxisGizmo = () => axisController.updateAxisGizmo();
 const applyAutoRotation = (dt: number) => axisController.applyAutoRotation(dt);
 let projectionPipeline: ProjectionPipeline;
-const applySliceFilter = () => projectionPipeline.applySliceFilter();
 const projectAndRenderAll = () => projectionPipeline.projectAndRenderAll();
 let transformController: TransformController;
 let viewportInteraction: ViewportInteractionController;
@@ -388,7 +497,9 @@ let baseLabel = 'Hypercube';
 const BASE_SELECTION = -1;
 const NO_SELECTION = -2;
 let selectedInstance: number = BASE_SELECTION; // -1 base, >=0 extra, -2 none
-let selectionOutline: THREE.LineSegments | null = null;
+let selectedInstances: number[] = [BASE_SELECTION];
+let selectionOutlines: THREE.LineSegments[] = [];
+let selectionOutlineKeys: number[] = [];
 const baseTransform = { pos: new THREE.Vector3(), rot: new THREE.Vector3(), scale: new THREE.Vector3(1,1,1) };
 let baseOrigin: ObjectOrigin = new Float32Array(MAX_N);
 let baseOriginalN = 0;
@@ -402,7 +513,10 @@ keyboardCamera = new KeyboardCameraController({
   defaultCameraPosition: DEFAULT_CAMERA_POSITION,
   worldUp,
   isTransformActive: () => transformController?.isActive() ?? false,
-  onCameraChange: () => updateAxisGizmo(),
+  onCameraChange: () => {
+    updateAxisGizmo();
+    requestSceneUrlUpdate();
+  },
 });
 function cloneTransformState(transform: TransformState): TransformState {
   return {
@@ -410,6 +524,428 @@ function cloneTransformState(transform: TransformState): TransformState {
     rot: transform.rot.clone(),
     scale: transform.scale.clone(),
   };
+}
+
+function finiteNumber(value: unknown, fallback = 0) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function finiteInteger(value: unknown, fallback = 0) {
+  return Math.round(finiteNumber(value, fallback));
+}
+
+function normalizedAxisDim(value: unknown, fallback = 0) {
+  return Math.max(0, Math.min(MAX_N - 1, finiteInteger(value, fallback)));
+}
+
+function normalizeViewMode(mode: unknown): ViewMode {
+  return VIEW_MODES.includes(mode as ViewMode) ? mode as ViewMode : 'solid';
+}
+
+function packVec3(vec: THREE.Vector3): PackedVec3 {
+  return [vec.x, vec.y, vec.z];
+}
+
+function unpackVec3(values: ArrayLike<unknown> | undefined, fallback = new THREE.Vector3()) {
+  return new THREE.Vector3(
+    finiteNumber(values?.[0], fallback.x),
+    finiteNumber(values?.[1], fallback.y),
+    finiteNumber(values?.[2], fallback.z),
+  );
+}
+
+function packTransformState(transform: TransformState): PackedTransform {
+  return [
+    transform.pos.x, transform.pos.y, transform.pos.z,
+    transform.rot.x, transform.rot.y, transform.rot.z,
+    transform.scale.x, transform.scale.y, transform.scale.z,
+  ];
+}
+
+function unpackTransformState(values: ArrayLike<unknown> | undefined): TransformState {
+  return {
+    pos: unpackVec3(values),
+    rot: unpackVec3(values ? [values[3], values[4], values[5]] : undefined),
+    scale: unpackVec3(values ? [values[6], values[7], values[8]] : undefined, new THREE.Vector3(1, 1, 1)),
+  };
+}
+
+function packSurfaceState(surface: SurfaceState): PackedSurface {
+  return [surface.color, surface.metalness, surface.roughness, surface.alpha];
+}
+
+function unpackSurfaceState(surface: ArrayLike<unknown> | undefined) {
+  return normalizeSurface({
+    color: finiteInteger(surface?.[0], DEFAULT_SURFACE.color),
+    metalness: finiteNumber(surface?.[1], DEFAULT_SURFACE.metalness),
+    roughness: finiteNumber(surface?.[2], DEFAULT_SURFACE.roughness),
+    alpha: finiteNumber(surface?.[3], DEFAULT_SURFACE.alpha),
+  });
+}
+
+function packSurfaceTopology(topology?: PrimitiveSurfaceTopology): PackedTopology | undefined {
+  if (!topology) return undefined;
+  return [packU32(topology.triangles), packU16(topology.facetIds)];
+}
+
+function unpackSurfaceTopology(topology?: PackedTopology): PrimitiveSurfaceTopology | undefined {
+  if (!topology) return undefined;
+  return {
+    triangles: unpackU32(topology[0]),
+    facetIds: unpackU16(topology[1]),
+  };
+}
+
+function packCameraState(): PackedCamera {
+  return [
+    camera.position.x, camera.position.y, camera.position.z,
+    controls.target.x, controls.target.y, controls.target.z,
+    camera.up.x, camera.up.y, camera.up.z,
+    camera.fov, camera.zoom,
+  ];
+}
+
+function applyCameraState(state: PackedCamera | undefined) {
+  if (!state) return;
+  camera.position.copy(unpackVec3(state, DEFAULT_CAMERA_POSITION));
+  controls.target.copy(unpackVec3([state[3], state[4], state[5]], new THREE.Vector3()));
+  camera.up.copy(unpackVec3([state[6], state[7], state[8]], worldUp).normalize());
+  camera.fov = Math.max(1, Math.min(179, finiteNumber(state[9], camera.fov)));
+  camera.zoom = Math.max(0.01, Math.min(100, finiteNumber(state[10], camera.zoom)));
+  camera.updateProjectionMatrix();
+  controls.update();
+  updateAxisGizmo();
+}
+
+function packBackgroundState(state: BackgroundUrlState): PackedBackgroundState {
+  return [state.key, state.quality, state.blur, state.lightness];
+}
+
+function unpackBackgroundState(state: PackedBackgroundState | undefined): BackgroundUrlState | undefined {
+  if (!state) return undefined;
+  return {
+    key: typeof state[0] === 'string' ? state[0] : 'ferndale',
+    quality: state[1] === 'hd' ? 'hd' : 'sd',
+    blur: finiteNumber(state[2], 0),
+    lightness: finiteNumber(state[3], 0.15),
+  };
+}
+
+function packAnimationKeyframeState(state: AnimationKeyframeState): PackedAnimationKeyframeState {
+  return {
+    d: state.dimension,
+    r: packF32(state.rotMatrix),
+    o: [...state.axesOrder],
+    f: state.axesOffset,
+    m: state.renderMode,
+    b: state.bloomIntensity,
+    mb: state.motionBlurIntensity,
+    c: [
+      state.cameraPosition.x, state.cameraPosition.y, state.cameraPosition.z,
+      state.cameraTarget.x, state.cameraTarget.y, state.cameraTarget.z,
+      state.cameraUp.x, state.cameraUp.y, state.cameraUp.z,
+      state.cameraFov, state.cameraZoom,
+    ],
+  };
+}
+
+function unpackAnimationKeyframeState(state: PackedAnimationKeyframeState): AnimationKeyframeState {
+  return {
+    dimension: Math.max(3, Math.min(MAX_N, finiteInteger(state.d, MAX_N))),
+    rotMatrix: unpackF32(state.r),
+    axesOrder: Array.isArray(state.o) ? state.o.map((dim, idx) => normalizedAxisDim(dim, idx)) : [],
+    axesOffset: finiteInteger(state.f, 0),
+    renderMode: normalizeViewMode(state.m),
+    bloomIntensity: clamp01(finiteNumber(state.b, DEFAULT_BLOOM_INTENSITY)),
+    motionBlurIntensity: clamp01(finiteNumber(state.mb, DEFAULT_MOTION_BLUR_INTENSITY)),
+    cameraPosition: unpackVec3(state.c, DEFAULT_CAMERA_POSITION),
+    cameraTarget: unpackVec3([state.c[3], state.c[4], state.c[5]], new THREE.Vector3()),
+    cameraUp: unpackVec3([state.c[6], state.c[7], state.c[8]], worldUp).normalize(),
+    cameraFov: Math.max(1, Math.min(179, finiteNumber(state.c[9], 50))),
+    cameraZoom: Math.max(0.01, Math.min(100, finiteNumber(state.c[10], 1))),
+  };
+}
+
+function packTimelineState(state: AnimationTimelineState): PackedAnimationTimelineState {
+  return {
+    s: [
+      state.settings.fps,
+      state.settings.frameCount,
+      state.settings.fullResolution ? 1 : 0,
+      state.settings.cameraWidth,
+      state.settings.cameraHeight,
+    ],
+    c: state.currentFrame,
+    p: state.playing ? 1 : 0,
+    fv: state.cameraDimensionsFollowViewport ? 1 : 0,
+    k: state.keyframes.map(keyframe => [keyframe.frame, packAnimationKeyframeState(keyframe.state)]),
+  };
+}
+
+function unpackTimelineState(state: PackedAnimationTimelineState): AnimationTimelineState {
+  return {
+    settings: {
+      fps: finiteInteger(state.s[0], 60),
+      frameCount: finiteInteger(state.s[1], 180),
+      fullResolution: state.s[2] === 1,
+      cameraWidth: finiteInteger(state.s[3], window.innerWidth),
+      cameraHeight: finiteInteger(state.s[4], window.innerHeight),
+    },
+    currentFrame: finiteNumber(state.c, 0),
+    playing: state.p === 1,
+    cameraDimensionsFollowViewport: state.fv === 1,
+    keyframes: state.k.map(([frame, keyframe]) => ({
+      frame: finiteInteger(frame, 0),
+      state: unpackAnimationKeyframeState(keyframe),
+    })),
+  };
+}
+
+function packInstanceState(instance: InstanceSnapshot): PackedInstanceState {
+  return {
+    x: packF32(instance.X),
+    e: packU32(instance.E),
+    st: packSurfaceTopology(instance.surfaceTopology),
+    m: instance.M,
+    o: packVec3(instance.offset),
+    l: instance.label,
+    k: instance.kind,
+    t: packTransformState(instance.transform),
+    g: packF32(instance.origin ? new Float32Array(instance.origin) : new Float32Array(MAX_N)),
+    n: instance.originalN,
+    a: [...instance.axisMap],
+    v: instance.visible ? 1 : 0,
+    s: packSurfaceState(normalizeSurface(instance.surface)),
+  };
+}
+
+function unpackInstanceState(instance: PackedInstanceState): InstanceSnapshot {
+  return {
+    X: unpackF32(instance.x),
+    E: unpackU32(instance.e),
+    surfaceTopology: unpackSurfaceTopology(instance.st),
+    M: finiteInteger(instance.m, 0),
+    offset: unpackVec3(instance.o),
+    label: typeof instance.l === 'string' ? instance.l : 'Object',
+    kind: instance.k,
+    transform: unpackTransformState(instance.t),
+    origin: unpackF32(instance.g),
+    originalN: Math.max(1, Math.min(MAX_N, finiteInteger(instance.n, MAX_N))),
+    axisMap: Array.isArray(instance.a) ? instance.a.map((dim, idx) => normalizedAxisDim(dim, idx)) : [],
+    visible: instance.v === 1,
+    surface: unpackSurfaceState(instance.s),
+  };
+}
+
+function captureSceneUrlState(): PackedSceneUrlState {
+  const snap = captureSnapshot();
+  return {
+    v: 1,
+    n: snap.N,
+    x: packF32(snap.X),
+    e: packU32(snap.E),
+    st: packSurfaceTopology(snap.surfaceTopology),
+    m: snap.M,
+    ds: snap.source,
+    l: snap.label,
+    pn: snap.paramsN,
+    pk: snap.primitive,
+    rm: PARAMS.renderMode,
+    em: PARAMS.editMode ? 1 : 0,
+    fx: [PARAMS.bloomIntensity, PARAMS.motionBlurIntensity],
+    r: packF32(snap.rotMatrix),
+    ax: [snap.axes.x, snap.axes.y, snap.axes.z],
+    ao: [...snap.axesOrder],
+    of: snap.axesOffset,
+    bam: [...snap.baseAxisMap],
+    bt: packTransformState(snap.baseTransform),
+    bo: packF32(snap.baseOrigin ? new Float32Array(snap.baseOrigin) : new Float32Array(MAX_N)),
+    bn: snap.baseOrigN,
+    bv: snap.baseVisible ? 1 : 0,
+    bs: packSurfaceState(normalizeSurface(snap.baseSurface)),
+    si: snap.selectedInstance,
+    ss: [...(snap.selectedInstances ?? [])],
+    sv: transformController.getSelectedVertex(),
+    i: snap.instances.map(packInstanceState),
+    c: packCameraState(),
+    bg: packBackgroundState(backgroundController.getUrlState()),
+    tl: animationTimeline ? packTimelineState(animationTimeline.getTimelineState()) : undefined,
+    pc: paneController.isCollapsed ? 1 : 0,
+    ag: axisController.getExtraAxisState(),
+  };
+}
+
+function unpackSceneUrlSnapshot(state: PackedSceneUrlState): SceneSnapshot<PrimitiveMode> {
+  return {
+    N: Math.max(1, Math.min(MAX_N, finiteInteger(state.n, MAX_N))),
+    X: unpackF32(state.x),
+    E: unpackU32(state.e),
+    surfaceTopology: unpackSurfaceTopology(state.st),
+    M: finiteInteger(state.m, 0),
+    source: state.ds === 'custom' ? 'custom' : 'primitive',
+    label: typeof state.l === 'string' ? state.l : 'Scene',
+    paramsN: Math.max(3, Math.min(MAX_N, finiteInteger(state.pn, MAX_N))),
+    primitive: state.pk,
+    rotMatrix: unpackF32(state.r),
+    axes: {
+      x: normalizedAxisDim(state.ax?.[0], 0),
+      y: normalizedAxisDim(state.ax?.[1], 1),
+      z: normalizedAxisDim(state.ax?.[2], 2),
+    },
+    axesOrder: Array.isArray(state.ao) ? state.ao.map((dim, idx) => normalizedAxisDim(dim, idx)) : [],
+    axesOffset: finiteInteger(state.of, 0),
+    baseAxisMap: Array.isArray(state.bam) ? state.bam.map((dim, idx) => normalizedAxisDim(dim, idx)) : [],
+    baseTransform: unpackTransformState(state.bt),
+    baseOrigin: unpackF32(state.bo),
+    baseOrigN: Math.max(1, Math.min(MAX_N, finiteInteger(state.bn, MAX_N))),
+    baseVisible: state.bv === 1,
+    baseSurface: unpackSurfaceState(state.bs),
+    selectedInstance: finiteInteger(state.si, NO_SELECTION),
+    selectedInstances: Array.isArray(state.ss) ? state.ss.map(idx => finiteInteger(idx, NO_SELECTION)) : [],
+    instances: state.i.map(unpackInstanceState),
+  };
+}
+
+function isPackedSceneUrlState(value: unknown): value is PackedSceneUrlState {
+  return typeof value === 'object' && value !== null && (value as { v?: unknown }).v === 1;
+}
+
+async function applySceneUrlState(state: PackedSceneUrlState) {
+  sceneUrlApplying = true;
+  try {
+    const viewMode = normalizeViewMode(state.rm);
+    PARAMS.renderMode = viewMode;
+    applySnapshot(unpackSceneUrlSnapshot(state));
+    setViewMode(viewMode);
+
+    PARAMS.bloomIntensity = clamp01(finiteNumber(state.fx?.[0], DEFAULT_BLOOM_INTENSITY));
+    PARAMS.motionBlurIntensity = clamp01(finiteNumber(state.fx?.[1], DEFAULT_MOTION_BLUR_INTENSITY));
+    syncRenderEffects();
+
+    axisController.applyExtraAxisState(state.ag);
+    paneController.setCollapsed(state.pc === 1);
+    applyCameraState(state.c);
+    setEditMode(state.em === 1);
+    transformController.setSelectedVertex(finiteInteger(state.sv, -1));
+    if (PARAMS.editMode && transformController.getSelectedVertex() >= 0 && getObjectVisible(selectedInstance)) {
+      updateVertexCloud(selectedInstance);
+      placeVertexMarker(selectedInstance, transformController.getSelectedVertex());
+    }
+
+    animationTimeline?.applyTimelineState(state.tl ? unpackTimelineState(state.tl) : undefined, false);
+    await backgroundController.applyUrlState(unpackBackgroundState(state.bg));
+
+    projectAndRenderAll();
+    updateAxisLegend();
+    renderAxisList();
+    updateObjectList();
+    updateSelectionOutline();
+    textureEditor.updatePanel();
+  } finally {
+    sceneUrlApplying = false;
+  }
+}
+
+async function loadSceneUrlPayload(payload: string, clearUrlAfterLoad: boolean) {
+  const decoded = await decodeSceneUrlPayload(payload);
+  if (!isPackedSceneUrlState(decoded)) {
+    throw new Error('Invalid scene URL state.');
+  }
+  await applySceneUrlState(decoded);
+  if (clearUrlAfterLoad) clearScenePayloadFromCurrentUrl();
+}
+
+async function initializeSceneUrlState() {
+  const payload = readScenePayloadFromUrl();
+  if (!payload) return;
+
+  try {
+    await loadSceneUrlPayload(payload, true);
+  } catch (err) {
+    console.warn('Unable to apply scene URL state', err);
+    clearScenePayloadFromCurrentUrl();
+  }
+}
+
+async function saveSceneStateFile() {
+  if (!sceneSaveButton) return;
+  const previousTitle = sceneSaveButton.title;
+  sceneSaveButton.disabled = true;
+  sceneSaveButton.title = 'Saving scene URL...';
+  try {
+    const payload = await encodeSceneUrlPayload(captureSceneUrlState());
+    const sceneUrl = createSceneUrlWithPayload(payload);
+    downloadTextFile(sceneUrl, sceneStateFileName());
+    let copied = true;
+    try {
+      await copyTextToClipboard(sceneUrl);
+    } catch (err) {
+      copied = false;
+      console.warn('Unable to copy scene URL to clipboard', err);
+    }
+    sceneSaveButton.title = copied ? 'Scene URL copied and downloaded' : 'Scene URL downloaded';
+  } catch (err) {
+    console.warn('Unable to save scene URL state', err);
+    window.alert('Unable to save scene URL.');
+  } finally {
+    sceneSaveButton.disabled = false;
+    window.setTimeout(() => {
+      if (sceneSaveButton) sceneSaveButton.title = previousTitle;
+    }, 1600);
+  }
+}
+
+async function loadSceneStateFile(file: File | null | undefined) {
+  if (!file) return;
+  try {
+    const payload = readScenePayloadFromText(await file.text());
+    if (!payload) throw new Error('Scene file does not contain a valid scene URL.');
+    await loadSceneUrlPayload(payload, false);
+  } catch (err) {
+    console.warn('Unable to load scene URL state', err);
+    window.alert(err instanceof Error ? err.message : 'Unable to load scene URL.');
+  } finally {
+    if (sceneLoadInput) sceneLoadInput.value = '';
+  }
+}
+
+function downloadTextFile(text: string, fileName: string) {
+  const blobUrl = URL.createObjectURL(new Blob([`${text}\n`], { type: 'text/plain;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = blobUrl;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(blobUrl);
+}
+
+function sceneStateFileName() {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return `blend-scene-${stamp}.txt`;
+}
+
+async function copyTextToClipboard(text: string) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+  } catch {
+    // Fall through to legacy copy.
+  }
+
+  const input = document.createElement('textarea');
+  input.value = text;
+  input.style.position = 'fixed';
+  input.style.left = '-9999px';
+  input.style.top = '0';
+  document.body.appendChild(input);
+  input.focus();
+  input.select();
+  const copied = document.execCommand('copy');
+  input.remove();
+  if (!copied) throw new Error('Clipboard copy failed.');
 }
 
 function captureSnapshot(): SceneSnapshot<PrimitiveMode> {
@@ -434,6 +970,7 @@ function captureSnapshot(): SceneSnapshot<PrimitiveMode> {
     baseVisible,
     baseSurface: cloneSurface(baseSurface),
     selectedInstance,
+    selectedInstances: [...selectedInstances],
     instances: extraInstances.map(inst => ({
       X: new Float32Array(inst.X),
       E: new Uint32Array(inst.E),
@@ -481,14 +1018,16 @@ function applySnapshot(snap: SceneSnapshot<PrimitiveMode>) {
   baseSurface = normalizeSurface(snap.baseSurface);
   rendererND.setSurface(baseSurface);
   extraInstances.push(...snap.instances.map(restoreInstanceSnapshot));
-  selectedInstance = snap.selectedInstance >= 0 && snap.selectedInstance < extraInstances.length
-    ? snap.selectedInstance
-    : (M > 0 ? BASE_SELECTION : NO_SELECTION);
+  selectedInstance = snap.selectedInstance === BASE_SELECTION && M > 0
+    ? BASE_SELECTION
+    : (snap.selectedInstance >= 0 && snap.selectedInstance < extraInstances.length ? snap.selectedInstance : NO_SELECTION);
+  selectedInstances = (snap.selectedInstances ?? [selectedInstance]).map(normalizeSelectionIndex);
+  reconcileSelection();
   projectAndRenderAll();
-  applySliceFilter();
   updateDimensionControl();
   updateObjectList();
-  selectObject(selectedInstance);
+  selectObject(selectedInstance, selectedInstance !== NO_SELECTION);
+  requestSceneUrlUpdate();
 }
 
 sceneHistory = new SceneHistory({
@@ -502,6 +1041,32 @@ function getObjectVisible(idx: number) {
   return extraInstances[idx]?.visible ?? false;
 }
 
+function normalizeSelectionIndex(idx: number) {
+  if (idx === BASE_SELECTION) return M > 0 ? BASE_SELECTION : NO_SELECTION;
+  if (idx >= 0 && extraInstances[idx]) return idx;
+  return NO_SELECTION;
+}
+
+function isSelectableObject(idx: number) {
+  const normalizedIdx = normalizeSelectionIndex(idx);
+  return normalizedIdx !== NO_SELECTION && getObjectVisible(normalizedIdx);
+}
+
+function reconcileSelection() {
+  const normalized = selectedInstances
+    .map(normalizeSelectionIndex)
+    .filter((idx, position, arr) => idx !== NO_SELECTION && arr.indexOf(idx) === position && getObjectVisible(idx));
+
+  const primary = normalizeSelectionIndex(selectedInstance);
+  if (primary !== NO_SELECTION && getObjectVisible(primary)) {
+    selectedInstances = [primary, ...normalized.filter(idx => idx !== primary)];
+    selectedInstance = primary;
+  } else {
+    selectedInstances = normalized;
+    selectedInstance = selectedInstances[0] ?? NO_SELECTION;
+  }
+}
+
 function setObjectVisible(idx: number, visible: boolean, recordUndo = true) {
   if (recordUndo && getObjectVisible(idx) !== visible) pushUndoSnapshot();
 
@@ -512,11 +1077,13 @@ function setObjectVisible(idx: number, visible: boolean, recordUndo = true) {
   }
 
   applyObjectVisibility();
-  if (!visible && idx === selectedInstance) {
-    if (selectionOutline) { scene.remove(selectionOutline); selectionOutline = null; }
+  if (!visible && selectedInstances.includes(idx)) {
+    removeSelectionOutlines();
     transformController.clearSelectionVisuals();
   }
-  selectObject(selectedInstance);
+  reconcileSelection();
+  selectObject(selectedInstance, selectedInstance !== NO_SELECTION);
+  requestSceneUrlUpdate();
 }
 
 function applyObjectVisibility() {
@@ -546,6 +1113,7 @@ function renameObject(idx: number, value: string) {
     extraInstances[idx].label = label;
   }
   updateObjectList();
+  requestSceneUrlUpdate();
 }
 
 function updateObjectList() {
@@ -579,6 +1147,7 @@ function applySurfaceToSelection(surface: SurfaceState, recordUndo: boolean) {
     }
   }
 
+  if (changed) requestSceneUrlUpdate();
   return changed;
 }
 
@@ -592,46 +1161,94 @@ const textureEditor = new TextureEditorController({
   applySurfaceToTarget: applySurfaceToSelection,
 });
 
-function selectObject(idx: number) {
-  let normalizedIdx = idx;
-  if (normalizedIdx === BASE_SELECTION && M <= 0) normalizedIdx = NO_SELECTION;
-  if (normalizedIdx >= 0 && !extraInstances[normalizedIdx]) normalizedIdx = NO_SELECTION;
-  if (normalizedIdx < NO_SELECTION) normalizedIdx = NO_SELECTION;
+function removeSelectionOutlines() {
+  selectionOutlines.forEach(outline => {
+    scene.remove(outline);
+    if (Array.isArray(outline.material)) outline.material.forEach(material => material.dispose());
+    else outline.material.dispose();
+  });
+  selectionOutlines = [];
+  selectionOutlineKeys = [];
+}
 
-  selectedInstance = normalizedIdx;
+function selectionGeometry(idx: number) {
+  if (idx === BASE_SELECTION) return M > 0 ? rendererND.line.geometry : null;
+  return extraInstances[idx]?.renderer.line.geometry ?? null;
+}
+
+function buildSelectionOutline(geom: THREE.BufferGeometry, primary: boolean) {
+  const mat = new THREE.LineBasicMaterial({
+    color: 0xffa64d,
+    transparent: true,
+    opacity: primary ? 1 : 0.38,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const outline = new THREE.LineSegments(geom, mat);
+  outline.renderOrder = primary ? 10 : 9;
+  return outline;
+}
+
+function selectObject(idx: number, additive = false) {
+  const normalizedIdx = normalizeSelectionIndex(idx);
+
+  if (additive) {
+    if (normalizedIdx === NO_SELECTION) return;
+    if (!isSelectableObject(normalizedIdx)) return;
+    if (selectedInstance === NO_SELECTION) {
+      selectedInstance = normalizedIdx;
+      selectedInstances = [normalizedIdx];
+    } else if (normalizedIdx !== selectedInstance) {
+      if (selectedInstances.includes(normalizedIdx)) {
+        selectedInstances = selectedInstances.filter(entry => entry !== normalizedIdx);
+      } else {
+        selectedInstances.push(normalizedIdx);
+      }
+    }
+  } else {
+    selectedInstance = isSelectableObject(normalizedIdx) ? normalizedIdx : NO_SELECTION;
+    selectedInstances = selectedInstance === NO_SELECTION ? [] : [selectedInstance];
+  }
+
+  reconcileSelection();
   transformController.setSelectedVertex(-1);
   updateObjectList();
-  if (selectionOutline) { scene.remove(selectionOutline); selectionOutline = null; }
-  const buildOutline = (geom: THREE.BufferGeometry) => {
-    const mat = new THREE.LineBasicMaterial({ color: 0xffa64d, transparent: true, opacity: 1, depthTest: false, depthWrite: false });
-    const outline = new THREE.LineSegments(geom, mat);
-    outline.renderOrder = 10;
-    return outline;
-  };
-  if (normalizedIdx === BASE_SELECTION) {
-    if (M > 0) selectionOutline = buildOutline(rendererND.line.geometry);
-  } else if (normalizedIdx >= 0) {
-    const inst = extraInstances[normalizedIdx];
-    selectionOutline = buildOutline(inst.renderer.line.geometry);
-  }
-  if (selectionOutline && !PARAMS.editMode && getObjectVisible(normalizedIdx)) {
-    scene.add(selectionOutline);
-  }
+  updateSelectionOutline();
   backgroundController.applySceneBackground(PARAMS.editMode);
   transformController.clearVertexMarker();
   transformController.clearVertexCloud();
-  if (PARAMS.editMode && getObjectVisible(normalizedIdx)) updateVertexCloud(normalizedIdx);
+  if (PARAMS.editMode && getObjectVisible(selectedInstance)) updateVertexCloud(selectedInstance);
   textureEditor.updatePanel();
   updateTransformActionButtons();
+  requestSceneUrlUpdate();
 }
 
 function updateSelectionOutline() {
-  if (!selectionOutline) return;
-  if (PARAMS.editMode || !getObjectVisible(selectedInstance)) {
-    scene.remove(selectionOutline); selectionOutline = null;
+  reconcileSelection();
+  const desiredKeys = PARAMS.editMode
+    ? []
+    : selectedInstances.filter(idx => getObjectVisible(idx) && selectionGeometry(idx));
+  const unchanged = desiredKeys.length === selectionOutlineKeys.length
+    && desiredKeys.every((idx, i) => idx === selectionOutlineKeys[i]);
+  if (unchanged) {
+    selectionOutlines.forEach(outline => {
+      if (!scene.children.includes(outline)) scene.add(outline);
+    });
     return;
   }
-  if (!scene.children.includes(selectionOutline)) scene.add(selectionOutline);
+
+  removeSelectionOutlines();
+  if (PARAMS.editMode) return;
+
+  desiredKeys.forEach((idx, selectionIdx) => {
+    if (!getObjectVisible(idx)) return;
+    const geom = selectionGeometry(idx);
+    if (!geom) return;
+    const outline = buildSelectionOutline(geom, selectionIdx === 0);
+    selectionOutlines.push(outline);
+    selectionOutlineKeys.push(idx);
+    scene.add(outline);
+  });
 }
 
 function clearAxisGuide() {
@@ -675,8 +1292,8 @@ function recalculateObjectOrigin(idx: number) {
     computeObjectOrigin(inst.X, inst.M, MAX_N, inst.origin);
   }
   projectAndRenderAll();
-  applySliceFilter();
   updateSelectionOutline();
+  requestSceneUrlUpdate();
 }
 
 function focusObjectOrigin(idx: number) {
@@ -685,18 +1302,112 @@ function focusObjectOrigin(idx: number) {
   keyboardCamera.focusOn(origin);
 }
 
-function deleteSelected() {
-  if (selectedInstance < 0) return;
+function selectedProductObjects() {
+  return selectedInstances.filter(isSelectableObject);
+}
+
+function canAddProductMesh() {
+  return selectedProductObjects().length >= 2;
+}
+
+function getObjectProductFactor(idx: number): ProductMeshFactor | null {
+  const source = idx === BASE_SELECTION
+    ? { X, M, E, surfaceTopology: baseSurfaceTopology, origin: baseOrigin, originalN: baseOriginalN || visibleDims(), axisMap: baseAxisMap }
+    : extraInstances[idx];
+  if (!source || source.M <= 0) return null;
+
+  const dimension = Math.max(1, Math.min(MAX_N, source.originalN || visibleDims()));
+  const axisMap = normalizeAxisMap(source.axisMap, dimension);
+  const verts = new Float32Array(dimension * source.M);
+  for (let d = 0; d < dimension; d++) {
+    const ambientDim = axisMap[d] ?? d;
+    const originValue = source.origin[ambientDim] ?? 0;
+    for (let v = 0; v < source.M; v++) {
+      verts[d * source.M + v] = source.X[ambientDim * source.M + v] - originValue;
+    }
+  }
+
+  return {
+    verts,
+    vertexCount: source.M,
+    dimension,
+    edges: new Uint32Array(source.E),
+    surfaceTopology: clonePrimitiveSurfaceTopology(source.surfaceTopology),
+  };
+}
+
+function getObjectSurface(idx: number) {
+  return idx === BASE_SELECTION ? baseSurface : extraInstances[idx]?.surface;
+}
+
+function getObjectTransform(idx: number) {
+  return idx === BASE_SELECTION ? baseTransform : extraInstances[idx]?.transform;
+}
+
+function addProductMeshFromSelection() {
+  const selected = selectedProductObjects();
+  if (selected.length < 2) return;
+
+  const factors = selected.map(getObjectProductFactor);
+  if (factors.some(factor => !factor)) {
+    window.alert('Product mesh requires valid selected geometry.');
+    return;
+  }
+
+  let product;
+  try {
+    product = buildProductMesh(factors as ProductMeshFactor[], MAX_N);
+  } catch (err) {
+    window.alert(err instanceof Error ? err.message : 'Unable to build product mesh.');
+    return;
+  }
+
+  const axisMap = canonicalAxisMap(product.dimension);
+  const verts = embedToMax(product.verts, product.dimension, axisMap);
+  const origin = new Float32Array(MAX_N);
+  const parentIdx = selected[0];
+  const parentSurface = getObjectSurface(parentIdx);
+  const parentTransform = getObjectTransform(parentIdx);
+  const label = `Product #${extraInstances.length + 1}`;
+
   pushUndoSnapshot();
-  const inst = extraInstances[selectedInstance];
-  inst.renderer.dispose();
-  extraInstances.splice(selectedInstance, 1);
-  selectedInstance = NO_SELECTION;
-  if (selectionOutline) { scene.remove(selectionOutline); selectionOutline = null; }
+  const inst = insertInstance({
+    verts,
+    edges: product.edges,
+    surfaceTopology: clonePrimitiveSurfaceTopology(product.surfaceTopology),
+    V: product.vertexCount,
+    kind: 'productMesh',
+    axisMap,
+    originalN: product.dimension,
+    origin,
+  }, new THREE.Vector3(0, 0, 0), label, cloneSurface(parentSurface ?? DEFAULT_SURFACE));
+
+  if (parentTransform) {
+    inst.transform.scale.copy(parentTransform.scale);
+    projectAndRenderAll();
+    updateObjectList();
+  }
+  requestSceneUrlUpdate();
+}
+
+function deleteSelected() {
+  const deleteIndices = selectedInstances.filter(idx => idx >= 0).sort((a, b) => b - a);
+  if (!deleteIndices.length) return;
+  const keepBaseSelected = selectedInstances.includes(BASE_SELECTION) && getObjectVisible(BASE_SELECTION);
+  pushUndoSnapshot();
+  removeSelectionOutlines();
+  for (const idx of deleteIndices) {
+    const inst = extraInstances[idx];
+    if (!inst) continue;
+    inst.renderer.dispose();
+    extraInstances.splice(idx, 1);
+  }
+  selectedInstance = keepBaseSelected ? BASE_SELECTION : NO_SELECTION;
+  selectedInstances = keepBaseSelected ? [BASE_SELECTION] : [];
   projectAndRenderAll();
-  applySliceFilter();
   updateObjectList();
   selectObject(selectedInstance);
+  requestSceneUrlUpdate();
 }
 
 const extraInstances: Instance[] = [];
@@ -711,7 +1422,8 @@ const objectListController = new ObjectListController({
     })),
   ],
   getSelectedIndex: () => selectedInstance,
-  onSelect: idx => selectObject(idx),
+  getSelectedIndices: () => selectedInstances,
+  onSelect: (idx, additive) => selectObject(idx, additive),
   onToggleVisibility: (idx, visible) => setObjectVisible(idx, visible),
   onRename: (idx, value) => renameObject(idx, value),
   onAfterUpdate: () => updateAxisLegend(),
@@ -753,10 +1465,6 @@ if (M > 0) {
 const PARAMS = {
   N: 4,
   primitive: 'hypercube' as PrimitiveMode,
-  // Slicing
-  sliceDim: -1,
-  sliceMin: -0.5,
-  sliceMax: 0.5,
   renderMode: 'solid' as ViewMode,
   editMode: false,
   axesX: 0,
@@ -1038,10 +1746,12 @@ function bindRenderEffectControls() {
   bloomIntensityInput?.addEventListener('input', () => {
     PARAMS.bloomIntensity = clamp01(Number.parseFloat(bloomIntensityInput.value));
     syncRenderEffects();
+    requestSceneUrlUpdate();
   });
   motionBlurIntensityInput?.addEventListener('input', () => {
     PARAMS.motionBlurIntensity = clamp01(Number.parseFloat(motionBlurIntensityInput.value));
     syncRenderEffects();
+    requestSceneUrlUpdate();
   });
   syncRenderEffects();
 }
@@ -1070,15 +1780,16 @@ transformController = new TransformController({
   getBaseOriginalN: () => baseOriginalN,
   getBaseAxisMap: () => baseAxisMap,
   getSelectedInstance: () => selectedInstance,
+  getSelectedInstances: () => selectedInstances,
   getObjectVisible,
   visibleDims,
   perspectiveDimsFor,
   primaryExtraRotationDepthDim: (localN, axisMap) => axisController.primaryExtraRotationDepthDim(localN, axisMap),
   extraRotationPlaneAxis,
   projectAndRenderAll,
-  applySliceFilter,
   updateSelectionOutline,
   pushUndoSnapshot,
+  onStateChange: () => requestSceneUrlUpdate(),
 });
 axisController = new AxisGizmoController({
   camera,
@@ -1093,6 +1804,7 @@ axisController = new AxisGizmoController({
   applySceneBackground: () => backgroundController.applySceneBackground(PARAMS.editMode),
   setPaneCollapsed: collapsed => paneController.setCollapsed(collapsed),
   getPaneCollapsed: () => paneController.isCollapsed,
+  onStateChange: () => requestSceneUrlUpdate(),
 });
 axisController.init();
 projectionPipeline = new ProjectionPipeline({
@@ -1115,8 +1827,6 @@ projectionPipeline = new ProjectionPipeline({
   updateSelectionOutline,
   updateVertexCloud: () => updateVertexCloud(selectedInstance),
   updateAxisGuide,
-  applySceneBackground: () => backgroundController.applySceneBackground(PARAMS.editMode),
-  clearVertexCloud: () => transformController.clearVertexCloud(),
   tmpN,
   tmpVec,
   tmpCenter,
@@ -1140,6 +1850,7 @@ function setNewPrimitiveDimension(value: number) {
   renderAxisList();
   updateAxisLegend();
   projectAndRenderAll();
+  requestSceneUrlUpdate();
 }
 
 function updateEditModeToggle() {
@@ -1162,6 +1873,7 @@ function setEditMode(active: boolean) {
   }
   updateSelectionOutline();
   updateTransformActionButtons();
+  requestSceneUrlUpdate();
 }
 
 function updateTransformActionButtons() {
@@ -1169,7 +1881,7 @@ function updateTransformActionButtons() {
 }
 
 function hasActiveSelection() {
-  return (selectedInstance === BASE_SELECTION && M > 0) || selectedInstance >= 0;
+  return selectedInstances.some(isSelectableObject);
 }
 
 function handleTransformConstraintKey(key: string) {
@@ -1180,11 +1892,17 @@ const primitiveMenuOptions: { label: string; kind: PrimitiveKind }[] = [
   { label: 'Hypercube', kind: 'hypercube' },
   { label: 'Spiked hypercube', kind: 'spikedHypercube' },
   { label: 'Cross polytope', kind: 'cross' },
+  { label: 'Spiked cross polytope', kind: 'spikedCross' },
   { label: 'Simplex', kind: 'simplex' },
+  { label: 'Spiked simplex', kind: 'spikedSimplex' },
   { label: 'Simplex prism', kind: 'simplexPrism' },
+  { label: 'Spiked simplex prism', kind: 'spikedSimplexPrism' },
   { label: 'Demicube', kind: 'demicube' },
+  { label: 'Spiked demicube', kind: 'spikedDemicube' },
   { label: '24-cell', kind: 'cell24' },
+  { label: 'Spiked 24-cell', kind: 'spikedCell24' },
   { label: 'Duoprism', kind: 'duoprism' },
+  { label: 'Spiked duoprism', kind: 'spikedDuoprism' },
 ];
 
 viewportInteraction = new ViewportInteractionController({
@@ -1201,7 +1919,6 @@ viewportInteraction = new ViewportInteractionController({
   baseSelection: BASE_SELECTION,
   noSelection: NO_SELECTION,
   getParams: () => PARAMS,
-  setSliceDim: dim => { PARAMS.sliceDim = dim; },
   getN: () => N,
   getX: () => X,
   getM: () => M,
@@ -1217,9 +1934,10 @@ viewportInteraction = new ViewportInteractionController({
   removeLastKeyframe: () => animationTimeline?.removeLastKeyframe(),
   deleteSelected,
   hasActiveSelection,
+  canAddProductMesh,
+  addProductMesh: addProductMeshFromSelection,
   recalculateSelectedOrigin: () => recalculateObjectOrigin(selectedInstance),
   focusObjectOrigin,
-  applySliceFilter,
   cycleAxes,
 });
 
@@ -1240,7 +1958,7 @@ function createPrimitiveData(kind: PrimitiveKind, dimension: number): InstanceGe
 }
 
 function insertInstance(data: InstanceGeometryData, offset: THREE.Vector3, label: string, surface: SurfaceState, syncMode = true) {
-  extraInstances.push(createSceneInstance({
+  const inst = createSceneInstance({
     scene,
     projector,
     data,
@@ -1248,15 +1966,14 @@ function insertInstance(data: InstanceGeometryData, offset: THREE.Vector3, label
     label,
     surface,
     renderMode: PARAMS.renderMode,
-    sliceDim: PARAMS.sliceDim,
-    sliceMin: PARAMS.sliceMin,
-    sliceMax: PARAMS.sliceMax,
     projectionN: MAX_N,
-  }));
+  });
+  extraInstances.push(inst);
   projectAndRenderAll();
-  applySliceFilter();
   if (syncMode && setViewMode) setViewMode(PARAMS.renderMode);
   updateObjectList();
+  requestSceneUrlUpdate();
+  return inst;
 }
 
 function addPrimitiveInstanceAt(kind: PrimitiveKind, label: string, offset: THREE.Vector3, syncMode = true) {
@@ -1264,9 +1981,11 @@ function addPrimitiveInstanceAt(kind: PrimitiveKind, label: string, offset: THRE
 }
 
 function clearExtraInstances() {
+  removeSelectionOutlines();
   extraInstances.forEach(inst => inst.renderer.dispose());
   extraInstances.length = 0;
   selectedInstance = NO_SELECTION;
+  selectedInstances = [];
 }
 
 function addInstanceAt(offset: THREE.Vector3, recordUndo = true) {
@@ -1334,14 +2053,12 @@ function rebuildState(
   PARAMS.axesX = axisController.axesOrder[0] ?? 0;
   PARAMS.axesY = axisController.axesOrder[1] ?? 1;
   PARAMS.axesZ = axisController.axesOrder[2] ?? 2;
-  if (PARAMS.sliceDim >= ambientN) PARAMS.sliceDim = ambientN - 1;
   if (M > 0) {
     rendererND.build(M, E, baseSurfaceTopology);
     rendererND.setSurface(baseSurface);
     rendererND.setMode(PARAMS.renderMode);
     if (setViewMode) setViewMode(currentMode);
     projectAndRenderAll();
-    applySliceFilter();
   } else {
     // no base geometry
     rendererND.dispose?.();
@@ -1360,9 +2077,6 @@ function resetToIsometric() {
   PARAMS.primitive = 'hypercube';
   axisController.clearDynamicState();
   PARAMS.renderMode = 'faceted';
-  PARAMS.sliceDim = -1;
-  PARAMS.sliceMin = -0.5;
-  PARAMS.sliceMax = 0.5;
 
   const rebuilt = buildPrimitive(PARAMS.primitive, targetN);
   const axisMap = canonicalAxisMap(targetN);
@@ -1373,7 +2087,6 @@ function resetToIsometric() {
   camera.position.copy(DEFAULT_CAMERA_POSITION);
 }
 projectAndRenderAll();
-applySliceFilter();
 updateAxisLegend();
 renderAxisList();
 updateObjectList();
@@ -1382,7 +2095,7 @@ updateDimensionControl();
 updateEditModeToggle();
 textureEditor.initialize();
 backgroundController.initializeRenderControls();
-void backgroundController.initializeSelector();
+const backgroundSelectorReady = backgroundController.initializeSelector();
 
 const viewModeController = new ViewModeController({
   getMode: () => PARAMS.renderMode,
@@ -1399,6 +2112,7 @@ setViewMode = (mode: ViewMode) => {
   textureEditor.updatePanel();
   viewModeController.syncButtons();
   backgroundController.syncForRenderMode();
+  requestSceneUrlUpdate();
 };
 viewModeController.bind();
 backgroundController.syncForRenderMode();
@@ -1425,12 +2139,18 @@ animationTimeline = new KeyframeTimelineController({
     }
     setCaptureResolutionMode(settings.fullResolution);
   },
+  onStateChange: () => requestSceneUrlUpdate(),
 });
 animationTimeline.bind();
 viewportCapture.bindControls();
 modalOverlayController.bindControls();
 bindRenderEffectControls();
 editModeToggle?.addEventListener('click', () => setEditMode(!PARAMS.editMode));
+sceneSaveButton?.addEventListener('click', () => void saveSceneStateFile());
+sceneLoadButton?.addEventListener('click', () => sceneLoadInput?.click());
+sceneLoadInput?.addEventListener('change', () => {
+  void loadSceneStateFile(sceneLoadInput.files?.[0]);
+});
 [
   { el: transformMoveButton, mode: 'move' as TransformMode },
   { el: transformRotateButton, mode: 'rotate' as TransformMode },
@@ -1468,6 +2188,14 @@ updateTransformActionButtons();
 paneController.syncToViewport(true);
 modalOverlayController.initializeMobileOnboarding();
 viewportInteraction.bind();
+void backgroundSelectorReady
+  .then(() => initializeSceneUrlState())
+  .catch(err => {
+    console.warn('Unable to initialize scene URL state', err);
+  });
+window.addEventListener('hashchange', () => {
+  void initializeSceneUrlState();
+});
 
 // --- Animation ---
 const clock = new THREE.Clock();
@@ -1477,7 +2205,7 @@ function animate() {
   if (animationTimeline?.isPlaying()) {
     animationTimeline.update(dt);
   } else if (!animationVideoRendering) {
-    applyAutoRotation(dt);
+    if (applyAutoRotation(dt)) requestSceneUrlUpdate();
   }
 
   if (!animationVideoRendering) keyboardCamera.update(dt);

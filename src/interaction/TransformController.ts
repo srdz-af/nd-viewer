@@ -11,9 +11,6 @@ type TransformParams = {
   axesX: number;
   axesY: number;
   axesZ: number;
-  sliceDim: number;
-  sliceMin: number;
-  sliceMax: number;
 };
 
 type TransformControllerOptions = {
@@ -40,15 +37,16 @@ type TransformControllerOptions = {
   getBaseOriginalN: () => number;
   getBaseAxisMap: () => AxisMap;
   getSelectedInstance: () => number;
+  getSelectedInstances: () => number[];
   getObjectVisible: (idx: number) => boolean;
   visibleDims: () => number;
   perspectiveDimsFor: (localN: number, axisMap: AxisMap) => number[];
   primaryExtraRotationDepthDim: (localN: number, axisMap: AxisMap) => number;
   extraRotationPlaneAxis: (lockAxis: -1 | 0 | 1 | 2, depthDim: number) => number;
   projectAndRenderAll: () => void;
-  applySliceFilter: () => void;
   updateSelectionOutline: () => void;
   pushUndoSnapshot: () => void;
+  onStateChange?: () => void;
 };
 
 type TransformOperation = {
@@ -70,6 +68,18 @@ type TransformOperation = {
   originDataStart: Float32Array | null;
   extraPlane: boolean;
   moveOffset: THREE.Vector3;
+  objectStarts: ObjectTransformStart[];
+  pivotWorldStart: THREE.Vector3;
+};
+
+type ObjectTransformStart = {
+  instIdx: number;
+  startPos: THREE.Vector3;
+  startRot: THREE.Vector3;
+  startScale: THREE.Vector3;
+  originWorldStart: THREE.Vector3;
+  objectDataStart: Float32Array | null;
+  originDataStart: Float32Array | null;
 };
 
 function computeCenterFromPositions(positions: Float32Array, count: number) {
@@ -127,6 +137,8 @@ export class TransformController {
     originDataStart: null,
     extraPlane: false,
     moveOffset: new THREE.Vector3(),
+    objectStarts: [],
+    pivotWorldStart: new THREE.Vector3(),
   };
 
   private readonly controlTransformDrag = {
@@ -243,7 +255,7 @@ export class TransformController {
       { mode: 'rotate', el: this.options.rotateButton },
       { mode: 'scale', el: this.options.scaleButton },
     ];
-    const hasTarget = this.options.getObjectVisible(this.options.getSelectedInstance());
+    const hasTarget = this.getObjectTransformSelection().length > 0;
     const busy = this.transformOp.mode !== 'none';
 
     for (const entry of buttons) {
@@ -276,12 +288,14 @@ export class TransformController {
 
   start(mode: TransformMode, ev: { clientX: number; clientY: number }) {
     const selectedInstance = this.options.getSelectedInstance();
-    if (!this.options.getObjectVisible(selectedInstance)) return;
+    const selectedObjects = this.getObjectTransformSelection();
+    if (!selectedObjects.length) return;
 
     this.transformOp.mode = mode;
     this.transformOp.instIdx = selectedInstance;
     this.transformOp.targetVertex = this.options.getParams().editMode ? this.selectedVertex : -1;
     this.transformOp.startMouse.set(ev.clientX, ev.clientY);
+    this.transformOp.objectStarts = [];
 
     if (this.transformOp.targetVertex >= 0) {
       const inst = this.transformOp.instIdx === -1 ? null : this.options.getExtraInstances()[this.transformOp.instIdx];
@@ -302,25 +316,22 @@ export class TransformController {
       return;
     }
 
-    const target = selectedInstance === -1
-      ? this.options.getBaseTransform()
-      : this.options.getExtraInstances()[selectedInstance]?.transform;
-    if (!target) {
+    this.transformOp.objectStarts = selectedObjects.map(instIdx => this.createObjectTransformStart(instIdx, mode));
+    const primaryStart = this.transformOp.objectStarts.find(start => start.instIdx === selectedInstance) ?? this.transformOp.objectStarts[0];
+    if (!primaryStart) {
       this.transformOp.mode = 'none';
       return;
     }
 
-    this.transformOp.startPos.copy(target.pos);
-    this.transformOp.startRot.copy(target.rot);
-    this.transformOp.startScale = target.scale.x;
+    this.transformOp.startPos.copy(primaryStart.startPos);
+    this.transformOp.startRot.copy(primaryStart.startRot);
+    this.transformOp.startScale = primaryStart.startScale.x;
+    this.transformOp.pivotWorldStart.copy(primaryStart.originWorldStart);
     this.transformOp.lockAxis = -1;
     this.transformOp.extraPlane = false;
 
     if (mode === 'move' || mode === 'rotate') {
-      const src = selectedInstance === -1 ? this.options.getX() : this.options.getExtraInstances()[selectedInstance].X;
-      const count = selectedInstance === -1 ? this.options.getM() : this.options.getExtraInstances()[selectedInstance].M;
-      this.transformOp.objectDataStart = new Float32Array(src.length);
-      this.transformOp.objectDataStart.set(src);
+      this.transformOp.objectDataStart = primaryStart.objectDataStart;
       this.transformOp.lastHit.set(0, 0, 0);
       if (mode === 'move') {
         const center = this.getObjectOriginWorldPosition(selectedInstance);
@@ -338,8 +349,7 @@ export class TransformController {
           this.transformOp.moveOffset.set(0, 0, 0);
         }
       }
-      const origin = this.options.getObjectOrigin(selectedInstance);
-      this.transformOp.originDataStart = origin ? new Float32Array(origin) : null;
+      this.transformOp.originDataStart = primaryStart.originDataStart;
     } else {
       this.transformOp.objectDataStart = null;
       this.transformOp.originDataStart = null;
@@ -349,7 +359,7 @@ export class TransformController {
   beginControlDrag(mode: TransformMode, ev: PointerEvent) {
     if (mode === 'none') return;
     if (this.transformOp.mode !== 'none') return;
-    if (!this.options.getObjectVisible(this.options.getSelectedInstance())) return;
+    if (!this.getObjectTransformSelection().length) return;
 
     ev.preventDefault();
     ev.stopPropagation();
@@ -406,9 +416,6 @@ export class TransformController {
 
     const dx = clientX - this.transformOp.startMouse.x;
     const dy = clientY - this.transformOp.startMouse.y;
-    const params = this.options.getParams();
-    const N = this.options.getN();
-    const M = this.options.getM();
     const extraInstances = this.options.getExtraInstances();
     const rendererND = this.options.getRendererND();
 
@@ -455,109 +462,13 @@ export class TransformController {
 
       if (!this.setDraggedVertexFromWorldPosition(this.transformOp.instIdx, this.transformOp.targetVertex, dragWorld)) return;
       this.options.projectAndRenderAll();
-      this.options.applySliceFilter();
       const refreshed = inst ? inst.renderer.positions : rendererND.positions;
       if (this.selectionVertexMarker) this.selectionVertexMarker.position.set(refreshed[idx], refreshed[idx + 1], refreshed[idx + 2]);
     } else {
-      const target = this.transformOp.instIdx === -1
-        ? this.options.getBaseTransform()
-        : extraInstances[this.transformOp.instIdx].transform;
-
-      if (this.transformOp.mode === 'move') {
-        const src = this.transformOp.instIdx === -1 ? this.options.getX() : extraInstances[this.transformOp.instIdx].X;
-        const baseData = this.transformOp.objectDataStart;
-        const origin = this.options.getObjectOrigin(this.transformOp.instIdx);
-        const originStart = this.transformOp.originDataStart;
-        const count = this.transformOp.instIdx === -1 ? M : extraInstances[this.transformOp.instIdx].M;
-        if (baseData && count > 0) {
-          const rect = this.options.renderer.domElement.getBoundingClientRect();
-          this.options.ndc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
-          this.options.raycaster.setFromCamera(this.options.ndc, this.options.camera);
-          const hit = this.options.raycaster.ray.intersectPlane(this.transformOp.plane, this.tmpVec);
-          if (!hit) return;
-          const delta = hit.clone().add(this.transformOp.moveOffset).sub(this.transformOp.planeHitStart);
-          if (this.transformOp.lockAxis === 0) {
-            delta.y = 0;
-            delta.z = 0;
-          } else if (this.transformOp.lockAxis === 1) {
-            delta.x = 0;
-            delta.z = 0;
-          } else if (this.transformOp.lockAxis === 2) {
-            delta.x = 0;
-            delta.y = 0;
-          }
-          const axes = [params.axesX, params.axesY, params.axesZ];
-          for (let i = 0; i < count; i++) {
-            for (let c = 0; c < 3; c++) {
-              const dim = axes[c] % N;
-              const idxD = dim * count + i;
-              src[idxD] = baseData[idxD] + delta.getComponent(c);
-            }
-          }
-          if (origin && originStart) {
-            for (let c = 0; c < 3; c++) {
-              const dim = axes[c] % N;
-              origin[dim] = (originStart[dim] ?? 0) + delta.getComponent(c);
-            }
-          }
-          this.transformOp.lastHit.copy(hit);
-        }
-      } else if (this.transformOp.mode === 'rotate') {
-        if (this.transformOp.extraPlane && this.transformOp.objectDataStart) {
-          const inst = this.transformOp.instIdx === -1 ? null : extraInstances[this.transformOp.instIdx];
-          const src = inst ? inst.X : this.options.getX();
-          const baseData = this.transformOp.objectDataStart;
-          const origin = this.options.getObjectOrigin(this.transformOp.instIdx);
-          const originStart = this.transformOp.originDataStart;
-          const count = inst ? inst.M : M;
-          if (count > 0) {
-            const originalN = inst ? inst.originalN : this.options.getBaseOriginalN() || this.options.visibleDims();
-            const axisMap = inst ? inst.axisMap : this.options.getBaseAxisMap();
-            const dimB = this.options.primaryExtraRotationDepthDim(originalN, axisMap);
-            const dimA = this.options.extraRotationPlaneAxis(this.transformOp.lockAxis, dimB);
-            if (dimA < 0 || dimB < 0 || dimA === dimB) return;
-            const angle = (dx - dy) * 0.01;
-            const c = Math.cos(angle);
-            const s = Math.sin(angle);
-            for (let i = 0; i < count; i++) {
-              const a0 = baseData[dimA * count + i];
-              const b0 = baseData[dimB * count + i];
-              src[dimA * count + i] = a0 * c - b0 * s;
-              src[dimB * count + i] = a0 * s + b0 * c;
-            }
-            if (origin && originStart) {
-              const a0 = originStart[dimA] ?? 0;
-              const b0 = originStart[dimB] ?? 0;
-              origin[dimA] = a0 * c - b0 * s;
-              origin[dimB] = a0 * s + b0 * c;
-            }
-          }
-        } else {
-          const deltaX = dx * 0.005;
-          const deltaY = dy * 0.005;
-          const lx = this.transformOp.startRot.x;
-          const ly = this.transformOp.startRot.y;
-          const lz = this.transformOp.startRot.z;
-          if (this.transformOp.lockAxis === 0) {
-            target.rot.set(lx + deltaY, ly, lz);
-          } else if (this.transformOp.lockAxis === 1) {
-            target.rot.set(lx, ly + deltaX, lz);
-          } else if (this.transformOp.lockAxis === 2) {
-            target.rot.set(lx, ly, lz + deltaX);
-          } else {
-            target.rot.set(lx + deltaY, ly + deltaX, lz);
-          }
-        }
-      } else if (this.transformOp.mode === 'scale') {
-        const delta = (dx - dy) * 0.005;
-        const s = Math.max(0.1, Math.min(5, this.transformOp.startScale + delta));
-        target.scale.set(s, s, s);
-      }
-
+      this.applyObjectTransform(clientX, clientY, dx, dy);
     }
 
     this.options.projectAndRenderAll();
-    this.options.applySliceFilter();
     this.options.updateSelectionOutline();
     this.updateAxisGuide();
   }
@@ -596,29 +507,24 @@ export class TransformController {
         if (inst) {
           this.options.getProjector().project(inst.X, inst.M, inst.Y);
           inst.renderer.writeInterleavedFrom(inst.Y);
-          inst.renderer.filterEdgesByDimRange(inst.X, N, inst.M, params.sliceDim, params.sliceMin, params.sliceMax);
         } else {
           this.options.getProjector().project(this.options.getX(), M, this.options.getY());
           rendererND.writeInterleavedFrom(this.options.getY());
-          rendererND.filterEdgesByDimRange(this.options.getX(), N, M, params.sliceDim, params.sliceMin, params.sliceMax);
         }
         (targetRenderer.geometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
         targetRenderer.geometry.computeBoundingBox();
         targetRenderer.geometry.computeBoundingSphere();
         if (this.selectionVertexMarker) this.selectionVertexMarker.position.set(posArr[idx], posArr[idx + 1], posArr[idx + 2]);
       } else {
-        const target = this.transformOp.instIdx === -1 ? this.options.getBaseTransform() : extraInstances[this.transformOp.instIdx].transform;
-        if (this.transformOp.objectDataStart) {
-          const src = this.transformOp.instIdx === -1 ? this.options.getX() : extraInstances[this.transformOp.instIdx].X;
-          src.set(this.transformOp.objectDataStart);
+        for (const start of this.transformOp.objectStarts) {
+          const target = this.getObjectTransformTarget(start.instIdx);
+          const data = this.getObjectData(start.instIdx);
+          if (data && start.objectDataStart) data.src.set(start.objectDataStart);
+          if (start.originDataStart) this.options.getObjectOrigin(start.instIdx)?.set(start.originDataStart);
+          target?.pos.copy(start.startPos);
+          target?.rot.copy(start.startRot);
+          target?.scale.copy(start.startScale);
         }
-        if (this.transformOp.originDataStart) {
-          const origin = this.options.getObjectOrigin(this.transformOp.instIdx);
-          origin?.set(this.transformOp.originDataStart);
-        }
-        target.pos.copy(this.transformOp.startPos);
-        target.rot.copy(this.transformOp.startRot);
-        target.scale.set(this.transformOp.startScale, this.transformOp.startScale, this.transformOp.startScale);
       }
     }
 
@@ -628,13 +534,14 @@ export class TransformController {
     this.transformOp.objectDataStart = null;
     this.transformOp.originDataStart = null;
     this.transformOp.extraPlane = false;
+    this.transformOp.objectStarts = [];
     this.clearAxisGuide();
     this.transformOp.moveOffset.set(0, 0, 0);
     this.options.projectAndRenderAll();
-    this.options.applySliceFilter();
     if (params.editMode && this.selectedVertex >= 0) this.placeVertexMarker(this.options.getSelectedInstance(), this.selectedVertex);
     this.options.updateSelectionOutline();
     this.updateActionButtons();
+    if (commit) this.options.onStateChange?.();
   }
 
   updateAxisGuide() {
@@ -686,6 +593,193 @@ export class TransformController {
       this.extraPlaneGuide.renderOrder = 31;
       this.options.scene.add(this.extraPlaneGuide);
     }
+  }
+
+  private getObjectTransformSelection() {
+    const selectedInstance = this.options.getSelectedInstance();
+    const selected = this.options.getSelectedInstances()
+      .filter((idx, position, arr) => arr.indexOf(idx) === position && this.options.getObjectVisible(idx));
+    if (selectedInstance !== -2 && this.options.getObjectVisible(selectedInstance) && !selected.includes(selectedInstance)) {
+      selected.unshift(selectedInstance);
+    }
+    return selected;
+  }
+
+  private getObjectTransformTarget(instIdx: number) {
+    if (instIdx === -1) return this.options.getBaseTransform();
+    return this.options.getExtraInstances()[instIdx]?.transform ?? null;
+  }
+
+  private getObjectData(instIdx: number) {
+    if (instIdx === -1) {
+      return {
+        src: this.options.getX(),
+        count: this.options.getM(),
+        originalN: this.options.getBaseOriginalN() || this.options.visibleDims(),
+        axisMap: this.options.getBaseAxisMap(),
+      };
+    }
+
+    const inst = this.options.getExtraInstances()[instIdx];
+    if (!inst) return null;
+    return {
+      src: inst.X,
+      count: inst.M,
+      originalN: inst.originalN,
+      axisMap: inst.axisMap,
+    };
+  }
+
+  private createObjectTransformStart(instIdx: number, mode: TransformMode): ObjectTransformStart {
+    const target = this.getObjectTransformTarget(instIdx);
+    const data = this.getObjectData(instIdx);
+    const origin = this.options.getObjectOrigin(instIdx);
+    const shouldCaptureData = mode === 'rotate';
+    return {
+      instIdx,
+      startPos: target?.pos.clone() ?? new THREE.Vector3(),
+      startRot: target?.rot.clone() ?? new THREE.Vector3(),
+      startScale: target?.scale.clone() ?? new THREE.Vector3(1, 1, 1),
+      originWorldStart: this.getObjectOriginWorldPosition(instIdx),
+      objectDataStart: shouldCaptureData && data ? new Float32Array(data.src) : null,
+      originDataStart: shouldCaptureData && origin ? new Float32Array(origin) : null,
+    };
+  }
+
+  private applyObjectTransform(
+    clientX: number,
+    clientY: number,
+    dx: number,
+    dy: number,
+  ) {
+    if (this.transformOp.mode === 'move') {
+      const rect = this.options.renderer.domElement.getBoundingClientRect();
+      this.options.ndc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+      this.options.raycaster.setFromCamera(this.options.ndc, this.options.camera);
+      const hit = this.options.raycaster.ray.intersectPlane(this.transformOp.plane, this.tmpVec);
+      if (!hit) return;
+      const delta = hit.clone().add(this.transformOp.moveOffset).sub(this.transformOp.planeHitStart);
+      if (this.transformOp.lockAxis === 0) {
+        delta.y = 0;
+        delta.z = 0;
+      } else if (this.transformOp.lockAxis === 1) {
+        delta.x = 0;
+        delta.z = 0;
+      } else if (this.transformOp.lockAxis === 2) {
+        delta.x = 0;
+        delta.y = 0;
+      }
+      this.transformOp.objectStarts.forEach(start => this.applyObjectMove(start, delta));
+      this.transformOp.lastHit.copy(hit);
+      return;
+    }
+
+    if (this.transformOp.mode === 'rotate') {
+      if (this.transformOp.extraPlane) {
+        this.applyObjectExtraPlaneRotation(dx, dy);
+      } else {
+        this.applyObjectViewRotation(dx, dy);
+      }
+      return;
+    }
+
+    if (this.transformOp.mode === 'scale') {
+      this.applyObjectScale(dx, dy);
+    }
+  }
+
+  private applyObjectMove(start: ObjectTransformStart, delta: THREE.Vector3) {
+    const target = this.getObjectTransformTarget(start.instIdx);
+    if (!target) return;
+    target.pos.copy(start.startPos).add(delta);
+  }
+
+  private applyObjectExtraPlaneRotation(dx: number, dy: number) {
+    const primaryStart = this.transformOp.objectStarts.find(start => start.instIdx === this.transformOp.instIdx)
+      ?? this.transformOp.objectStarts[0];
+    if (!primaryStart) return;
+    const primaryData = this.getObjectData(primaryStart.instIdx);
+    if (!primaryData) return;
+
+    const dimB = this.options.primaryExtraRotationDepthDim(primaryData.originalN, primaryData.axisMap);
+    const dimA = this.options.extraRotationPlaneAxis(this.transformOp.lockAxis, dimB);
+    if (dimA < 0 || dimB < 0 || dimA === dimB) return;
+
+    const pivotA = primaryStart.originDataStart?.[dimA] ?? 0;
+    const pivotB = primaryStart.originDataStart?.[dimB] ?? 0;
+    const angle = (dx - dy) * 0.01;
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+
+    this.transformOp.objectStarts.forEach(start => {
+      const data = this.getObjectData(start.instIdx);
+      if (!data || !start.objectDataStart || data.count <= 0) return;
+      const origin = this.options.getObjectOrigin(start.instIdx);
+
+      for (let i = 0; i < data.count; i++) {
+        const a0 = start.objectDataStart[dimA * data.count + i] - pivotA;
+        const b0 = start.objectDataStart[dimB * data.count + i] - pivotB;
+        data.src[dimA * data.count + i] = pivotA + (a0 * c - b0 * s);
+        data.src[dimB * data.count + i] = pivotB + (a0 * s + b0 * c);
+      }
+
+      if (origin && start.originDataStart) {
+        const a0 = (start.originDataStart[dimA] ?? 0) - pivotA;
+        const b0 = (start.originDataStart[dimB] ?? 0) - pivotB;
+        origin[dimA] = pivotA + (a0 * c - b0 * s);
+        origin[dimB] = pivotB + (a0 * s + b0 * c);
+      }
+    });
+  }
+
+  private objectRotationDelta(dx: number, dy: number) {
+    const deltaX = dx * 0.005;
+    const deltaY = dy * 0.005;
+    if (this.transformOp.lockAxis === 0) return new THREE.Vector3(deltaY, 0, 0);
+    if (this.transformOp.lockAxis === 1) return new THREE.Vector3(0, deltaX, 0);
+    if (this.transformOp.lockAxis === 2) return new THREE.Vector3(0, 0, deltaX);
+    return new THREE.Vector3(deltaY, deltaX, 0);
+  }
+
+  private applyObjectViewRotation(dx: number, dy: number) {
+    const delta = this.objectRotationDelta(dx, dy);
+    this.dragEuler.set(delta.x, delta.y, delta.z);
+    this.dragQuat.setFromEuler(this.dragEuler);
+
+    this.transformOp.objectStarts.forEach(start => {
+      const target = this.getObjectTransformTarget(start.instIdx);
+      if (!target) return;
+      target.rot.set(
+        start.startRot.x + delta.x,
+        start.startRot.y + delta.y,
+        start.startRot.z + delta.z,
+      );
+
+      const rotatedOrigin = start.originWorldStart
+        .clone()
+        .sub(this.transformOp.pivotWorldStart)
+        .applyQuaternion(this.dragQuat)
+        .add(this.transformOp.pivotWorldStart);
+      target.pos.copy(start.startPos).add(rotatedOrigin.sub(start.originWorldStart));
+    });
+  }
+
+  private applyObjectScale(dx: number, dy: number) {
+    const delta = (dx - dy) * 0.005;
+    const scale = Math.max(0.1, Math.min(5, this.transformOp.startScale + delta));
+    const scaleFactor = scale / Math.max(this.transformOp.startScale, 1e-6);
+
+    this.transformOp.objectStarts.forEach(start => {
+      const target = this.getObjectTransformTarget(start.instIdx);
+      if (!target) return;
+      target.scale.copy(start.startScale).multiplyScalar(scaleFactor);
+      const scaledOrigin = start.originWorldStart
+        .clone()
+        .sub(this.transformOp.pivotWorldStart)
+        .multiplyScalar(scaleFactor)
+        .add(this.transformOp.pivotWorldStart);
+      target.pos.copy(start.startPos).add(scaledOrigin.sub(start.originWorldStart));
+    });
   }
 
   private setDraggedVertexFromWorldPosition(instIdx: number, vertexIdx: number, worldPos: THREE.Vector3) {

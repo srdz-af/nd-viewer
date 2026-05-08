@@ -27,9 +27,6 @@ type InstanceFactoryOptions = {
   label: string;
   surface: SurfaceState;
   renderMode: ViewMode;
-  sliceDim: number;
-  sliceMin: number;
-  sliceMax: number;
   projectionN: number;
 };
 
@@ -49,14 +46,6 @@ export function createSceneInstance(options: InstanceFactoryOptions): Instance {
   options.projector.project(options.data.verts, options.data.V, Y);
   renderer.setTransform(transform.pos, new THREE.Euler(transform.rot.x, transform.rot.y, transform.rot.z), transform.scale);
   renderer.writeInterleavedFrom(Y);
-  renderer.filterEdgesByDimRange(
-    options.data.verts,
-    options.projectionN,
-    options.data.V,
-    options.sliceDim,
-    options.sliceMin,
-    options.sliceMax,
-  );
   renderer.setMode(options.renderMode);
 
   return {

@@ -56,6 +56,14 @@ type ExtraAxisGizmoControllerOptions = {
   takeProjectedAxisDropTarget: () => 0 | 1 | 2 | null;
   clearProjectedAxisDropTarget: () => void;
   swapExtraAxisWithProjection: (depthDim: number, targetSlot: 0 | 1 | 2) => void;
+  onStateChange?: () => void;
+};
+
+export type ExtraAxisGizmoState = {
+  perspectiveDims: number[];
+  autoRotateSpeeds: Array<[number, number]>;
+  pausedAutoRotateSpeeds: Array<[number, number]>;
+  angles: Array<[number, number]>;
 };
 
 type ExtraAxisOrderDragState = {
@@ -223,6 +231,62 @@ export class ExtraAxisGizmoController {
     this.anglePlaneKeys.clear();
   }
 
+  getState(): ExtraAxisGizmoState {
+    const sortedEntries = (source: Map<number, number>) => (
+      Array.from(source.entries()).sort((a, b) => a[0] - b[0]) as Array<[number, number]>
+    );
+    return {
+      perspectiveDims: Array.from(this.selectedPerspectiveDims).sort((a, b) => a - b),
+      autoRotateSpeeds: sortedEntries(this.autoRotateSpeeds),
+      pausedAutoRotateSpeeds: sortedEntries(this.pausedAutoRotateSpeeds),
+      angles: sortedEntries(this.angles),
+    };
+  }
+
+  applyState(state: Partial<ExtraAxisGizmoState> | null | undefined) {
+    if (!state) return;
+    const normalizeDim = (value: number) => (
+      Number.isInteger(value) && value >= 0 && value < this.options.getVisibleDims() ? value : -1
+    );
+    const normalizeSpeed = (value: number) => (
+      Number.isFinite(value) ? Math.max(0, Math.min(3, Math.round(value))) : 0
+    );
+
+    this.selectedPerspectiveDims.clear();
+    for (const dim of state.perspectiveDims ?? []) {
+      const normalized = normalizeDim(dim);
+      if (normalized >= 3) this.selectedPerspectiveDims.add(normalized);
+    }
+
+    this.autoRotateSpeeds.clear();
+    for (const [dim, speed] of state.autoRotateSpeeds ?? []) {
+      const normalizedDim = normalizeDim(dim);
+      const normalizedSpeed = normalizeSpeed(speed);
+      if (normalizedDim >= 0 && normalizedSpeed > 0) this.autoRotateSpeeds.set(normalizedDim, normalizedSpeed);
+    }
+
+    this.pausedAutoRotateSpeeds.clear();
+    for (const [dim, speed] of state.pausedAutoRotateSpeeds ?? []) {
+      const normalizedDim = normalizeDim(dim);
+      const normalizedSpeed = normalizeSpeed(speed);
+      if (normalizedDim >= 0 && normalizedSpeed > 0) {
+        this.pausedAutoRotateSpeeds.set(normalizedDim, normalizedSpeed);
+      }
+    }
+
+    this.angles.clear();
+    this.anglePlaneKeys.clear();
+    const planesByDepth = new Map(this.currentPlanes().map(plane => [plane.depthDim, plane]));
+    for (const [dim, angle] of state.angles ?? []) {
+      const normalizedDim = normalizeDim(dim);
+      const plane = planesByDepth.get(normalizedDim);
+      if (!plane || !Number.isFinite(angle)) continue;
+      this.setAngle(plane, angle);
+    }
+
+    this.sync();
+  }
+
   perspectiveDimsFor(localN: number, axisMap: AxisMap): number[] {
     if (localN < 4) return [];
     const extraSet = new Set(this.currentExtraDims());
@@ -241,7 +305,7 @@ export class ExtraAxisGizmoController {
 
   applyAutoRotation(dt: number) {
     const gizmoPlanes = this.currentPlanes();
-    if (!gizmoPlanes.length || this.autoRotateSpeeds.size === 0) return;
+    if (!gizmoPlanes.length || this.autoRotateSpeeds.size === 0) return false;
 
     let rotated = false;
     for (const plane of gizmoPlanes) {
@@ -255,9 +319,10 @@ export class ExtraAxisGizmoController {
       rotated = true;
     }
 
-    if (!rotated) return;
+    if (!rotated) return false;
     this.sync();
     this.options.applySceneBackground();
+    return true;
   }
 
   toggleActiveAutoRotations() {
@@ -271,6 +336,7 @@ export class ExtraAxisGizmoController {
         this.pausedAutoRotateSpeeds.set(plane.depthDim, this.autoRotateSpeeds.get(plane.depthDim) ?? 1);
       }
       for (const plane of planes) this.setAutoRotateSpeed(plane.depthDim, 0);
+      this.options.onStateChange?.();
       return;
     }
 
@@ -280,6 +346,7 @@ export class ExtraAxisGizmoController {
       this.setAutoRotateSpeed(plane.depthDim, speed);
     }
     this.pausedAutoRotateSpeeds.clear();
+    this.options.onStateChange?.();
   }
 
   syncRotationAngles() {
@@ -303,6 +370,7 @@ export class ExtraAxisGizmoController {
     if (!rotated) return;
     this.options.applySceneBackground();
     this.options.projectAndRenderAll();
+    this.options.onStateChange?.();
   }
 
   resetRotations() {
@@ -312,6 +380,7 @@ export class ExtraAxisGizmoController {
     this.sync();
     this.options.applySceneBackground();
     this.options.projectAndRenderAll();
+    this.options.onStateChange?.();
   }
 
   sync() {
@@ -528,6 +597,7 @@ export class ExtraAxisGizmoController {
     const currentSpeed = this.autoRotateSpeeds.get(depthDim) ?? 0;
     const nextSpeed = currentSpeed >= 3 ? 0 : currentSpeed + 1;
     this.setAutoRotateSpeed(depthDim, nextSpeed);
+    this.options.onStateChange?.();
   }
 
   private scrollMetrics() {
@@ -885,12 +955,14 @@ export class ExtraAxisGizmoController {
       if (ev.button !== 0) return;
       this.setPerspectiveDepth(depthDim, !this.selectedPerspectiveDims.has(depthDim));
       this.options.projectAndRenderAll();
+      this.options.onStateChange?.();
     });
     perspectiveToggleButton.addEventListener('keydown', ev => {
       if (ev.key !== 'Enter' && ev.key !== ' ') return;
       ev.preventDefault();
       this.setPerspectiveDepth(depthDim, !this.selectedPerspectiveDims.has(depthDim));
       this.options.projectAndRenderAll();
+      this.options.onStateChange?.();
     });
     perspectiveToggleButton.addEventListener('pointerup', ev => {
       ev.preventDefault();
@@ -943,6 +1015,7 @@ export class ExtraAxisGizmoController {
     this.offsetAngle({ planeAxis: this.drag.planeAxis, depthDim: this.drag.depthAxis }, delta);
     this.sync();
     this.options.applySceneBackground();
+    this.options.onStateChange?.();
   }
 }
 
