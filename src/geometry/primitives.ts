@@ -210,7 +210,27 @@ export function simplexEdges(N: number): PrimitiveGeometry {
     for (let b = a + 1; b < V; b++) addEdge(edges, a, b);
   }
 
-  return { verts, edges: new Uint32Array(edges), V };
+  const triangles: number[] = [];
+  const facetIds: number[] = [];
+  let facetId = 0;
+  for (let a = 0; a < V; a++) {
+    for (let b = a + 1; b < V; b++) {
+      for (let c = b + 1; c < V; c++) {
+        triangles.push(a, b, c);
+        facetIds.push(facetId++);
+      }
+    }
+  }
+
+  return {
+    verts,
+    edges: new Uint32Array(edges),
+    surfaceTopology: {
+      triangles: new Uint32Array(triangles),
+      facetIds: new Uint16Array(facetIds),
+    },
+    V,
+  };
 }
 
 export function simplexPrismEdges(N: number): PrimitiveGeometry {
