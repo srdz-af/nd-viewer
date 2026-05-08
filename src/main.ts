@@ -185,6 +185,34 @@ class SmoothAfterimagePass extends Pass {
   }
 }
 
+class CopyFramePass extends Pass {
+  private readonly material = new THREE.MeshBasicMaterial();
+  private readonly fsQuad = new FullScreenQuad(this.material);
+
+  constructor() {
+    super();
+    this.needsSwap = true;
+  }
+
+  render(renderer: THREE.WebGLRenderer, writeBuffer: THREE.WebGLRenderTarget, readBuffer: THREE.WebGLRenderTarget) {
+    this.material.map = readBuffer.texture;
+
+    if (this.renderToScreen) {
+      renderer.setRenderTarget(null);
+    } else {
+      renderer.setRenderTarget(writeBuffer);
+      if (this.clear) renderer.clear();
+    }
+
+    this.fsQuad.render(renderer);
+  }
+
+  dispose() {
+    this.material.dispose();
+    this.fsQuad.dispose();
+  }
+}
+
 const app = document.getElementById('app')!;
 const tooltipEl = document.getElementById('tooltip') as HTMLDivElement | null;
 const ctxMenu = document.getElementById('context-menu') as HTMLDivElement | null;
@@ -252,8 +280,10 @@ const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
 const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0, 0.58, 0.22);
 const afterimagePass = new SmoothAfterimagePass();
+const copyFramePass = new CopyFramePass();
 composer.addPass(bloomPass);
 composer.addPass(afterimagePass);
+composer.addPass(copyFramePass);
 const captureResolutionViewportSize = new THREE.Vector2();
 const fullViewportPixelRatio = () => Math.min(window.devicePixelRatio, MAX_VIEWPORT_PIXEL_RATIO);
 let downsampleSceneOnly = false;
@@ -311,6 +341,7 @@ const referenceLineDepthMaterial = new THREE.MeshBasicMaterial();
 referenceLineDepthMaterial.colorWrite = false;
 referenceLineDepthMaterial.depthWrite = true;
 referenceLineDepthMaterial.depthTest = true;
+referenceLineDepthMaterial.side = THREE.DoubleSide;
 let animationTimeline: KeyframeTimelineController | null = null;
 let animationVideoRendering = false;
 const viewportCapture = new ViewportCaptureController({

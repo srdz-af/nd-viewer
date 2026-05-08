@@ -34,10 +34,6 @@ export class ObjectListController {
     this.listEl.appendChild(title);
 
     const table = document.createElement('table');
-    const thead = document.createElement('thead');
-    thead.innerHTML = '<tr><th aria-label="Visibility"></th><th aria-label="Object name"></th><th aria-label="Object dimension"></th></tr>';
-    table.appendChild(thead);
-
     const tbody = document.createElement('tbody');
     rows.forEach(row => {
       const tr = document.createElement('tr');
