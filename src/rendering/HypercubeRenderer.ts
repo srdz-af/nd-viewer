@@ -55,6 +55,7 @@ export class HypercubeRenderer {
   private tmp = new THREE.Vector3();
   private surface: SurfaceMaterial = { ...DEFAULT_SURFACE };
   private surfaceTopology?: SurfaceTopology;
+  private surfaceGeometrySignature = '';
   private facetColorCache = new Map<number, THREE.Color>();
   private hullBuilder = new HullGeometryBuilder();
 
@@ -115,6 +116,7 @@ export class HypercubeRenderer {
       triangles: new Uint32Array(surfaceTopology.triangles),
       facetIds: new Uint16Array(surfaceTopology.facetIds),
     } : undefined;
+    this.surfaceGeometrySignature = '';
     this.facetColorCache.clear();
     this.hullBuilder.reset(M, edges);
   }
@@ -229,12 +231,20 @@ export class HypercubeRenderer {
 
     if (!this.surfaceTopology) this.surfaceTopology = this.buildSurfaceTopologyFromCurrentPoints();
     const geometry = this.surfaceTopology
-      ? this.buildSurfaceGeometryFromTopology(this.surfaceTopology)
+      ? this.updateSurfaceGeometryFromTopology(this.surfaceTopology)
       : this.buildSurfaceGeometryFromHullFallback();
+    if (!geometry) {
+      this.mesh.visible = false;
+      this.surfaceNeedsUpdate = false;
+      return;
+    }
     const positionAttr = geometry.getAttribute('position') as THREE.BufferAttribute | undefined;
     if (!positionAttr || positionAttr.count < 3) {
-      this.mesh.geometry.dispose();
-      this.mesh.geometry = geometry;
+      if (this.mesh.geometry !== geometry) {
+        this.mesh.geometry.dispose();
+        this.mesh.geometry = geometry;
+        this.surfaceGeometrySignature = '';
+      }
       this.mesh.visible = false;
       this.surfaceNeedsUpdate = false;
       return;
@@ -243,8 +253,11 @@ export class HypercubeRenderer {
     geometry.computeVertexNormals();
     geometry.computeBoundingSphere();
     geometry.computeBoundingBox();
-    this.mesh.geometry.dispose();
-    this.mesh.geometry = geometry;
+    if (this.mesh.geometry !== geometry) {
+      this.mesh.geometry.dispose();
+      this.mesh.geometry = geometry;
+      this.surfaceGeometrySignature = '';
+    }
     this.mesh.visible = true;
     this.surfaceNeedsUpdate = false;
   }
@@ -255,21 +268,18 @@ export class HypercubeRenderer {
     return this.hullBuilder.build(indices.map(idx => this.points[idx]));
   }
 
-  private buildSurfaceGeometryFromTopology(topology: SurfaceTopology): THREE.BufferGeometry {
+  private updateSurfaceGeometryFromTopology(topology: SurfaceTopology): THREE.BufferGeometry | null {
     const triangles = topology.triangles;
     const facetIds = topology.facetIds;
-    if (triangles.length < 3 || facetIds.length * 3 !== triangles.length) return new THREE.BufferGeometry();
+    if (triangles.length < 3 || facetIds.length * 3 !== triangles.length) return null;
 
-    let visibleTriangleCount = 0;
-    for (let i = 0; i < triangles.length; i += 3) {
-      visibleTriangleCount++;
-    }
-    if (visibleTriangleCount <= 0) return new THREE.BufferGeometry();
+    const triangleCount = triangles.length / 3;
+    if (triangleCount <= 0) return null;
+    const geometry = this.ensureTopologySurfaceGeometry(topology, triangleCount);
+    const positionAttr = geometry.getAttribute('position') as THREE.BufferAttribute;
+    const positions = positionAttr.array as Float32Array;
 
-    const positions = new Float32Array(visibleTriangleCount * 9);
-    const colors = this.mode === 'faceted' ? new Float32Array(visibleTriangleCount * 9) : null;
     let vertexWrite = 0;
-    let colorWrite = 0;
     let triangleWrite = 0;
 
     for (let i = 0; i < triangles.length; i += 3) {
@@ -290,24 +300,55 @@ export class HypercubeRenderer {
       positions[vertexWrite++] = pc.y;
       positions[vertexWrite++] = pc.z;
 
-      if (colors) {
-        const facetId = facetIds[i / 3] ?? 0;
-        const color = this.facetColorForFacet(facetId);
+      triangleWrite++;
+    }
+
+    if (triangleWrite <= 0) return null;
+    positionAttr.needsUpdate = true;
+    return geometry;
+  }
+
+  private ensureTopologySurfaceGeometry(topology: SurfaceTopology, triangleCount: number) {
+    const needsColors = this.mode === 'faceted';
+    const signature = `${this.mode}:${topology.triangles.length}:${topology.facetIds.length}`;
+    const currentPosition = this.mesh?.geometry.getAttribute('position') as THREE.BufferAttribute | undefined;
+    const currentColor = this.mesh?.geometry.getAttribute('color') as THREE.BufferAttribute | undefined;
+    const expectedPositionLength = triangleCount * 9;
+    const hasExpectedPosition = (currentPosition?.array as ArrayLike<number> | undefined)?.length === expectedPositionLength;
+    const hasExpectedColor = needsColors
+      ? (currentColor?.array as ArrayLike<number> | undefined)?.length === expectedPositionLength
+      : currentColor == null;
+    if (this.mesh && this.surfaceGeometrySignature === signature && hasExpectedPosition && hasExpectedColor) {
+      return this.mesh.geometry;
+    }
+
+    const positions = new Float32Array(expectedPositionLength);
+    const positionAttr = new THREE.BufferAttribute(positions, 3);
+    positionAttr.setUsage(THREE.DynamicDrawUsage);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', positionAttr);
+
+    if (needsColors) {
+      const colors = new Float32Array(expectedPositionLength);
+      let colorWrite = 0;
+      for (let i = 0; i < topology.facetIds.length; i++) {
+        const color = this.facetColorForFacet(topology.facetIds[i] ?? 0);
         for (let v = 0; v < 3; v++) {
           colors[colorWrite++] = color.r;
           colors[colorWrite++] = color.g;
           colors[colorWrite++] = color.b;
         }
       }
-
-      triangleWrite++;
+      const colorAttr = new THREE.BufferAttribute(colors, 3);
+      colorAttr.setUsage(THREE.StaticDrawUsage);
+      geometry.setAttribute('color', colorAttr);
     }
 
-    if (triangleWrite <= 0) return new THREE.BufferGeometry();
-
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    if (colors) geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    if (this.mesh) {
+      this.mesh.geometry.dispose();
+      this.mesh.geometry = geometry;
+    }
+    this.surfaceGeometrySignature = signature;
     return geometry;
   }
 
