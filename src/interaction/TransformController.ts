@@ -88,7 +88,7 @@ type ObjectTransformStart = {
 
 const MARKER_GEOMETRY_RADIUS = 0.012;
 const VERTEX_MARKER_PIXEL_DIAMETER = 8;
-const CELL_CENTER_MARKER_PIXEL_DIAMETER = 8;
+const CELL_CENTER_MARKER_PIXEL_DIAMETER = 6.5;
 const SELECTED_MARKER_PIXEL_DIAMETER = 11;
 
 function computeCenterFromPositions(positions: Float32Array, count: number) {
