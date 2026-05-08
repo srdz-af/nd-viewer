@@ -87,7 +87,6 @@ export class ProjectionPipeline {
         );
         renderer.setTransform(tpos, new THREE.Euler(transform.rot.x, transform.rot.y, transform.rot.z), transform.scale);
         renderer.writeInterleavedFrom(Ydst);
-        renderer.refreshSurface();
       };
 
       if (M > 0 && rendererND.geometry) {
@@ -121,7 +120,6 @@ export class ProjectionPipeline {
         );
         rendererND.setTransform(tpos, new THREE.Euler(baseTransform.rot.x, baseTransform.rot.y, baseTransform.rot.z), baseTransform.scale);
         rendererND.writeInterleavedFrom(Y);
-        rendererND.refreshSurface();
       }
       this.options.getExtraInstances().forEach(inst => {
         projector.project(inst.X, inst.M, inst.Y);
@@ -134,7 +132,6 @@ export class ProjectionPipeline {
         );
         inst.renderer.setTransform(tpos, new THREE.Euler(inst.transform.rot.x, inst.transform.rot.y, inst.transform.rot.z), inst.transform.scale);
         inst.renderer.writeInterleavedFrom(inst.Y);
-        inst.renderer.refreshSurface();
       });
     }
 
