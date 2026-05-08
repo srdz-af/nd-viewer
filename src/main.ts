@@ -1451,7 +1451,16 @@ function canAddProductMesh() {
 
 function getObjectProductFactor(idx: number): ProductMeshFactor | null {
   const source = idx === BASE_SELECTION
-    ? { X, M, E, surfaceTopology: baseSurfaceTopology, origin: baseOrigin, originalN: baseOriginalN || visibleDims(), axisMap: baseAxisMap }
+    ? {
+      X,
+      M,
+      E,
+      cellTopology: baseCellTopology,
+      surfaceTopology: baseSurfaceTopology,
+      origin: baseOrigin,
+      originalN: baseOriginalN || visibleDims(),
+      axisMap: baseAxisMap,
+    }
     : extraInstances[idx];
   if (!source || source.M <= 0) return null;
 
@@ -1471,6 +1480,7 @@ function getObjectProductFactor(idx: number): ProductMeshFactor | null {
     vertexCount: source.M,
     dimension,
     edges: new Uint32Array(source.E),
+    cellTopology: cloneCellTopology(source.cellTopology),
     surfaceTopology: clonePrimitiveSurfaceTopology(source.surfaceTopology),
   };
 }
@@ -1513,7 +1523,8 @@ function addProductMeshFromSelection() {
   const inst = insertInstance({
     verts,
     edges: product.edges,
-    cellTopology: deriveCellTopologyForGeometry('productMesh', product.dimension, product.vertexCount, product.edges, product.surfaceTopology),
+    cellTopology: cloneCellTopology(product.cellTopology)
+      ?? deriveCellTopologyForGeometry('productMesh', product.dimension, product.vertexCount, product.edges, product.surfaceTopology),
     surfaceTopology: clonePrimitiveSurfaceTopology(product.surfaceTopology),
     V: product.vertexCount,
     kind: 'productMesh',
