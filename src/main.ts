@@ -1840,14 +1840,12 @@ axisController = new AxisGizmoController({
   getRot: () => rot,
   clearAxisGuide,
   projectAndRenderAll,
+  markProjectionDirty,
   applySceneBackground: () => backgroundController.applySceneBackground(PARAMS.editMode),
   setPaneCollapsed: collapsed => paneController.setCollapsed(collapsed),
   getPaneCollapsed: () => paneController.isCollapsed,
   setDraftInteractionActive: setProjectionDraftInteractionActive,
-  onStateChange: () => {
-    markProjectionDirty();
-    requestSceneUrlUpdate();
-  },
+  onStateChange: () => requestSceneUrlUpdate(),
 });
 axisController.init();
 projectionPipeline = new ProjectionPipeline({
@@ -2183,10 +2181,8 @@ const viewModeController = new ViewModeController({
 setViewMode = (mode: ViewMode) => {
   PARAMS.renderMode = mode;
   rendererND.setMode(mode);
-  rendererND.refreshSurface();
   extraInstances.forEach(inst => {
     inst.renderer.setMode(mode);
-    inst.renderer.refreshSurface();
   });
   textureEditor.updatePanel();
   viewModeController.syncButtons();

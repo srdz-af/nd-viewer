@@ -52,6 +52,7 @@ type ExtraAxisGizmoControllerOptions = {
   getRot: () => RotND;
   applySceneBackground: () => void;
   projectAndRenderAll: () => void;
+  markProjectionDirty?: () => void;
   setDraftInteractionActive?: (active: boolean) => void;
   reorderExtraAxes: (orderedExtraDims: number[]) => void;
   updateProjectedAxisDropTarget: (clientX: number, clientY: number, ghostRect: DOMRectReadOnly | null) => void;
@@ -1043,6 +1044,7 @@ export class ExtraAxisGizmoController {
     this.offsetAngle({ planeAxis: this.drag.planeAxis, depthDim: this.drag.depthAxis }, delta);
     this.sync();
     this.options.applySceneBackground();
+    this.options.markProjectionDirty?.();
     this.options.onStateChange?.();
   }
 }
