@@ -1396,6 +1396,9 @@ function updateAxisGuide() {
 }
 
 function updateVertexCloud(instIdx: number) {
+  const rendererRef = instIdx === BASE_SELECTION ? rendererND : extraInstances[instIdx]?.renderer;
+  const maxDim = maxCellDimension(rendererRef?.getCellTopologyForSelection());
+  if (transformController.getEditCellDimension() > maxDim) transformController.setEditCellDimension(maxDim);
   transformController.updateVertexCloud(instIdx);
 }
 
