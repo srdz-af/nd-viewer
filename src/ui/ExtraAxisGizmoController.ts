@@ -52,6 +52,7 @@ type ExtraAxisGizmoControllerOptions = {
   getRot: () => RotND;
   applySceneBackground: () => void;
   projectAndRenderAll: () => void;
+  setDraftInteractionActive?: (active: boolean) => void;
   reorderExtraAxes: (orderedExtraDims: number[]) => void;
   updateProjectedAxisDropTarget: (clientX: number, clientY: number, ghostRect: DOMRectReadOnly | null) => void;
   takeProjectedAxisDropTarget: () => 0 | 1 | 2 | null;
@@ -686,6 +687,7 @@ export class ExtraAxisGizmoController {
     this.drag.planeAxis = -1;
     this.drag.depthAxis = -1;
     this.drag.target = null;
+    this.options.setDraftInteractionActive?.(false);
   }
 
   private beginDrag(ev: PointerEvent, plane: ExtraAxisGizmoPlane, gizmoEl: HTMLDivElement) {
@@ -705,11 +707,14 @@ export class ExtraAxisGizmoController {
       // Some browsers are strict about capture when pointerdown starts on a child.
     }
     gizmoEl.classList.add('dragging');
+    this.options.setDraftInteractionActive?.(true);
   }
 
   private endDrag(ev: PointerEvent) {
     if (ev.pointerId !== this.drag.pointerId) return;
+    const moved = this.drag.moved;
     this.resetDragState();
+    if (moved) this.options.projectAndRenderAll();
   }
 
   private beginOrderHandleDrag(ev: PointerEvent, gizmoEl: HTMLDivElement, depthDim: number) {

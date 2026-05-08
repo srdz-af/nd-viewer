@@ -7,6 +7,10 @@ import type { ObjectOrigin } from './objectOrigin';
 import type { Instance, TransformState } from './types';
 import type { ViewMode } from '../constants';
 
+export type ProjectionRunOptions = {
+  draftSurface?: boolean;
+};
+
 type ProjectionParams = {
   N: number;
   renderMode: ViewMode;
@@ -44,7 +48,7 @@ type ProjectionPipelineOptions = {
 export class ProjectionPipeline {
   constructor(private readonly options: ProjectionPipelineOptions) {}
 
-  projectAndRenderAll() {
+  projectAndRenderAll(runOptions: ProjectionRunOptions = {}) {
     const N = this.options.getN();
     const M = this.options.getM();
     const params = this.options.getParams();
@@ -86,7 +90,7 @@ export class ProjectionPipeline {
           transform.pos.z + originProjected.z,
         );
         renderer.setTransform(tpos, new THREE.Euler(transform.rot.x, transform.rot.y, transform.rot.z), transform.scale);
-        renderer.writeInterleavedFrom(Ydst);
+        renderer.writeInterleavedFrom(Ydst, runOptions);
       };
 
       if (M > 0 && rendererND.geometry) {
@@ -119,7 +123,7 @@ export class ProjectionPipeline {
           baseTransform.pos.z + originProjected.z,
         );
         rendererND.setTransform(tpos, new THREE.Euler(baseTransform.rot.x, baseTransform.rot.y, baseTransform.rot.z), baseTransform.scale);
-        rendererND.writeInterleavedFrom(Y);
+        rendererND.writeInterleavedFrom(Y, runOptions);
       }
       this.options.getExtraInstances().forEach(inst => {
         projector.project(inst.X, inst.M, inst.Y);
@@ -131,7 +135,7 @@ export class ProjectionPipeline {
           inst.transform.pos.z + originProjected.z,
         );
         inst.renderer.setTransform(tpos, new THREE.Euler(inst.transform.rot.x, inst.transform.rot.y, inst.transform.rot.z), inst.transform.scale);
-        inst.renderer.writeInterleavedFrom(inst.Y);
+        inst.renderer.writeInterleavedFrom(inst.Y, runOptions);
       });
     }
 

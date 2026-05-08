@@ -403,15 +403,18 @@ let downsampleSceneOnly = false;
 function setCaptureResolutionMode(fullResolution: boolean) {
   renderer.getSize(captureResolutionViewportSize);
   const fullPixelRatio = fullViewportPixelRatio();
+  const nextDownsampleSceneOnly = !fullResolution;
+  const qualityChanged = downsampleSceneOnly !== nextDownsampleSceneOnly;
   const scenePixelRatio = fullResolution
     ? fullPixelRatio
     : Math.max(0.25, fullPixelRatio * LOW_RES_CAPTURE_PIXEL_RATIO_SCALE);
-  downsampleSceneOnly = !fullResolution;
+  downsampleSceneOnly = nextDownsampleSceneOnly;
 
   renderer.setPixelRatio(fullPixelRatio);
   renderer.setSize(captureResolutionViewportSize.x, captureResolutionViewportSize.y, false);
   composer.setPixelRatio(scenePixelRatio);
   composer.setSize(captureResolutionViewportSize.x, captureResolutionViewportSize.y);
+  if (qualityChanged) markProjectionDirty();
 }
 
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -433,15 +436,31 @@ const updateAxisGizmo = () => axisController.updateAxisGizmo();
 const applyAutoRotation = (dt: number) => axisController.applyAutoRotation(dt);
 let projectionPipeline: ProjectionPipeline | null = null;
 let projectionDirty = true;
+let projectionDraftInteractionActive = false;
+let projectionDraftFrame = false;
 
 function markProjectionDirty() {
   projectionDirty = true;
 }
 
+function markProjectionDraftFrame() {
+  projectionDraftFrame = true;
+  markProjectionDirty();
+}
+
+function setProjectionDraftInteractionActive(active: boolean) {
+  if (projectionDraftInteractionActive === active) return;
+  projectionDraftInteractionActive = active;
+  markProjectionDirty();
+}
+
 function projectIfDirty() {
   if (!projectionDirty || !projectionPipeline) return;
-  projectionPipeline.projectAndRenderAll();
+  projectionPipeline.projectAndRenderAll({
+    draftSurface: downsampleSceneOnly && (projectionDraftInteractionActive || projectionDraftFrame),
+  });
   projectionDirty = false;
+  projectionDraftFrame = false;
 }
 
 const projectAndRenderAll = () => {
@@ -1806,6 +1825,7 @@ transformController = new TransformController({
   primaryExtraRotationDepthDim: (localN, axisMap) => axisController.primaryExtraRotationDepthDim(localN, axisMap),
   extraRotationPlaneAxis,
   projectAndRenderAll,
+  setDraftInteractionActive: setProjectionDraftInteractionActive,
   updateSelectionOutline,
   pushUndoSnapshot,
   onStateChange: () => requestSceneUrlUpdate(),
@@ -1823,7 +1843,11 @@ axisController = new AxisGizmoController({
   applySceneBackground: () => backgroundController.applySceneBackground(PARAMS.editMode),
   setPaneCollapsed: collapsed => paneController.setCollapsed(collapsed),
   getPaneCollapsed: () => paneController.isCollapsed,
-  onStateChange: () => requestSceneUrlUpdate(),
+  setDraftInteractionActive: setProjectionDraftInteractionActive,
+  onStateChange: () => {
+    markProjectionDirty();
+    requestSceneUrlUpdate();
+  },
 });
 axisController.init();
 projectionPipeline = new ProjectionPipeline({
@@ -2267,7 +2291,7 @@ function animate() {
     animationTimeline.update(dt);
   } else if (!animationVideoRendering) {
     if (applyAutoRotation(dt)) {
-      markProjectionDirty();
+      markProjectionDraftFrame();
       requestSceneUrlUpdate();
     }
   }

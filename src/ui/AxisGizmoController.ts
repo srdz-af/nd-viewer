@@ -38,6 +38,7 @@ type AxisGizmoControllerOptions = {
   getRot: () => RotND;
   clearAxisGuide: () => void;
   projectAndRenderAll: () => void;
+  setDraftInteractionActive?: (active: boolean) => void;
   applySceneBackground: () => void;
   setPaneCollapsed: (collapsed: boolean) => void;
   getPaneCollapsed: () => boolean;
@@ -77,6 +78,7 @@ export class AxisGizmoController {
       getRot: () => this.options.getRot(),
       applySceneBackground: () => this.options.applySceneBackground(),
       projectAndRenderAll: () => this.options.projectAndRenderAll(),
+      setDraftInteractionActive: active => this.options.setDraftInteractionActive?.(active),
       reorderExtraAxes: orderedExtraDims => this.reorderExtraAxes(orderedExtraDims),
       updateProjectedAxisDropTarget: (clientX, clientY, ghostRect) => {
         this.updateProjectedAxisDropTarget(clientX, clientY, ghostRect);
