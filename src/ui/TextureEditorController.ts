@@ -5,6 +5,7 @@ import {
   DEFAULT_SURFACE,
   cloneSurface,
   normalizeSurface,
+  surfacesEqual,
   toColorHex,
   type SurfaceState,
 } from '../scene/surface';
@@ -26,6 +27,8 @@ type TextureEditorControllerOptions = {
 export class TextureEditorController {
   private readonly panel = document.getElementById('texture-panel') as HTMLDivElement | null;
   private readonly previewCanvas = document.getElementById('texture-preview') as HTMLCanvasElement | null;
+  private readonly materialTypeSelect = document.getElementById('texture-material-type') as HTMLSelectElement | null;
+  private readonly materialTypeValue = document.getElementById('texture-material-type-value') as HTMLOutputElement | null;
   private readonly baseColorInput = document.getElementById('texture-base-color') as HTMLInputElement | null;
   private readonly baseColorValue = document.getElementById('texture-base-color-value') as HTMLOutputElement | null;
   private readonly metallicInput = document.getElementById('texture-metallic') as HTMLInputElement | null;
@@ -34,23 +37,36 @@ export class TextureEditorController {
   private readonly roughnessValue = document.getElementById('texture-roughness-value') as HTMLOutputElement | null;
   private readonly alphaInput = document.getElementById('texture-alpha') as HTMLInputElement | null;
   private readonly alphaValue = document.getElementById('texture-alpha-value') as HTMLOutputElement | null;
+  private readonly transmissionInput = document.getElementById('texture-transmission') as HTMLInputElement | null;
+  private readonly transmissionValue = document.getElementById('texture-transmission-value') as HTMLOutputElement | null;
+  private readonly iorInput = document.getElementById('texture-ior') as HTMLInputElement | null;
+  private readonly iorValue = document.getElementById('texture-ior-value') as HTMLOutputElement | null;
+  private readonly thicknessInput = document.getElementById('texture-thickness') as HTMLInputElement | null;
+  private readonly thicknessValue = document.getElementById('texture-thickness-value') as HTMLOutputElement | null;
+  private readonly attenuationColorInput = document.getElementById('texture-attenuation-color') as HTMLInputElement | null;
+  private readonly attenuationColorValue = document.getElementById('texture-attenuation-color-value') as HTMLOutputElement | null;
+  private readonly attenuationDistanceInput = document.getElementById('texture-attenuation-distance') as HTMLInputElement | null;
+  private readonly attenuationDistanceValue = document.getElementById('texture-attenuation-distance-value') as HTMLOutputElement | null;
+  private readonly clearcoatInput = document.getElementById('texture-clearcoat') as HTMLInputElement | null;
+  private readonly clearcoatValue = document.getElementById('texture-clearcoat-value') as HTMLOutputElement | null;
+  private readonly clearcoatRoughnessInput = document.getElementById('texture-clearcoat-roughness') as HTMLInputElement | null;
+  private readonly clearcoatRoughnessValue = document.getElementById('texture-clearcoat-roughness-value') as HTMLOutputElement | null;
+  private readonly specularIntensityInput = document.getElementById('texture-specular-intensity') as HTMLInputElement | null;
+  private readonly specularIntensityValue = document.getElementById('texture-specular-intensity-value') as HTMLOutputElement | null;
   private readonly presetSelect = document.getElementById('texture-preset-select') as HTMLSelectElement | null;
   private readonly presetSaveButton = document.getElementById('texture-preset-save') as HTMLButtonElement | null;
   private readonly presetStore = new TexturePresetStore<SurfaceState>({
     normalizeSurface: surface => normalizeSurface(surface),
-    surfacesEqual: (a, b) => (
-      a.color === b.color
-      && Math.abs(a.metalness - b.metalness) <= 1e-6
-      && Math.abs(a.roughness - b.roughness) <= 1e-6
-      && Math.abs(a.alpha - b.alpha) <= 1e-6
-    ),
+    surfacesEqual: (a, b) => surfacesEqual(a, b),
   });
   private syncingTextureUI = false;
   private syncingTexturePresetUI = false;
   private previewRenderer: THREE.WebGLRenderer | null = null;
   private previewScene: THREE.Scene | null = null;
   private previewCamera: THREE.PerspectiveCamera | null = null;
-  private previewCube: THREE.Mesh<THREE.BoxGeometry, THREE.MeshStandardMaterial> | null = null;
+  private previewCube: THREE.Mesh<THREE.BoxGeometry, THREE.Material> | null = null;
+  private previewStandardMaterial: THREE.MeshStandardMaterial | null = null;
+  private previewGlassMaterial: THREE.MeshPhysicalMaterial | null = null;
   private previewEnvironmentTarget: THREE.WebGLRenderTarget | null = null;
 
   constructor(private readonly options: TextureEditorControllerOptions) {}
@@ -114,25 +130,51 @@ export class TextureEditorController {
   }
 
   private setTextureInputsEnabled(enabled: boolean) {
+    if (this.materialTypeSelect) this.materialTypeSelect.disabled = !enabled;
     if (this.baseColorInput) this.baseColorInput.disabled = !enabled;
     if (this.metallicInput) this.metallicInput.disabled = !enabled;
     if (this.roughnessInput) this.roughnessInput.disabled = !enabled;
     if (this.alphaInput) this.alphaInput.disabled = !enabled;
+    if (this.transmissionInput) this.transmissionInput.disabled = !enabled;
+    if (this.iorInput) this.iorInput.disabled = !enabled;
+    if (this.thicknessInput) this.thicknessInput.disabled = !enabled;
+    if (this.attenuationColorInput) this.attenuationColorInput.disabled = !enabled;
+    if (this.attenuationDistanceInput) this.attenuationDistanceInput.disabled = !enabled;
+    if (this.clearcoatInput) this.clearcoatInput.disabled = !enabled;
+    if (this.clearcoatRoughnessInput) this.clearcoatRoughnessInput.disabled = !enabled;
+    if (this.specularIntensityInput) this.specularIntensityInput.disabled = !enabled;
     if (this.presetSaveButton) this.presetSaveButton.disabled = !enabled;
     if (this.presetSelect) this.presetSelect.disabled = !enabled || this.presetStore.size === 0;
   }
 
   private syncTextureControls(surface: SurfaceState) {
-    if (!this.baseColorInput || !this.metallicInput || !this.roughnessInput || !this.alphaInput) return;
     this.syncingTextureUI = true;
-    this.baseColorInput.value = toColorHex(surface.color);
-    this.metallicInput.value = `${surface.metalness}`;
-    this.roughnessInput.value = `${surface.roughness}`;
-    this.alphaInput.value = `${surface.alpha}`;
-    if (this.baseColorValue) this.baseColorValue.textContent = this.baseColorInput.value;
+    if (this.materialTypeSelect) this.materialTypeSelect.value = surface.materialType;
+    if (this.baseColorInput) this.baseColorInput.value = toColorHex(surface.color);
+    if (this.metallicInput) this.metallicInput.value = `${surface.metalness}`;
+    if (this.roughnessInput) this.roughnessInput.value = `${surface.roughness}`;
+    if (this.alphaInput) this.alphaInput.value = `${surface.alpha}`;
+    if (this.transmissionInput) this.transmissionInput.value = `${surface.transmission}`;
+    if (this.iorInput) this.iorInput.value = `${surface.ior}`;
+    if (this.thicknessInput) this.thicknessInput.value = `${surface.thickness}`;
+    if (this.attenuationColorInput) this.attenuationColorInput.value = toColorHex(surface.attenuationColor);
+    if (this.attenuationDistanceInput) this.attenuationDistanceInput.value = `${surface.attenuationDistance}`;
+    if (this.clearcoatInput) this.clearcoatInput.value = `${surface.clearcoat}`;
+    if (this.clearcoatRoughnessInput) this.clearcoatRoughnessInput.value = `${surface.clearcoatRoughness}`;
+    if (this.specularIntensityInput) this.specularIntensityInput.value = `${surface.specularIntensity}`;
+    if (this.materialTypeValue) this.materialTypeValue.textContent = surface.materialType === 'glass' ? 'Glass' : 'Standard';
+    if (this.baseColorValue && this.baseColorInput) this.baseColorValue.textContent = this.baseColorInput.value;
     if (this.metallicValue) this.metallicValue.textContent = surface.metalness.toFixed(3);
     if (this.roughnessValue) this.roughnessValue.textContent = surface.roughness.toFixed(3);
     if (this.alphaValue) this.alphaValue.textContent = surface.alpha.toFixed(3);
+    if (this.transmissionValue) this.transmissionValue.textContent = surface.transmission.toFixed(3);
+    if (this.iorValue) this.iorValue.textContent = surface.ior.toFixed(3);
+    if (this.thicknessValue) this.thicknessValue.textContent = surface.thickness.toFixed(3);
+    if (this.attenuationColorValue && this.attenuationColorInput) this.attenuationColorValue.textContent = this.attenuationColorInput.value;
+    if (this.attenuationDistanceValue) this.attenuationDistanceValue.textContent = surface.attenuationDistance.toFixed(2);
+    if (this.clearcoatValue) this.clearcoatValue.textContent = surface.clearcoat.toFixed(3);
+    if (this.clearcoatRoughnessValue) this.clearcoatRoughnessValue.textContent = surface.clearcoatRoughness.toFixed(3);
+    if (this.specularIntensityValue) this.specularIntensityValue.textContent = surface.specularIntensity.toFixed(3);
     this.syncingTextureUI = false;
   }
 
@@ -170,6 +212,24 @@ export class TextureEditorController {
       envMapIntensity: 1.8,
       side: THREE.DoubleSide,
     });
+    const glassMaterial = new THREE.MeshPhysicalMaterial({
+      color: DEFAULT_SURFACE.color,
+      metalness: 0,
+      roughness: DEFAULT_SURFACE.roughness,
+      transparent: true,
+      opacity: DEFAULT_SURFACE.alpha,
+      transmission: DEFAULT_SURFACE.transmission,
+      ior: DEFAULT_SURFACE.ior,
+      thickness: DEFAULT_SURFACE.thickness,
+      attenuationDistance: DEFAULT_SURFACE.attenuationDistance,
+      attenuationColor: DEFAULT_SURFACE.attenuationColor,
+      clearcoat: DEFAULT_SURFACE.clearcoat,
+      clearcoatRoughness: DEFAULT_SURFACE.clearcoatRoughness,
+      specularIntensity: DEFAULT_SURFACE.specularIntensity,
+      envMapIntensity: 1.8,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
     const cube = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), cubeMaterial);
     cube.rotation.set(0.45, 0.68, 0);
     sceneRef.add(cube);
@@ -192,6 +252,8 @@ export class TextureEditorController {
     this.previewScene = sceneRef;
     this.previewCamera = cameraRef;
     this.previewCube = cube;
+    this.previewStandardMaterial = cubeMaterial;
+    this.previewGlassMaterial = glassMaterial;
   }
 
   private renderTexturePreview(surface: SurfaceState | null) {
@@ -209,27 +271,66 @@ export class TextureEditorController {
       return;
     }
 
-    const material = this.previewCube.material;
-    material.color.setHex(surface.color);
-    material.metalness = surface.metalness;
-    material.roughness = surface.roughness;
-    material.opacity = surface.alpha;
-    material.transparent = surface.alpha < OPAQUE_ALPHA_THRESHOLD;
-    material.alphaHash = false;
-    material.alphaToCoverage = false;
-    material.depthWrite = true;
-    material.needsUpdate = true;
+    this.applyPreviewMaterials(surface);
+    this.previewCube.material = surface.materialType === 'glass'
+      ? this.previewGlassMaterial ?? this.previewCube.material
+      : this.previewStandardMaterial ?? this.previewCube.material;
 
     this.previewRenderer.render(this.previewScene, this.previewCamera);
+  }
+
+  private applyPreviewMaterials(surface: SurfaceState) {
+    if (this.previewStandardMaterial) {
+      const material = this.previewStandardMaterial;
+      material.color.setHex(surface.color);
+      material.metalness = surface.metalness;
+      material.roughness = surface.roughness;
+      material.opacity = surface.alpha;
+      material.transparent = surface.alpha < OPAQUE_ALPHA_THRESHOLD;
+      material.alphaHash = false;
+      material.alphaToCoverage = false;
+      material.depthWrite = true;
+      material.needsUpdate = true;
+    }
+
+    if (this.previewGlassMaterial) {
+      const material = this.previewGlassMaterial;
+      material.color.setHex(surface.color);
+      material.metalness = 0;
+      material.roughness = surface.roughness;
+      material.opacity = surface.alpha;
+      material.transparent = true;
+      material.transmission = surface.transmission;
+      material.ior = surface.ior;
+      material.thickness = surface.thickness;
+      material.attenuationDistance = surface.attenuationDistance;
+      material.attenuationColor.setHex(surface.attenuationColor);
+      material.clearcoat = surface.clearcoat;
+      material.clearcoatRoughness = surface.clearcoatRoughness;
+      material.specularIntensity = surface.specularIntensity;
+      material.alphaHash = false;
+      material.alphaToCoverage = false;
+      material.depthWrite = false;
+      material.needsUpdate = true;
+    }
   }
 
   private readSurfaceFromTextureInputs() {
     if (!this.baseColorInput || !this.metallicInput || !this.roughnessInput || !this.alphaInput) return;
     return normalizeSurface({
+      materialType: this.materialTypeSelect?.value === 'glass' ? 'glass' : 'standard',
       color: Number.parseInt(this.baseColorInput.value.replace('#', ''), 16),
       metalness: Number.parseFloat(this.metallicInput.value),
       roughness: Number.parseFloat(this.roughnessInput.value),
       alpha: Number.parseFloat(this.alphaInput.value),
+      transmission: Number.parseFloat(this.transmissionInput?.value ?? `${DEFAULT_SURFACE.transmission}`),
+      ior: Number.parseFloat(this.iorInput?.value ?? `${DEFAULT_SURFACE.ior}`),
+      thickness: Number.parseFloat(this.thicknessInput?.value ?? `${DEFAULT_SURFACE.thickness}`),
+      attenuationColor: Number.parseInt((this.attenuationColorInput?.value ?? toColorHex(DEFAULT_SURFACE.attenuationColor)).replace('#', ''), 16),
+      attenuationDistance: Number.parseFloat(this.attenuationDistanceInput?.value ?? `${DEFAULT_SURFACE.attenuationDistance}`),
+      clearcoat: Number.parseFloat(this.clearcoatInput?.value ?? `${DEFAULT_SURFACE.clearcoat}`),
+      clearcoatRoughness: Number.parseFloat(this.clearcoatRoughnessInput?.value ?? `${DEFAULT_SURFACE.clearcoatRoughness}`),
+      specularIntensity: Number.parseFloat(this.specularIntensityInput?.value ?? `${DEFAULT_SURFACE.specularIntensity}`),
     });
   }
 
@@ -269,31 +370,44 @@ export class TextureEditorController {
   private bindControls() {
     if (!this.panel) return;
 
+    this.materialTypeSelect?.addEventListener('change', () => {
+      if (this.materialTypeValue && this.materialTypeSelect) {
+        this.materialTypeValue.textContent = this.materialTypeSelect.value === 'glass' ? 'Glass' : 'Standard';
+      }
+      this.applyTextureFromInputs(true);
+    });
     this.baseColorInput?.addEventListener('input', () => {
       if (this.baseColorValue && this.baseColorInput) this.baseColorValue.textContent = this.baseColorInput.value;
       this.applyTextureFromInputs(false);
     });
-    this.metallicInput?.addEventListener('input', () => {
-      if (this.metallicValue && this.metallicInput) {
-        this.metallicValue.textContent = Number.parseFloat(this.metallicInput.value).toFixed(3);
-      }
+    this.attenuationColorInput?.addEventListener('input', () => {
+      if (this.attenuationColorValue && this.attenuationColorInput) this.attenuationColorValue.textContent = this.attenuationColorInput.value;
       this.applyTextureFromInputs(false);
     });
-    this.roughnessInput?.addEventListener('input', () => {
-      if (this.roughnessValue && this.roughnessInput) {
-        this.roughnessValue.textContent = Number.parseFloat(this.roughnessInput.value).toFixed(3);
-      }
-      this.applyTextureFromInputs(false);
-    });
-    this.alphaInput?.addEventListener('input', () => {
-      if (this.alphaValue && this.alphaInput) this.alphaValue.textContent = Number.parseFloat(this.alphaInput.value).toFixed(3);
-      this.applyTextureFromInputs(false);
-    });
+    this.bindRangeInput(this.metallicInput, this.metallicValue, 3, false);
+    this.bindRangeInput(this.roughnessInput, this.roughnessValue, 3, false);
+    this.bindRangeInput(this.alphaInput, this.alphaValue, 3, false);
+    this.bindRangeInput(this.transmissionInput, this.transmissionValue, 3, false);
+    this.bindRangeInput(this.iorInput, this.iorValue, 3, false);
+    this.bindRangeInput(this.thicknessInput, this.thicknessValue, 3, false);
+    this.bindRangeInput(this.attenuationDistanceInput, this.attenuationDistanceValue, 2, false);
+    this.bindRangeInput(this.clearcoatInput, this.clearcoatValue, 3, false);
+    this.bindRangeInput(this.clearcoatRoughnessInput, this.clearcoatRoughnessValue, 3, false);
+    this.bindRangeInput(this.specularIntensityInput, this.specularIntensityValue, 3, false);
 
     this.baseColorInput?.addEventListener('change', () => this.applyTextureFromInputs(true));
-    this.metallicInput?.addEventListener('change', () => this.applyTextureFromInputs(true));
-    this.roughnessInput?.addEventListener('change', () => this.applyTextureFromInputs(true));
-    this.alphaInput?.addEventListener('change', () => this.applyTextureFromInputs(true));
+    this.attenuationColorInput?.addEventListener('change', () => this.applyTextureFromInputs(true));
+    this.bindRangeInput(this.metallicInput, this.metallicValue, 3, true);
+    this.bindRangeInput(this.roughnessInput, this.roughnessValue, 3, true);
+    this.bindRangeInput(this.alphaInput, this.alphaValue, 3, true);
+    this.bindRangeInput(this.transmissionInput, this.transmissionValue, 3, true);
+    this.bindRangeInput(this.iorInput, this.iorValue, 3, true);
+    this.bindRangeInput(this.thicknessInput, this.thicknessValue, 3, true);
+    this.bindRangeInput(this.attenuationDistanceInput, this.attenuationDistanceValue, 2, true);
+    this.bindRangeInput(this.clearcoatInput, this.clearcoatValue, 3, true);
+    this.bindRangeInput(this.clearcoatRoughnessInput, this.clearcoatRoughnessValue, 3, true);
+    this.bindRangeInput(this.specularIntensityInput, this.specularIntensityValue, 3, true);
+
     this.presetSaveButton?.addEventListener('click', () => this.saveTexturePreset());
     this.presetSelect?.addEventListener('change', () => {
       if (this.syncingTexturePresetUI || !this.presetSelect) return;
@@ -304,4 +418,12 @@ export class TextureEditorController {
       this.applySurface(preset.surface, true);
     });
   }
+
+  private bindRangeInput(input: HTMLInputElement | null, output: HTMLOutputElement | null, digits: number, commit: boolean) {
+    input?.addEventListener(commit ? 'change' : 'input', () => {
+      if (output && input) output.textContent = Number.parseFloat(input.value).toFixed(digits);
+      this.applyTextureFromInputs(commit);
+    });
+  }
+
 }

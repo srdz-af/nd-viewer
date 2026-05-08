@@ -10,18 +10,37 @@ import {
 import { HullGeometryBuilder, type VertexPoint } from './hullGeometry';
 
 export type SurfaceMaterial = {
+  materialType: 'standard' | 'glass';
   color: number;
   metalness: number;
   roughness: number;
   alpha: number;
+  transmission: number;
+  ior: number;
+  thickness: number;
+  attenuationDistance: number;
+  attenuationColor: number;
+  clearcoat: number;
+  clearcoatRoughness: number;
+  specularIntensity: number;
 };
 const DEFAULT_SURFACE: SurfaceMaterial = {
+  materialType: 'standard',
   color: 0xbfc7d5,
   metalness: 1.0,
   roughness: 0.05,
   alpha: 1.0,
+  transmission: 1.0,
+  ior: 1.45,
+  thickness: 0.75,
+  attenuationDistance: 5,
+  attenuationColor: 0xffffff,
+  clearcoat: 1.0,
+  clearcoatRoughness: 0.02,
+  specularIntensity: 1.0,
 };
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const COPLANAR_NORMAL_EPS = 1e-4;
 const COPLANAR_CONST_EPS = 1e-4;
 const FACET_HUE_STOPS = [0, 20, 40, 55, 80, 105, 130, 155, 180, 205, 230, 255, 280, 305, 330];
@@ -45,7 +64,7 @@ export class HypercubeRenderer {
   group: THREE.Group;
   geometry!: THREE.BufferGeometry;
   line!: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>;
-  mesh?: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>;
+  mesh?: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
   positions!: Float32Array;
   M!: number;
   allEdges!: Uint32Array;
@@ -53,6 +72,7 @@ export class HypercubeRenderer {
   originPosition = new THREE.Vector3();
   private lineMaterial: THREE.LineBasicMaterial;
   private solidMaterial: THREE.MeshStandardMaterial;
+  private glassMaterial: THREE.MeshPhysicalMaterial;
   private facetedMaterial: THREE.MeshStandardMaterial;
   private mode: ViewMode = 'wireframe';
   private surfaceNeedsUpdate = false;
@@ -80,6 +100,25 @@ export class HypercubeRenderer {
       envMapIntensity: 1.8,
       side: THREE.DoubleSide,
       depthWrite: true,
+      vertexColors: false,
+    });
+    this.glassMaterial = new THREE.MeshPhysicalMaterial({
+      color: this.surface.color,
+      metalness: 0,
+      roughness: this.surface.roughness,
+      transparent: true,
+      opacity: this.surface.alpha,
+      transmission: this.surface.transmission,
+      ior: this.surface.ior,
+      thickness: this.surface.thickness,
+      attenuationDistance: this.surface.attenuationDistance,
+      attenuationColor: this.surface.attenuationColor,
+      clearcoat: this.surface.clearcoat,
+      clearcoatRoughness: this.surface.clearcoatRoughness,
+      specularIntensity: this.surface.specularIntensity,
+      envMapIntensity: 1.8,
+      side: THREE.DoubleSide,
+      depthWrite: false,
       vertexColors: false,
     });
     this.facetedMaterial = new THREE.MeshStandardMaterial({
@@ -114,7 +153,7 @@ export class HypercubeRenderer {
       return v;
     });
 
-    this.mesh = new THREE.Mesh(new THREE.BufferGeometry(), this.solidMaterial);
+    this.mesh = new THREE.Mesh(new THREE.BufferGeometry(), this.currentSolidMaterial());
     this.mesh.visible = this.mode !== 'wireframe';
     this.group.add(this.mesh);
 
@@ -172,7 +211,7 @@ export class HypercubeRenderer {
     }
 
     if (this.mesh) {
-      this.mesh.material = mode === 'faceted' ? this.facetedMaterial : this.solidMaterial;
+      this.mesh.material = mode === 'faceted' ? this.facetedMaterial : this.currentSolidMaterial();
       this.mesh.visible = mode !== 'wireframe' && this.mesh.geometry.attributes.position !== undefined;
       if (mode !== 'faceted') this.applySurfaceMaterial();
     }
@@ -183,10 +222,19 @@ export class HypercubeRenderer {
 
   setSurface(surface: SurfaceMaterial): void {
     this.surface = {
+      materialType: surface.materialType === 'glass' ? 'glass' : 'standard',
       color: Math.max(0, Math.min(0xffffff, surface.color >>> 0)),
       metalness: clamp01(surface.metalness),
       roughness: clamp01(surface.roughness),
       alpha: clamp01(surface.alpha),
+      transmission: clamp01(surface.transmission),
+      ior: clamp(surface.ior, 1, 2.333),
+      thickness: Math.max(0, Math.min(20, surface.thickness)),
+      attenuationDistance: Math.max(0.001, Math.min(100, surface.attenuationDistance)),
+      attenuationColor: Math.max(0, Math.min(0xffffff, surface.attenuationColor >>> 0)),
+      clearcoat: clamp01(surface.clearcoat),
+      clearcoatRoughness: clamp01(surface.clearcoatRoughness),
+      specularIntensity: Math.max(0, Math.min(2, surface.specularIntensity)),
     };
     this.applySurfaceMaterial();
   }
@@ -235,6 +283,16 @@ export class HypercubeRenderer {
 
   private applySurfaceMaterial(): void {
     if (this.mode === 'faceted') return;
+    this.applyStandardSurfaceMaterial();
+    this.applyGlassSurfaceMaterial();
+    if (this.mesh) this.mesh.material = this.currentSolidMaterial();
+  }
+
+  private currentSolidMaterial() {
+    return this.surface.materialType === 'glass' ? this.glassMaterial : this.solidMaterial;
+  }
+
+  private applyStandardSurfaceMaterial(): void {
     const material = this.solidMaterial;
     material.color.setHex(this.surface.color);
     material.metalness = this.surface.metalness;
@@ -244,6 +302,27 @@ export class HypercubeRenderer {
     material.alphaHash = false;
     material.alphaToCoverage = false;
     material.depthWrite = true;
+    material.needsUpdate = true;
+  }
+
+  private applyGlassSurfaceMaterial(): void {
+    const material = this.glassMaterial;
+    material.color.setHex(this.surface.color);
+    material.metalness = 0;
+    material.roughness = this.surface.roughness;
+    material.opacity = this.surface.alpha;
+    material.transparent = true;
+    material.transmission = this.surface.transmission;
+    material.ior = this.surface.ior;
+    material.thickness = this.surface.thickness;
+    material.attenuationDistance = this.surface.attenuationDistance;
+    material.attenuationColor.setHex(this.surface.attenuationColor);
+    material.clearcoat = this.surface.clearcoat;
+    material.clearcoatRoughness = this.surface.clearcoatRoughness;
+    material.specularIntensity = this.surface.specularIntensity;
+    material.alphaHash = false;
+    material.alphaToCoverage = false;
+    material.depthWrite = false;
     material.needsUpdate = true;
   }
 

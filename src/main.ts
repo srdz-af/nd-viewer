@@ -93,7 +93,12 @@ type PackedCamera = [
   number, number, number,
   number, number,
 ];
-type PackedSurface = [number, number, number, number];
+type PackedSurface = [
+  0 | 1,
+  number, number, number, number,
+  number, number, number, number, number,
+  number, number, number,
+];
 type PackedTopology = [string, string];
 type PackedCellTopology = Array<PackedTopology | null>;
 type PackedBackgroundState = [string, string, number, number];
@@ -696,15 +701,38 @@ function unpackTransformState(values: ArrayLike<unknown> | undefined): Transform
 }
 
 function packSurfaceState(surface: SurfaceState): PackedSurface {
-  return [surface.color, surface.metalness, surface.roughness, surface.alpha];
+  return [
+    surface.materialType === 'glass' ? 1 : 0,
+    surface.color,
+    surface.metalness,
+    surface.roughness,
+    surface.alpha,
+    surface.transmission,
+    surface.ior,
+    surface.thickness,
+    surface.attenuationDistance,
+    surface.attenuationColor,
+    surface.clearcoat,
+    surface.clearcoatRoughness,
+    surface.specularIntensity,
+  ];
 }
 
 function unpackSurfaceState(surface: ArrayLike<unknown> | undefined) {
   return normalizeSurface({
-    color: finiteInteger(surface?.[0], DEFAULT_SURFACE.color),
-    metalness: finiteNumber(surface?.[1], DEFAULT_SURFACE.metalness),
-    roughness: finiteNumber(surface?.[2], DEFAULT_SURFACE.roughness),
-    alpha: finiteNumber(surface?.[3], DEFAULT_SURFACE.alpha),
+    materialType: surface?.[0] === 1 ? 'glass' : 'standard',
+    color: finiteInteger(surface?.[1], DEFAULT_SURFACE.color),
+    metalness: finiteNumber(surface?.[2], DEFAULT_SURFACE.metalness),
+    roughness: finiteNumber(surface?.[3], DEFAULT_SURFACE.roughness),
+    alpha: finiteNumber(surface?.[4], DEFAULT_SURFACE.alpha),
+    transmission: finiteNumber(surface?.[5], DEFAULT_SURFACE.transmission),
+    ior: finiteNumber(surface?.[6], DEFAULT_SURFACE.ior),
+    thickness: finiteNumber(surface?.[7], DEFAULT_SURFACE.thickness),
+    attenuationDistance: finiteNumber(surface?.[8], DEFAULT_SURFACE.attenuationDistance),
+    attenuationColor: finiteInteger(surface?.[9], DEFAULT_SURFACE.attenuationColor),
+    clearcoat: finiteNumber(surface?.[10], DEFAULT_SURFACE.clearcoat),
+    clearcoatRoughness: finiteNumber(surface?.[11], DEFAULT_SURFACE.clearcoatRoughness),
+    specularIntensity: finiteNumber(surface?.[12], DEFAULT_SURFACE.specularIntensity),
   });
 }
 

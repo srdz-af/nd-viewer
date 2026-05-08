@@ -23,7 +23,7 @@ https://srdz-af.github.io/BleND/
 - Object transforms (move/rotate/scale)
 - Vertex edit mode (move vertex)
 - Multiple objects, per-object visibility, rename, delete
-- Per-object surface settings (base color, metallic, roughness, alpha)
+- Per-object surface settings, including standard materials and PBR glass controls
 - View modes: wireframe, rendered, faceted
 - Projection/camera keyframes with timeline playback
 - Undo/redo
@@ -127,7 +127,7 @@ Scene Controls are the right-side panel.
 
 - Object list: select, rename, hide/show, and manage scene objects
 - Background: choose the plain background or a studio/HDRI background and tune its settings
-- Texture: edit the selected object's base color, metallic, roughness, and alpha
+- Texture: edit the selected object's standard material or PBR glass controls
 - Saved texture: save the current texture settings and reapply saved presets from the dropdown
 
 Texture controls are disabled/greyed out when no object is selected.
