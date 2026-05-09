@@ -960,7 +960,8 @@ let sceneHistory: SceneHistory<PackedSceneUrlState>;
 let baseLabel = 'Hypercube';
 const BASE_SELECTION = -1;
 const NO_SELECTION = -2;
-let selectedInstance: number = BASE_SELECTION; // -1 base, >=0 extra, -2 none
+const LIGHT_SELECTION_BASE = -1000;
+let selectedInstance: number = BASE_SELECTION; // -1 base, >=0 extra, <= -1000 light, -2 none
 let selectedInstances: number[] = [BASE_SELECTION];
 let selectionOutlines: THREE.LineSegments[] = [];
 let selectionOutlineKeys: number[] = [];
@@ -1284,7 +1285,8 @@ function syncSceneLightShadow(runtime: SceneLightRuntime) {
 
 function syncSceneLightRuntime(runtime: SceneLightRuntime) {
   const { state, light, helper, marker } = runtime;
-  const selected = state.id === selectedSceneLightId;
+  const lightIndex = sceneLights.indexOf(runtime);
+  const selected = lightIndex >= 0 && selectedInstances.includes(lightSelectionIndex(lightIndex));
   light.name = state.id;
   light.color.setHex(state.color);
   light.intensity = state.intensity;
@@ -1338,6 +1340,31 @@ function setSceneLights(states: SceneLightState[]) {
 
 function selectedSceneLightRuntime() {
   return sceneLights.find(runtime => runtime.state.id === selectedSceneLightId) ?? null;
+}
+
+function lightSelectionIndex(lightIndex: number) {
+  return LIGHT_SELECTION_BASE - lightIndex;
+}
+
+function isLightSelectionIndex(idx: number) {
+  return idx <= LIGHT_SELECTION_BASE && sceneLights[LIGHT_SELECTION_BASE - idx] !== undefined;
+}
+
+function sceneLightIndexFromSelection(idx: number) {
+  return isLightSelectionIndex(idx) ? LIGHT_SELECTION_BASE - idx : -1;
+}
+
+function sceneLightRuntimeForSelection(idx: number) {
+  return sceneLights[sceneLightIndexFromSelection(idx)] ?? null;
+}
+
+function selectedSceneLightSelectionIndex() {
+  const index = sceneLights.findIndex(runtime => runtime.state.id === selectedSceneLightId);
+  return index >= 0 ? lightSelectionIndex(index) : NO_SELECTION;
+}
+
+function isGeometrySelectionIndex(idx: number) {
+  return idx === BASE_SELECTION || idx >= 0;
 }
 
 function syncSceneLightControls() {
@@ -1416,8 +1443,8 @@ function addSceneLight(kind: SceneLightKind) {
   });
   sceneLights.push(createSceneLightRuntime(state));
   selectedSceneLightId = state.id;
-  syncSceneLightRuntimes();
-  syncSceneLightControls();
+  selectObject(lightSelectionIndex(sceneLights.length - 1));
+  setSceneControlTab('lights');
   requestSceneUrlUpdate();
 }
 
@@ -1426,10 +1453,24 @@ function removeSelectedSceneLight() {
   if (!selected) return;
   pushUndoSnapshot();
   const index = sceneLights.indexOf(selected);
+  const removedSelection = lightSelectionIndex(index);
+  const removedWasSelected = selectedInstances.includes(removedSelection);
   sceneLights.splice(index, 1);
   disposeSceneLightRuntime(selected);
   selectedSceneLightId = sceneLights[Math.min(index, sceneLights.length - 1)]?.state.id ?? '';
+  if (removedWasSelected) {
+    selectedInstance = selectedSceneLightSelectionIndex();
+    selectedInstances = selectedInstance === NO_SELECTION ? [] : [selectedInstance];
+  } else {
+    selectedInstances = selectedInstances.filter(idx => idx > LIGHT_SELECTION_BASE);
+    selectedInstance = isLightSelectionIndex(selectedInstance)
+      ? (selectedInstances[0] ?? NO_SELECTION)
+      : normalizeSelectionIndex(selectedInstance);
+  }
   syncSceneLightControls();
+  updateObjectList();
+  updateSelectionOutline();
+  updateTransformActionButtons();
   requestSceneUrlUpdate();
 }
 
@@ -1439,15 +1480,22 @@ function updateSelectedSceneLight(mutator: (state: SceneLightState) => void) {
   pushUndoSnapshot();
   mutator(selected.state);
   selected.state = normalizeSceneLightState(selected.state);
+  const selectedLightIdx = selectedSceneLightSelectionIndex();
+  if (!selected.state.visible && selectedInstances.includes(selectedLightIdx)) {
+    selectedInstance = NO_SELECTION;
+    selectedInstances = [];
+  }
   syncSceneLightRuntimes();
   syncSceneLightControls();
+  updateObjectList();
+  updateTransformActionButtons();
   requestSceneUrlUpdate();
 }
 
 function bindSceneLightControls() {
   sceneLightSelect?.addEventListener('change', () => {
     selectedSceneLightId = sceneLightSelect.value;
-    syncSceneLightControls();
+    selectObject(selectedSceneLightSelectionIndex());
   });
   sceneLightAddPointButton?.addEventListener('click', () => addSceneLight('point'));
   sceneLightAddDirectionalButton?.addEventListener('click', () => addSceneLight('directional'));
@@ -1504,7 +1552,8 @@ function sceneLightMarkerScale(position: THREE.Vector3, pixelDiameter: number) {
 function updateSceneLightMarkersScreenSpace() {
   sceneLights.forEach(runtime => {
     if (!runtime.marker.visible) return;
-    const selected = runtime.state.id === selectedSceneLightId;
+    const lightIndex = sceneLights.indexOf(runtime);
+    const selected = lightIndex >= 0 && selectedInstances.includes(lightSelectionIndex(lightIndex));
     runtime.marker.scale.setScalar(sceneLightMarkerScale(
       runtime.marker.position,
       selected ? SELECTED_SCENE_LIGHT_MARKER_PIXEL_DIAMETER : SCENE_LIGHT_MARKER_PIXEL_DIAMETER,
@@ -1537,8 +1586,7 @@ function handleSceneLightPointerDown(ev: PointerEvent) {
   if (!runtime) return;
 
   selectedSceneLightId = runtime.state.id;
-  selectObject(NO_SELECTION);
-  syncSceneLightControls();
+  selectObject(selectedSceneLightSelectionIndex());
   startSceneLightDrag(runtime, ev);
   ev.preventDefault();
   ev.stopPropagation();
@@ -1584,9 +1632,7 @@ function updateSceneLightDrag(ev: PointerEvent) {
     pushUndoSnapshot();
     sceneLightDrag.moved = true;
   }
-  runtime.state.position.copy(nextPosition);
-  syncSceneLightControls();
-  requestSceneUrlUpdate();
+  setLightPositionForSelection(lightSelectionIndex(sceneLights.indexOf(runtime)), nextPosition);
   ev.preventDefault();
   return true;
 }
@@ -1624,6 +1670,26 @@ function cancelSceneLightDrag() {
   sceneLightDrag.moved = false;
   syncSceneLightControls();
   return true;
+}
+
+function updateSceneLightPositionFields(runtime: SceneLightRuntime) {
+  if (runtime.state.id !== selectedSceneLightId) return;
+  if (sceneLightXInput) sceneLightXInput.value = `${runtime.state.position.x}`;
+  if (sceneLightYInput) sceneLightYInput.value = `${runtime.state.position.y}`;
+  if (sceneLightZInput) sceneLightZInput.value = `${runtime.state.position.z}`;
+}
+
+function getLightPositionForSelection(idx: number) {
+  return sceneLightRuntimeForSelection(idx)?.state.position.clone() ?? null;
+}
+
+function setLightPositionForSelection(idx: number, position: THREE.Vector3) {
+  const runtime = sceneLightRuntimeForSelection(idx);
+  if (!runtime) return;
+  runtime.state.position.copy(position);
+  syncSceneLightRuntimes();
+  updateSceneLightPositionFields(runtime);
+  requestSceneUrlUpdate();
 }
 
 function objectLabelForMaterialList(idx: number) {
@@ -2342,9 +2408,7 @@ function applySnapshot(snap: SceneSnapshot<PrimitiveMode>) {
     ...lightState,
     position: lightState.position.clone(),
   })));
-  selectedInstance = snap.selectedInstance === BASE_SELECTION && M > 0
-    ? BASE_SELECTION
-    : (snap.selectedInstance >= 0 && snap.selectedInstance < extraInstances.length ? snap.selectedInstance : NO_SELECTION);
+  selectedInstance = normalizeSelectionIndex(snap.selectedInstance);
   selectedInstances = (snap.selectedInstances ?? [selectedInstance]).map(normalizeSelectionIndex);
   reconcileSelection();
   projectAndRenderAll();
@@ -2362,11 +2426,14 @@ sceneHistory = new SceneHistory({
 
 function getObjectVisible(idx: number) {
   if (idx === BASE_SELECTION) return M > 0 && baseVisible;
+  const lightRuntime = sceneLightRuntimeForSelection(idx);
+  if (lightRuntime) return lightRuntime.state.visible;
   return extraInstances[idx]?.visible ?? false;
 }
 
 function normalizeSelectionIndex(idx: number) {
   if (idx === BASE_SELECTION) return M > 0 ? BASE_SELECTION : NO_SELECTION;
+  if (isLightSelectionIndex(idx)) return idx;
   if (idx >= 0 && extraInstances[idx]) return idx;
   return NO_SELECTION;
 }
@@ -2396,6 +2463,9 @@ function setObjectVisible(idx: number, visible: boolean, recordUndo = true) {
 
   if (idx === -1) {
     baseVisible = visible;
+  } else if (sceneLightRuntimeForSelection(idx)) {
+    const runtime = sceneLightRuntimeForSelection(idx);
+    if (runtime) runtime.state.visible = visible;
   } else if (extraInstances[idx]) {
     extraInstances[idx].visible = visible;
   }
@@ -2407,6 +2477,7 @@ function setObjectVisible(idx: number, visible: boolean, recordUndo = true) {
   }
   reconcileSelection();
   selectObject(selectedInstance, selectedInstance !== NO_SELECTION);
+  syncSceneLightControls();
   requestSceneUrlUpdate();
 }
 
@@ -2424,7 +2495,8 @@ function renameObject(idx: number, value: string) {
     return;
   }
 
-  const current = idx === -1 ? baseLabel : extraInstances[idx]?.label;
+  const lightRuntime = sceneLightRuntimeForSelection(idx);
+  const current = idx === -1 ? baseLabel : (lightRuntime?.state.label ?? extraInstances[idx]?.label);
   if (!current || current === label) {
     updateObjectList();
     return;
@@ -2433,6 +2505,10 @@ function renameObject(idx: number, value: string) {
   pushUndoSnapshot();
   if (idx === -1) {
     baseLabel = label;
+  } else if (lightRuntime) {
+    lightRuntime.state.label = label;
+    selectedSceneLightId = lightRuntime.state.id;
+    syncSceneLightControls();
   } else {
     extraInstances[idx].label = label;
   }
@@ -2447,7 +2523,7 @@ function updateObjectList() {
 
 function getTextureMaterialTarget() {
   reconcileSceneMaterials();
-  const hasObjectTarget = isSelectableObject(selectedInstance);
+  const hasObjectTarget = isGeometrySelectionIndex(selectedInstance) && isSelectableObject(selectedInstance);
   const materialId = hasObjectTarget
     ? objectMaterialId(selectedInstance)
     : (materialSlotById(textureEditorMaterialId)?.id ?? materialSlots[0]?.id ?? ensureMaterialSlot(undefined).id);
@@ -2472,7 +2548,7 @@ function assignMaterialToSelection(materialId: string, recordUndo: boolean) {
   const material = materialSlotById(materialId);
   if (!material) return false;
 
-  if (!isSelectableObject(selectedInstance)) {
+  if (!isGeometrySelectionIndex(selectedInstance) || !isSelectableObject(selectedInstance)) {
     textureEditorMaterialId = material.id;
     textureEditor.updatePanel();
     return true;
@@ -2505,7 +2581,7 @@ function renameSceneMaterial(materialId: string, name: string, recordUndo: boole
 }
 
 function splitSelectedMaterial(recordUndo: boolean) {
-  if (!isSelectableObject(selectedInstance)) return false;
+  if (!isGeometrySelectionIndex(selectedInstance) || !isSelectableObject(selectedInstance)) return false;
   const current = materialSlotById(objectMaterialId(selectedInstance));
   if (!current) return false;
   const usage = materialUsageRows(current.id);
@@ -2525,7 +2601,7 @@ function splitSelectedMaterial(recordUndo: boolean) {
 
 function applySurfaceToSelectionMaterial(surface: SurfaceState, recordUndo: boolean) {
   const material = ensureMaterialSlot(
-    isSelectableObject(selectedInstance) ? objectMaterialId(selectedInstance) : textureEditorMaterialId,
+    isGeometrySelectionIndex(selectedInstance) && isSelectableObject(selectedInstance) ? objectMaterialId(selectedInstance) : textureEditorMaterialId,
   );
   textureEditorMaterialId = material.id;
   const nextSurface = normalizeSurface(surface);
@@ -2609,6 +2685,11 @@ function selectObject(idx: number, additive = false) {
   }
 
   reconcileSelection();
+  const selectedLight = sceneLightRuntimeForSelection(selectedInstance);
+  if (selectedLight) {
+    selectedSceneLightId = selectedLight.state.id;
+    setSceneControlTab('lights');
+  }
   transformController.clearEditSelection();
   updateObjectList();
   updateSelectionOutline();
@@ -2617,7 +2698,8 @@ function selectObject(idx: number, additive = false) {
   transformController.clearVertexCloud();
   transformController.clearFaceCenterCloud();
   transformController.clearEditWireOverlay();
-  if (PARAMS.editMode && getObjectVisible(selectedInstance)) updateVertexCloud(selectedInstance);
+  if (PARAMS.editMode && isGeometrySelectionIndex(selectedInstance) && getObjectVisible(selectedInstance)) updateVertexCloud(selectedInstance);
+  syncSceneLightControls();
   textureEditor.updatePanel();
   updateTransformActionButtons();
   requestSceneUrlUpdate();
@@ -2677,6 +2759,8 @@ function getObjectOrigin(idx: number) {
 
 function getObjectOriginWorldPosition(idx: number, target = new THREE.Vector3()) {
   if (idx === BASE_SELECTION && M > 0 && baseVisible) return target.copy(rendererND.originPosition);
+  const lightRuntime = sceneLightRuntimeForSelection(idx);
+  if (lightRuntime?.state.visible) return target.copy(lightRuntime.state.position);
   const inst = extraInstances[idx];
   if (!inst || !inst.visible) return null;
   return target.copy(inst.renderer.originPosition);
@@ -2706,7 +2790,7 @@ function focusObjectOrigin(idx: number) {
 }
 
 function selectedProductObjects() {
-  return selectedInstances.filter(isSelectableObject);
+  return selectedInstances.filter(idx => isGeometrySelectionIndex(idx) && isSelectableObject(idx));
 }
 
 function canAddProductMesh() {
@@ -2826,7 +2910,11 @@ function compactDimensionMajorVertices(
 
 function deleteSelected() {
   const deleteIndices = selectedInstances.filter(idx => idx >= 0).sort((a, b) => b - a);
-  if (!deleteIndices.length) return;
+  const deleteLightIndices = selectedInstances
+    .map(sceneLightIndexFromSelection)
+    .filter((idx, position, arr) => idx >= 0 && arr.indexOf(idx) === position)
+    .sort((a, b) => b - a);
+  if (!deleteIndices.length && !deleteLightIndices.length) return;
   const keepBaseSelected = selectedInstances.includes(BASE_SELECTION) && getObjectVisible(BASE_SELECTION);
   pushUndoSnapshot();
   removeSelectionOutlines();
@@ -2836,10 +2924,18 @@ function deleteSelected() {
     inst.renderer.dispose();
     extraInstances.splice(idx, 1);
   }
+  for (const idx of deleteLightIndices) {
+    const runtime = sceneLights[idx];
+    if (!runtime) continue;
+    sceneLights.splice(idx, 1);
+    disposeSceneLightRuntime(runtime);
+  }
+  if (deleteLightIndices.length) selectedSceneLightId = sceneLights[0]?.state.id ?? '';
   selectedInstance = keepBaseSelected ? BASE_SELECTION : NO_SELECTION;
   selectedInstances = keepBaseSelected ? [BASE_SELECTION] : [];
   reconcileSceneMaterials();
   projectAndRenderAll();
+  syncSceneLightControls();
   updateObjectList();
   selectObject(selectedInstance);
   requestSceneUrlUpdate();
@@ -2918,6 +3014,12 @@ const objectListController = new ObjectListController({
       label: inst.label,
       dimension: inst.originalN,
       visible: inst.visible,
+    })),
+    ...sceneLights.map((runtime, idx) => ({
+      idx: lightSelectionIndex(idx),
+      label: runtime.state.label,
+      dimension: runtime.state.kind === 'point' ? 'Point' : 'Dir',
+      visible: runtime.state.visible,
     })),
   ],
   getSelectedIndex: () => selectedInstance,
@@ -3386,6 +3488,9 @@ transformController = new TransformController({
   getSelectedInstance: () => selectedInstance,
   getSelectedInstances: () => selectedInstances,
   getObjectVisible,
+  isLightSelection: isLightSelectionIndex,
+  getLightPosition: getLightPositionForSelection,
+  setLightPosition: setLightPositionForSelection,
   visibleDims,
   perspectiveDimsFor,
   primaryExtraRotationDepthDim: (localN, axisMap) => axisController.primaryExtraRotationDepthDim(localN, axisMap),
@@ -3535,6 +3640,7 @@ function handleTransformConstraintKey(key: string) {
 }
 
 function maxEditableCellDimensionForSelection() {
+  if (!isGeometrySelectionIndex(selectedInstance)) return 0;
   const rendererRef = selectedInstance === BASE_SELECTION
     ? rendererND
     : extraInstances[selectedInstance]?.renderer;
@@ -3558,11 +3664,13 @@ function editCellDimensionTitle(dimension: number) {
 }
 
 function selectedObjectDimension() {
+  if (!isGeometrySelectionIndex(selectedInstance)) return 0;
   if (selectedInstance === BASE_SELECTION) return M > 0 ? (baseOriginalN || visibleDims()) : 0;
   return extraInstances[selectedInstance]?.originalN ?? 0;
 }
 
 function selectedObjectCellTopology() {
+  if (!isGeometrySelectionIndex(selectedInstance)) return undefined;
   const rendererRef = selectedInstance === BASE_SELECTION
     ? rendererND
     : extraInstances[selectedInstance]?.renderer;
@@ -3619,7 +3727,7 @@ function updateEditCellDimensionButtons() {
 function setEditCellDimension(dimension: number) {
   const maxDim = maxEditableCellDimensionForSelection();
   transformController.setEditCellDimension(Math.max(0, Math.min(maxDim, Math.floor(dimension))));
-  if (PARAMS.editMode && getObjectVisible(selectedInstance)) updateVertexCloud(selectedInstance);
+  if (PARAMS.editMode && isGeometrySelectionIndex(selectedInstance) && getObjectVisible(selectedInstance)) updateVertexCloud(selectedInstance);
   updateTransformActionButtons();
 }
 

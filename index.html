@@ -1485,9 +1485,7 @@
         font-size: 11px;
       }
       #scene-lights {
-        margin-top: 18px;
-        padding-top: 14px;
-        border-top: 1px solid var(--ui-border-soft);
+        margin-top: 0;
       }
       #scene-lights h4 {
         margin: 0 0 12px;
@@ -2827,6 +2825,19 @@
               type="button"
               class="scene-control-tab"
               role="tab"
+              data-scene-control-tab="lights"
+              aria-controls="lights-panel"
+              aria-label="Lights"
+              aria-selected="false"
+              tabindex="-1"
+              title="Lights"
+            >
+              <span class="material-symbols-rounded" aria-hidden="true">wb_incandescent</span>
+            </button>
+            <button
+              type="button"
+              class="scene-control-tab"
+              role="tab"
               data-scene-control-tab="render"
               aria-controls="render-panel"
               aria-label="Render"
@@ -2917,6 +2928,8 @@
               <output id="background-lightness-value">0.15</output>
             </div>
           </div>
+        </div>
+        <div id="lights-panel" class="scene-control-tab-panel" role="tabpanel" data-scene-control-panel="lights" aria-label="Light controls" hidden>
           <div id="scene-lights" role="group" aria-label="Scene lights">
             <h4>Lights</h4>
             <div id="scene-light-actions">

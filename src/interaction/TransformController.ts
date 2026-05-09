@@ -41,6 +41,9 @@ type TransformControllerOptions = {
   getSelectedInstance: () => number;
   getSelectedInstances: () => number[];
   getObjectVisible: (idx: number) => boolean;
+  isLightSelection: (idx: number) => boolean;
+  getLightPosition: (idx: number) => THREE.Vector3 | null;
+  setLightPosition: (idx: number, position: THREE.Vector3) => void;
   visibleDims: () => number;
   perspectiveDimsFor: (localN: number, axisMap: AxisMap) => number[];
   primaryExtraRotationDepthDim: (localN: number, axisMap: AxisMap) => number;
@@ -86,6 +89,7 @@ type ObjectTransformStart = {
   originWorldStart: THREE.Vector3;
   objectDataStart: Float32Array | null;
   originDataStart: Float32Array | null;
+  lightPositionStart: THREE.Vector3 | null;
 };
 
 type TransformGizmoConstraint = {
@@ -717,6 +721,9 @@ export class TransformController {
   canUseTransformMode(mode: TransformMode) {
     if (mode === 'none') return true;
     if (!this.hasTransformTarget()) return false;
+    if (!this.options.getParams().editMode && this.getObjectTransformSelection().some(idx => this.options.isLightSelection(idx))) {
+      return mode === 'move';
+    }
     return !(this.options.getParams().editMode && this.editCellDimension === 0 && mode !== 'move');
   }
 
@@ -1020,6 +1027,11 @@ export class TransformController {
     }
 
     this.getObjectTransformSelection().forEach(instIdx => {
+      if (this.options.isLightSelection(instIdx)) {
+        const position = this.options.getLightPosition(instIdx);
+        if (position) visitor(position.x, position.y, position.z);
+        return;
+      }
       if (instIdx === -1) {
         visitRenderer(this.options.getRendererND().positions, this.options.getM());
         return;
@@ -1058,6 +1070,14 @@ export class TransformController {
     if (this.transformOp.mode === 'none') return false;
     if (!this.transformAxisAvailable(dim)) return false;
 
+    if (this.options.isLightSelection(this.transformOp.instIdx)) {
+      this.transformOp.lockAxis = dim as 0 | 1 | 2;
+      this.transformOp.extraAxisDim = -1;
+      this.transformOp.extraPlane = false;
+      this.updateAxisGuide();
+      return true;
+    }
+
     const params = this.options.getParams();
     const projected = [params.axesX, params.axesY, params.axesZ];
     const projectedSlot = projected.indexOf(dim);
@@ -1077,6 +1097,7 @@ export class TransformController {
   }
 
   private transformAxisAvailable(dim: number) {
+    if (this.options.isLightSelection(this.transformOp.instIdx)) return dim >= 0 && dim <= 2;
     const data = this.getObjectData(this.transformOp.instIdx);
     if (!data) return false;
     return data.axisMap.slice(0, data.originalN).includes(dim);
@@ -1418,6 +1439,10 @@ export class TransformController {
         if (data && this.transformOp.vertexDataStart) data.src.set(this.transformOp.vertexDataStart);
       } else {
         for (const start of this.transformOp.objectStarts) {
+          if (start.lightPositionStart) {
+            this.options.setLightPosition(start.instIdx, start.lightPositionStart);
+            continue;
+          }
           const target = this.getObjectTransformTarget(start.instIdx);
           const data = this.getObjectData(start.instIdx);
           if (data && start.objectDataStart) data.src.set(start.objectDataStart);
@@ -1485,7 +1510,9 @@ export class TransformController {
     const params = this.options.getParams();
     if (this.transformOp.lockAxis >= 0 && this.transformOp.extraAxisDim < 0) {
       const axisSlot = this.transformOp.lockAxis;
-      const projectedDim = [params.axesX, params.axesY, params.axesZ][axisSlot] ?? axisSlot;
+      const projectedDim = this.options.isLightSelection(this.transformOp.instIdx)
+        ? axisSlot
+        : ([params.axesX, params.axesY, params.axesZ][axisSlot] ?? axisSlot);
       return {
         direction: PROJECTED_AXIS_DIRECTIONS[axisSlot].clone().normalize(),
         color: this.axisPaletteColor(projectedDim),
@@ -1560,6 +1587,20 @@ export class TransformController {
   }
 
   private createObjectTransformStart(instIdx: number, mode: TransformMode): ObjectTransformStart {
+    if (this.options.isLightSelection(instIdx)) {
+      const position = this.options.getLightPosition(instIdx) ?? new THREE.Vector3();
+      return {
+        instIdx,
+        startPos: position.clone(),
+        startRot: new THREE.Vector3(),
+        startScale: new THREE.Vector3(1, 1, 1),
+        originWorldStart: position.clone(),
+        objectDataStart: null,
+        originDataStart: null,
+        lightPositionStart: position.clone(),
+      };
+    }
+
     const target = this.getObjectTransformTarget(instIdx);
     const data = this.getObjectData(instIdx);
     const origin = this.options.getObjectOrigin(instIdx);
@@ -1572,6 +1613,7 @@ export class TransformController {
       originWorldStart: this.getObjectOriginWorldPosition(instIdx),
       objectDataStart: shouldCaptureData && data ? new Float32Array(data.src) : null,
       originDataStart: shouldCaptureData && origin ? new Float32Array(origin) : null,
+      lightPositionStart: null,
     };
   }
 
@@ -1626,6 +1668,10 @@ export class TransformController {
   }
 
   private applyObjectMove(start: ObjectTransformStart, delta: THREE.Vector3) {
+    if (start.lightPositionStart) {
+      this.options.setLightPosition(start.instIdx, start.lightPositionStart.clone().add(delta));
+      return;
+    }
     const target = this.getObjectTransformTarget(start.instIdx);
     if (!target) return;
     target.pos.copy(start.startPos).add(delta);
@@ -1892,6 +1938,9 @@ export class TransformController {
   }
 
   private getObjectOriginWorldPosition(instIdx: number) {
+    if (this.options.isLightSelection(instIdx)) {
+      return this.options.getLightPosition(instIdx)?.clone() ?? new THREE.Vector3();
+    }
     if (instIdx === -1 && this.options.getM() > 0) return this.options.getRendererND().originPosition.clone();
     if (instIdx >= 0) {
       const inst = this.options.getExtraInstances()[instIdx];
