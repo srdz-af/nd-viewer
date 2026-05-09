@@ -3704,24 +3704,41 @@ function relaxBevelCapInterior(
     positions.set(cut.vertex, readDimensionMajorPoint(data, bevel.vertexCount, cut.vertex, dimension));
   }
 
-  const iterations = Math.min(96, Math.max(12, Math.ceil(Math.sqrt(interiorVertices.length)) * 5));
-  for (let iteration = 0; iteration < iterations; iteration++) {
+  const laplacianStep = (
+    source: Map<number, Float64Array>,
+    scale: number,
+  ) => {
     const nextPositions = new Map<number, Float64Array>();
     for (const vertex of interiorVertices) {
-      const neighbors = Array.from(adjacency.get(vertex) ?? []).filter(neighbor => positions.has(neighbor));
+      const current = source.get(vertex);
+      const neighbors = Array.from(adjacency.get(vertex) ?? []).filter(neighbor => source.has(neighbor));
+      if (!current) continue;
       if (!neighbors.length) continue;
 
-      const point = new Float64Array(dimension);
+      const average = new Float64Array(dimension);
       for (const neighbor of neighbors) {
-        const neighborPoint = positions.get(neighbor);
+        const neighborPoint = source.get(neighbor);
         if (!neighborPoint) continue;
-        for (let dim = 0; dim < dimension; dim++) point[dim] += neighborPoint[dim];
+        for (let dim = 0; dim < dimension; dim++) average[dim] += neighborPoint[dim];
       }
-      for (let dim = 0; dim < dimension; dim++) point[dim] /= neighbors.length;
+      const point = new Float64Array(dimension);
+      for (let dim = 0; dim < dimension; dim++) {
+        average[dim] /= neighbors.length;
+        point[dim] = current[dim] + ((average[dim] - current[dim]) * scale);
+      }
       nextPositions.set(vertex, point);
     }
 
-    for (const [vertex, point] of nextPositions) positions.set(vertex, point);
+    const target = new Map(source);
+    for (const [vertex, point] of nextPositions) target.set(vertex, point);
+    return target;
+  };
+
+  const iterations = Math.min(32, Math.max(8, Math.ceil(Math.sqrt(interiorVertices.length))));
+  for (let iteration = 0; iteration < iterations; iteration++) {
+    const smoothed = laplacianStep(positions, 0.45);
+    positions.clear();
+    for (const [vertex, point] of laplacianStep(smoothed, -0.48)) positions.set(vertex, point);
   }
 
   for (const vertex of interiorVertices) {
