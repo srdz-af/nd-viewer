@@ -3591,6 +3591,58 @@ function buildLocalBevelSphere(
   };
 }
 
+function bevelArcPoint(
+  sphere: BevelSphereBase,
+  fromNeighbor: number,
+  toNeighbor: number,
+  fromWeight: number,
+  toWeight: number,
+) {
+  const localSphere = buildLocalBevelSphere(sphere, [fromNeighbor, toNeighbor]);
+  if (!localSphere) return null;
+
+  const from = localSphere.endpointRadials.get(fromNeighbor);
+  const to = localSphere.endpointRadials.get(toNeighbor);
+  const total = fromWeight + toWeight;
+  if (!from || !to || total <= 1e-8) return null;
+
+  const radial = slerpUnitVectors(from, to, toWeight / total);
+  const point = new Float64Array(sphere.dimension);
+  for (let dim = 0; dim < sphere.dimension; dim++) {
+    point[dim] = sphere.origin[dim]
+      + localSphere.center[dim]
+      + (radial[dim] * localSphere.radius);
+  }
+  return point;
+}
+
+function blendedBevelCapPoint(
+  sphere: BevelSphereBase,
+  neighbors: number[],
+  weights: number[],
+) {
+  const point = new Float64Array(sphere.dimension);
+  let totalWeight = 0;
+  for (let i = 0; i < neighbors.length - 1; i++) {
+    const weightA = weights[i] ?? 0;
+    if (weightA <= 0) continue;
+    for (let j = i + 1; j < neighbors.length; j++) {
+      const weightB = weights[j] ?? 0;
+      if (weightB <= 0) continue;
+      const pairPoint = bevelArcPoint(sphere, neighbors[i], neighbors[j], weightA, weightB);
+      if (!pairPoint) continue;
+
+      const pairWeight = weightA * weightB;
+      totalWeight += pairWeight;
+      for (let dim = 0; dim < sphere.dimension; dim++) point[dim] += pairPoint[dim] * pairWeight;
+    }
+  }
+
+  if (totalWeight <= 1e-8) return null;
+  for (let dim = 0; dim < sphere.dimension; dim++) point[dim] /= totalWeight;
+  return point;
+}
+
 function buildBeveledVertexData(
   data: Float32Array,
   oldVertexCount: number,
@@ -3611,7 +3663,6 @@ function buildBeveledVertexData(
   const sphere = buildBevelSphere(data, oldVertexCount, selectedVertex, bevel, amount);
   for (const cut of bevel.cuts) {
     if (!sphere) continue;
-    let radial = new Float64Array(dimension);
     if (cut.neighbors.length === 1) {
       const direction = sphere.directions.get(cut.neighbors[0]);
       if (!direction) continue;
@@ -3621,33 +3672,22 @@ function buildBeveledVertexData(
       continue;
     }
 
-    const localSphere = buildLocalBevelSphere(sphere, cut.neighbors);
-    if (!localSphere) continue;
-
+    let point: Float64Array | null = null;
     if (cut.neighbors.length === 2) {
-      const a = localSphere.endpointRadials.get(cut.neighbors[0]);
-      const b = localSphere.endpointRadials.get(cut.neighbors[1]);
-      const weightA = cut.weights[0] ?? 0;
-      const weightB = cut.weights[1] ?? 0;
-      const total = weightA + weightB;
-      if (!a || !b || total <= 1e-8) continue;
-      radial = slerpUnitVectors(a, b, weightB / total);
+      point = bevelArcPoint(
+        sphere,
+        cut.neighbors[0],
+        cut.neighbors[1],
+        cut.weights[0] ?? 0,
+        cut.weights[1] ?? 0,
+      );
     } else {
-      for (let idx = 0; idx < cut.neighbors.length; idx++) {
-        const endpoint = localSphere.endpointRadials.get(cut.neighbors[idx]);
-        const weight = cut.weights[idx] ?? 0;
-        if (!endpoint || weight <= 0) continue;
-        for (let dim = 0; dim < dimension; dim++) radial[dim] += endpoint[dim] * weight;
-      }
-      const radialLength = vectorLength(radial);
-      if (radialLength <= 1e-8) continue;
-      for (let dim = 0; dim < dimension; dim++) radial[dim] /= radialLength;
+      point = blendedBevelCapPoint(sphere, cut.neighbors, cut.weights);
     }
+    if (!point) continue;
 
     for (let dim = 0; dim < dimension; dim++) {
-      next[(dim * bevel.vertexCount) + cut.vertex] = sphere.origin[dim]
-        + localSphere.center[dim]
-        + (radial[dim] * localSphere.radius);
+      next[(dim * bevel.vertexCount) + cut.vertex] = point[dim];
     }
   }
   return next;
