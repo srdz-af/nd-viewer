@@ -108,7 +108,7 @@ export class ViewportInteractionController {
     canvas.addEventListener('mousedown', ev => this.handleMiddleMouseDown(ev), { capture: true });
     canvas.addEventListener('pointerdown', ev => this.handlePointerDown(ev));
 
-    window.addEventListener('click', () => this.hideContextMenuIfIdle());
+    window.addEventListener('click', ev => this.hideContextMenuIfIdle(ev));
     window.addEventListener('pointermove', ev => this.handleWindowPointerMove(ev));
     window.addEventListener('pointerup', ev => this.handleWindowPointerUp(ev));
     window.addEventListener('pointercancel', ev => this.handleWindowPointerCancel(ev));
@@ -134,7 +134,13 @@ export class ViewportInteractionController {
   }
 
   startTransformFromLastPointer(mode: TransformMode) {
-    this.options.transformController.toggleTransformMode(mode);
+    this.options.transformController.startFromPointer(mode, this.lastPointer);
+  }
+
+  handleTransformConstraintKey(key: string) {
+    const transformController = this.options.transformController;
+    if (!transformController.isActive()) return false;
+    return transformController.handleConstraintKey(key);
   }
 
   deleteOrConfirmSelection() {
@@ -166,31 +172,16 @@ export class ViewportInteractionController {
     if (!menu) return;
     this.deletePending = true;
     menu.replaceChildren();
-    const editSelection = this.hasEditCellDeleteTarget()
-      ? this.options.transformController.getEditSelection()
-      : null;
-
-    const title = document.createElement('div');
-    title.textContent = editSelection ? `Delete ${editSelection.label}?` : 'Delete?';
-    title.style.padding = '8px 12px';
-    title.style.fontWeight = '700';
 
     const confirm = document.createElement('button');
-    confirm.textContent = 'Confirm';
+    confirm.textContent = 'Delete';
     confirm.onclick = () => {
       menu.style.display = 'none';
       this.deletePending = false;
       this.deleteCurrentTarget();
     };
 
-    const cancel = document.createElement('button');
-    cancel.textContent = 'Cancel';
-    cancel.onclick = () => {
-      this.deletePending = false;
-      menu.style.display = 'none';
-    };
-
-    menu.append(title, confirm, cancel);
+    menu.append(confirm);
     const x = ev?.clientX ?? this.lastPointer.x;
     const y = ev?.clientY ?? this.lastPointer.y;
     menu.style.left = `${x}px`;
@@ -318,7 +309,10 @@ export class ViewportInteractionController {
       menu.appendChild(recalculateOriginButton);
       const deleteButton = document.createElement('button');
       deleteButton.textContent = 'Delete';
-      deleteButton.onclick = () => this.showDeleteConfirm(ev);
+      deleteButton.onclick = clickEvent => {
+        clickEvent.stopPropagation();
+        this.showDeleteConfirm(ev);
+      };
       menu.appendChild(deleteButton);
     }
 
@@ -479,9 +473,11 @@ export class ViewportInteractionController {
     this.options.keyboardCamera.clearKeys();
   }
 
-  private hideContextMenuIfIdle() {
-    if (this.deletePending) return;
-    if (this.options.contextMenuEl) this.options.contextMenuEl.style.display = 'none';
+  private hideContextMenuIfIdle(ev: MouseEvent) {
+    const menu = this.options.contextMenuEl;
+    const target = ev.target;
+    if (this.deletePending && target instanceof Node && menu?.contains(target)) return;
+    if (menu) menu.style.display = 'none';
     this.deletePending = false;
   }
 

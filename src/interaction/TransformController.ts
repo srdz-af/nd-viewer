@@ -107,7 +107,6 @@ const PROJECTED_AXIS_DIRECTIONS = [
   new THREE.Vector3(0, 0, 1),
 ];
 const FREE_HANDLE_COLOR = AXIS_PALETTE[7];
-const EXTRA_HANDLE_DIRECTION = new THREE.Vector3(1, 1, 1).normalize();
 const FREE_GIZMO_CONSTRAINT: TransformGizmoConstraint = {
   kind: 'free',
   axisSlot: -1,
@@ -118,6 +117,7 @@ const PROJECTED_AXIS_CONSTRAINTS: TransformGizmoConstraint[] = [
   { kind: 'axis', axisSlot: 1, extraDim: -1 },
   { kind: 'axis', axisSlot: 2, extraDim: -1 },
 ];
+const AXIS_LOCK_KEYS = ['x', 'y', 'z', 'w', 'v', 'u', 't', 's'];
 
 function computeCenterFromPositions(positions: Float32Array, count: number) {
   if (!count) return new THREE.Vector3();
@@ -165,7 +165,8 @@ export class TransformController {
   private transformGizmo: THREE.Group | null = null;
   private transformGizmoRings: THREE.LineLoop[] = [];
   private transformGizmoHandles: THREE.Mesh[] = [];
-  private transformGizmoExtraHandle: THREE.Mesh | null = null;
+  private transformGizmoExtraHandles: THREE.Mesh[] = [];
+  private transformGizmoExtraSignature = '';
   private readonly transformGizmoCenter = new THREE.Vector3();
   private pendingGizmoConstraint: TransformGizmoConstraint | null = null;
   private readonly tmpVec = new THREE.Vector3();
@@ -702,6 +703,7 @@ export class TransformController {
   clearTransformMode() {
     if (this.transformOp.mode !== 'none') this.finish(false);
     this.activeTransformMode = 'none';
+    this.pendingGizmoConstraint = null;
     this.clearTransformGizmo();
     this.updateActionButtons();
   }
@@ -736,8 +738,9 @@ export class TransformController {
     const minRadius = this.screenSpaceWorldRadius(bounds.center, TRANSFORM_GIZMO_MIN_PIXEL_RADIUS);
     const radius = Math.max(bounds.radius * 1.18, minRadius, 0.08);
     const handleScale = this.screenSpaceMarkerScale(bounds.center, TRANSFORM_GIZMO_HANDLE_PIXEL_DIAMETER) / radius;
-    const extraDim = this.extraAxisDimForTransformTarget();
-    this.updateTransformGizmoColors(extraDim);
+    const extraDims = this.extraAxisDimsForTransformTarget();
+    this.syncTransformGizmoExtraHandles(extraDims);
+    this.updateTransformGizmoColors(extraDims);
 
     this.transformGizmo.position.copy(bounds.center);
     this.transformGizmo.quaternion.identity();
@@ -745,14 +748,6 @@ export class TransformController {
     this.transformGizmoHandles.forEach(handle => {
       handle.scale.setScalar(handleScale);
     });
-    if (this.transformGizmoExtraHandle) {
-      this.transformGizmoExtraHandle.visible = extraDim >= 0;
-      this.transformGizmoExtraHandle.userData.transformGizmoConstraint = {
-        kind: 'extra',
-        axisSlot: -1,
-        extraDim,
-      } satisfies TransformGizmoConstraint;
-    }
     if (!this.options.scene.children.includes(this.transformGizmo)) this.options.scene.add(this.transformGizmo);
   }
 
@@ -806,18 +801,60 @@ export class TransformController {
         direction,
       )),
     ];
-    this.transformGizmoExtraHandle = makeHandle(
-      this.axisPaletteColor(3),
-      { kind: 'extra', axisSlot: -1, extraDim: -1 },
-      EXTRA_HANDLE_DIRECTION.clone().multiplyScalar(1.18),
-    );
-    this.transformGizmoHandles.push(this.transformGizmoExtraHandle);
 
     this.transformGizmo = group;
     this.options.scene.add(group);
   }
 
-  private updateTransformGizmoColors(extraDim: number) {
+  private syncTransformGizmoExtraHandles(extraDims: number[]) {
+    if (!this.transformGizmo) return;
+    const signature = extraDims.join(':');
+    if (signature === this.transformGizmoExtraSignature) return;
+
+    for (const handle of this.transformGizmoExtraHandles) {
+      this.transformGizmo.remove(handle);
+      this.transformGizmoHandles = this.transformGizmoHandles.filter(entry => entry !== handle);
+      this.disposeRenderable(handle);
+    }
+    this.transformGizmoExtraHandles = [];
+    this.transformGizmoExtraSignature = signature;
+
+    extraDims.forEach((dim, index) => {
+      const handle = new THREE.Mesh(
+        this.options.vertexGeo,
+        new THREE.MeshBasicMaterial({
+          color: this.axisPaletteColor(dim),
+          transparent: true,
+          opacity: 0.96,
+          depthTest: false,
+          depthWrite: false,
+        }),
+      );
+      handle.position.copy(this.extraHandleDirection(index, extraDims.length));
+      handle.renderOrder = 36;
+      handle.userData.transformGizmoHandle = true;
+      handle.userData.transformGizmoConstraint = {
+        kind: 'extra',
+        axisSlot: -1,
+        extraDim: dim,
+      } satisfies TransformGizmoConstraint;
+      this.transformGizmo?.add(handle);
+      this.transformGizmoExtraHandles.push(handle);
+      this.transformGizmoHandles.push(handle);
+    });
+  }
+
+  private extraHandleDirection(index: number, total: number) {
+    if (total <= 1) return new THREE.Vector3(1, 1, 1).normalize().multiplyScalar(1.18);
+    const angle = ((index + 0.5) / total) * Math.PI * 2;
+    const z = index % 2 === 0 ? 0.58 : -0.58;
+    const radial = Math.sqrt(Math.max(0, 1 - (z * z)));
+    return new THREE.Vector3(Math.cos(angle) * radial, Math.sin(angle) * radial, z)
+      .normalize()
+      .multiplyScalar(1.18);
+  }
+
+  private updateTransformGizmoColors(extraDims: number[]) {
     const params = this.options.getParams();
     const activeDims = [params.axesX, params.axesY, params.axesZ];
     this.transformGizmoRings.forEach((ring, axisSlot) => {
@@ -830,9 +867,9 @@ export class TransformController {
         this.setRenderableColor(handle.material, this.axisPaletteColor(activeDims[index - 1] ?? index - 1));
       }
     });
-    if (this.transformGizmoExtraHandle && extraDim >= 0) {
-      this.setRenderableColor(this.transformGizmoExtraHandle.material, this.axisPaletteColor(extraDim));
-    }
+    this.transformGizmoExtraHandles.forEach((handle, index) => {
+      this.setRenderableColor(handle.material, this.axisPaletteColor(extraDims[index] ?? index + 3));
+    });
   }
 
   private axisPaletteColor(dim: number) {
@@ -846,6 +883,18 @@ export class TransformController {
       return;
     }
     if ('color' in material && material.color instanceof THREE.Color) material.color.set(color);
+  }
+
+  private disposeRenderable(object: THREE.Object3D) {
+    const renderable = object as THREE.Mesh | THREE.Line;
+    if ('geometry' in renderable && renderable.geometry !== this.options.vertexGeo) {
+      renderable.geometry.dispose();
+    }
+    if ('material' in renderable) {
+      const material = renderable.material;
+      if (Array.isArray(material)) material.forEach(entry => entry.dispose());
+      else material.dispose();
+    }
   }
 
   private createGizmoRingPoints(axisSlot: number) {
@@ -880,7 +929,8 @@ export class TransformController {
     this.transformGizmo = null;
     this.transformGizmoRings = [];
     this.transformGizmoHandles = [];
-    this.transformGizmoExtraHandle = null;
+    this.transformGizmoExtraHandles = [];
+    this.transformGizmoExtraSignature = '';
   }
 
   private pickTransformGizmoConstraint(ev: PointerEvent): TransformGizmoConstraint | null {
@@ -919,24 +969,27 @@ export class TransformController {
     return { center: this.transformGizmoCenter, radius };
   }
 
-  private extraAxisDimForTransformTarget() {
+  private extraAxisDimsForTransformTarget() {
     const instIdx = this.options.getParams().editMode
       ? this.options.getSelectedInstance()
       : this.getObjectTransformSelection()[0];
-    if (instIdx === undefined) return -1;
+    if (instIdx === undefined) return [];
     const data = this.getObjectData(instIdx);
-    if (!data || data.originalN < 4) return -1;
+    if (!data || data.originalN < 4) return [];
 
     const params = this.options.getParams();
     const projected = new Set([params.axesX, params.axesY, params.axesZ]);
     const available = data.axisMap
       .slice(0, data.originalN)
-      .filter(dim => Number.isInteger(dim) && dim >= 0 && !projected.has(dim));
-    if (!available.length) return -1;
+      .filter(dim => Number.isInteger(dim) && dim >= 0 && !projected.has(dim))
+      .filter((dim, index, arr) => arr.indexOf(dim) === index);
+    if (!available.length) return [];
 
     const primary = this.options.primaryExtraRotationDepthDim(data.originalN, data.axisMap);
-    if (available.includes(primary)) return primary;
-    return available[0] ?? -1;
+    if (available.includes(primary)) {
+      return [primary, ...available.filter(dim => dim !== primary)];
+    }
+    return available;
   }
 
   private forEachTransformTargetPosition(visitor: (x: number, y: number, z: number) => void) {
@@ -996,27 +1049,37 @@ export class TransformController {
   }
 
   handleConstraintKey(key: string) {
-    if (key === 'w') {
-      if (this.transformOp.mode === 'rotate') {
-        if (this.transformOp.extraAxisDim < 0) {
-          const data = this.getObjectData(this.transformOp.instIdx);
-          this.transformOp.extraAxisDim = data
-            ? this.options.primaryExtraRotationDepthDim(data.originalN, data.axisMap)
-            : -1;
-        }
-        this.transformOp.extraPlane = !this.transformOp.extraPlane;
-        this.updateAxisGuide();
-        return true;
-      }
-      return false;
-    }
-    if (key === 'x' || key === 'y' || key === 'z') {
-      this.transformOp.lockAxis = key === 'x' ? 0 : key === 'y' ? 1 : 2;
-      if (!this.transformOp.extraPlane) this.transformOp.extraAxisDim = -1;
+    const dim = AXIS_LOCK_KEYS.indexOf(key);
+    if (dim < 0) return false;
+    return this.lockTransformToAxisDim(dim);
+  }
+
+  private lockTransformToAxisDim(dim: number) {
+    if (this.transformOp.mode === 'none') return false;
+    if (!this.transformAxisAvailable(dim)) return false;
+
+    const params = this.options.getParams();
+    const projected = [params.axesX, params.axesY, params.axesZ];
+    const projectedSlot = projected.indexOf(dim);
+    if (projectedSlot >= 0) {
+      this.transformOp.lockAxis = projectedSlot as 0 | 1 | 2;
+      this.transformOp.extraAxisDim = -1;
+      this.transformOp.extraPlane = false;
       this.updateAxisGuide();
       return true;
     }
-    return false;
+
+    this.transformOp.lockAxis = -1;
+    this.transformOp.extraAxisDim = dim;
+    this.transformOp.extraPlane = this.transformOp.mode === 'rotate';
+    this.updateAxisGuide();
+    return true;
+  }
+
+  private transformAxisAvailable(dim: number) {
+    const data = this.getObjectData(this.transformOp.instIdx);
+    if (!data) return false;
+    return data.axisMap.slice(0, data.originalN).includes(dim);
   }
 
   startFromPointer(mode: TransformMode, pointer: { x: number; y: number }) {
@@ -1025,10 +1088,12 @@ export class TransformController {
 
   start(mode: TransformMode, ev: { clientX: number; clientY: number }) {
     if (!this.canUseTransformMode(mode)) return;
+    this.activeTransformMode = mode;
     const selectedInstance = this.options.getSelectedInstance();
     const selectedObjects = this.getObjectTransformSelection();
     if (this.options.getParams().editMode) {
       if (!this.startEditTransform(mode, selectedInstance, ev)) return;
+      this.updateActionButtons();
       return;
     }
     if (!selectedObjects.length) return;
@@ -1082,6 +1147,7 @@ export class TransformController {
       this.transformOp.objectDataStart = null;
       this.transformOp.originDataStart = null;
     }
+    this.updateActionButtons();
   }
 
   private startEditTransform(mode: TransformMode, selectedInstance: number, ev: { clientX: number; clientY: number }) {
@@ -1387,14 +1453,8 @@ export class TransformController {
   updateAxisGuide() {
     this.clearAxisGuide();
     if (this.transformOp.mode === 'none') return;
-    const hasAxis = this.transformOp.lockAxis !== -1;
-    const axisIdx = hasAxis ? this.transformOp.lockAxis : 0;
-    const dir = new THREE.Vector3(
-      axisIdx === 0 ? 1 : 0,
-      axisIdx === 1 ? 1 : 0,
-      axisIdx === 2 ? 1 : 0,
-    );
-    if (!hasAxis && !this.transformOp.extraPlane) return;
+    const guide = this.transformAxisGuide();
+    if (!guide) return;
 
     let center = new THREE.Vector3();
     if (this.transformOp.targetVertices.length > 0) {
@@ -1409,33 +1469,38 @@ export class TransformController {
       center = this.getObjectOriginWorldPosition(this.transformOp.instIdx);
     }
 
-    const len = 3;
+    const len = Math.max(3, this.computeTransformGizmoBounds()?.radius ?? 0);
     const points = [
-      center.clone().addScaledVector(dir, -len),
-      center.clone().addScaledVector(dir, len),
+      center.clone().addScaledVector(guide.direction, -len),
+      center.clone().addScaledVector(guide.direction, len),
     ];
-    if (hasAxis) {
-      const geom = new THREE.BufferGeometry().setFromPoints(points);
-      const mat = new THREE.LineBasicMaterial({ color: 0xffa64d, linewidth: 2, depthTest: false, transparent: true, opacity: 0.9 });
-      this.axisGuide = new THREE.Line(geom, mat);
-      this.axisGuide.renderOrder = 30;
-      this.options.scene.add(this.axisGuide);
+    const geom = new THREE.BufferGeometry().setFromPoints(points);
+    const mat = new THREE.LineBasicMaterial({ color: guide.color, linewidth: 2, depthTest: false, transparent: true, opacity: 0.92 });
+    this.axisGuide = new THREE.Line(geom, mat);
+    this.axisGuide.renderOrder = 30;
+    this.options.scene.add(this.axisGuide);
+  }
+
+  private transformAxisGuide() {
+    const params = this.options.getParams();
+    if (this.transformOp.lockAxis >= 0 && this.transformOp.extraAxisDim < 0) {
+      const axisSlot = this.transformOp.lockAxis;
+      const projectedDim = [params.axesX, params.axesY, params.axesZ][axisSlot] ?? axisSlot;
+      return {
+        direction: PROJECTED_AXIS_DIRECTIONS[axisSlot].clone().normalize(),
+        color: this.axisPaletteColor(projectedDim),
+      };
     }
-    if (this.transformOp.extraPlane) {
-      const extraDir = new THREE.Vector3(0, 0, 0);
-      extraDir.copy(dir).cross(this.options.camera.getWorldDirection(this.tmpVec).normalize()).normalize();
-      if (extraDir.lengthSq() === 0) extraDir.copy(this.options.camera.up).normalize();
-      const extraLen = 2;
-      const extraPoints = [
-        center.clone().addScaledVector(extraDir, -extraLen),
-        center.clone().addScaledVector(extraDir, extraLen),
-      ];
-      const extraGeom = new THREE.BufferGeometry().setFromPoints(extraPoints);
-      const extraMat = new THREE.LineBasicMaterial({ color: 0xc084fc, linewidth: 2, depthTest: false, transparent: true, opacity: 0.9 });
-      this.extraPlaneGuide = new THREE.Line(extraGeom, extraMat);
-      this.extraPlaneGuide.renderOrder = 31;
-      this.options.scene.add(this.extraPlaneGuide);
+    if (this.transformOp.extraAxisDim >= 0) {
+      const extraDims = this.extraAxisDimsForTransformTarget();
+      const index = Math.max(0, extraDims.indexOf(this.transformOp.extraAxisDim));
+      const total = Math.max(1, extraDims.length);
+      return {
+        direction: this.extraHandleDirection(index, total).normalize(),
+        color: this.axisPaletteColor(this.transformOp.extraAxisDim),
+      };
     }
+    return null;
   }
 
   private getObjectTransformSelection() {
@@ -1498,7 +1563,7 @@ export class TransformController {
     const target = this.getObjectTransformTarget(instIdx);
     const data = this.getObjectData(instIdx);
     const origin = this.options.getObjectOrigin(instIdx);
-    const shouldCaptureData = mode === 'rotate' || this.pendingGizmoConstraint?.kind === 'extra';
+    const shouldCaptureData = !!data && (mode === 'rotate' || data.originalN >= 4 || this.pendingGizmoConstraint?.kind === 'extra');
     return {
       instIdx,
       startPos: target?.pos.clone() ?? new THREE.Vector3(),

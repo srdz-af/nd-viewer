@@ -2285,7 +2285,7 @@ function hasActiveSelection() {
 }
 
 function handleTransformConstraintKey(key: string) {
-  return transformController.handleConstraintKey(key);
+  return viewportInteraction.handleTransformConstraintKey(key);
 }
 
 function maxEditableCellDimensionForSelection() {

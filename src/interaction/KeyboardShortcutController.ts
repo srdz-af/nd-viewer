@@ -57,7 +57,6 @@ export class KeyboardShortcutController {
   private handleTransformConstraint(ev: KeyboardEvent) {
     if (this.options.isModalOpen()) return;
     if (isTextEntryTarget(ev.target)) return;
-    if (this.options.getTransformMode() === 'none') return;
     const key = ev.key.toLowerCase();
     if (this.options.handleTransformConstraintKey(key)) ev.preventDefault();
   }
