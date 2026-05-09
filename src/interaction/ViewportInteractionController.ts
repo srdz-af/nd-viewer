@@ -128,9 +128,6 @@ export class ViewportInteractionController {
   };
   private readonly operationManager = new ViewportOperationManager();
   private transformGizmoPrevControlsEnabled = true;
-  private editExtrusion: {
-    token: EditExtrusionToken;
-  } | null = null;
   private lastBevelSmoothness = BEVEL_MIN_SMOOTHNESS;
   private suppressNextContextMenu = false;
 
@@ -177,7 +174,7 @@ export class ViewportInteractionController {
   }
 
   startEditExtrusionFromLastPointer() {
-    if (this.editExtrusion || this.operationManager.isActive()) return;
+    if (this.operationManager.isActive()) return;
     if (!this.options.getParams().editMode) return;
     if (this.options.transformController.isActive() || this.options.transformController.isGizmoDragging()) return;
     const token = this.options.extrudeSelectedEditCell();
@@ -187,11 +184,28 @@ export class ViewportInteractionController {
       this.options.cancelEditExtrusion(token);
       return;
     }
-    this.editExtrusion = { token };
+    if (!this.operationManager.start({
+      kind: 'edit-extrusion',
+      scope: 'edit',
+      blocksCamera: true,
+      blocksSelection: true,
+      blocksContextMenu: true,
+      commit: () => {
+        this.options.commitEditExtrusion(token);
+        this.options.transformController.finish(true);
+      },
+      cancel: () => {
+        this.options.transformController.finish(false);
+        this.options.cancelEditExtrusion(token);
+      },
+    })) {
+      this.options.transformController.finish(false);
+      this.options.cancelEditExtrusion(token);
+    }
   }
 
   startEditInsetFromLastPointer() {
-    if (this.editExtrusion || this.operationManager.isActive()) return;
+    if (this.operationManager.isActive()) return;
     if (!this.options.getParams().editMode) return;
     if (this.options.transformController.isActive() || this.options.transformController.isGizmoDragging()) return;
     const token = this.options.startEditInset();
@@ -225,7 +239,7 @@ export class ViewportInteractionController {
   }
 
   startEditBevelFromLastPointer(kind: 'vertex' | 'edge' = 'edge', inward = false) {
-    if (this.editExtrusion || this.operationManager.isActive()) return;
+    if (this.operationManager.isActive()) return;
     if (!this.options.getParams().editMode) return;
     if (this.options.transformController.isActive() || this.options.transformController.isGizmoDragging()) return;
     let smoothness = this.lastBevelSmoothness;
@@ -550,19 +564,15 @@ export class ViewportInteractionController {
 
     if (this.options.transformController.isActive()) {
       if (ev.button === 0) {
-        if (this.editExtrusion) {
-          this.options.commitEditExtrusion(this.editExtrusion.token);
-          this.editExtrusion = null;
+        if (this.operationManager.isKind('edit-extrusion')) {
+          this.operationManager.finish(true);
         } else {
           this.options.pushUndoSnapshot();
+          this.options.transformController.finish(true);
         }
-        this.options.transformController.finish(true);
       } else if (ev.button === 2) {
-        this.options.transformController.finish(false);
-        if (this.editExtrusion) {
-          this.options.cancelEditExtrusion(this.editExtrusion.token);
-          this.editExtrusion = null;
-        }
+        if (this.operationManager.isKind('edit-extrusion')) this.operationManager.finish(false);
+        else this.options.transformController.finish(false);
       }
       ev.preventDefault();
       return;
@@ -640,7 +650,7 @@ export class ViewportInteractionController {
   }
 
   private handleWindowPointerCancel(ev: PointerEvent) {
-    if (this.operationManager.hasScope('edit')) {
+    if (this.operationManager.isKind('edit-bevel') || this.operationManager.isKind('edit-inset')) {
       this.operationManager.finish(false);
       ev.preventDefault();
       return;
@@ -655,10 +665,8 @@ export class ViewportInteractionController {
       this.options.controls.enabled = this.transformGizmoPrevControlsEnabled;
       return;
     }
-    if (this.editExtrusion && this.options.transformController.isActive()) {
-      this.options.transformController.finish(false);
-      this.options.cancelEditExtrusion(this.editExtrusion.token);
-      this.editExtrusion = null;
+    if (this.operationManager.isKind('edit-extrusion')) {
+      this.operationManager.finish(false);
       return;
     }
     if (this.axisDrag.active) this.endAxisShiftDrag();
@@ -669,11 +677,6 @@ export class ViewportInteractionController {
     if (this.operationManager.isKind('duplicate-placement')) this.operationManager.finish(false);
     if (this.options.transformController.cancelGizmoDrag()) {
       this.options.controls.enabled = this.transformGizmoPrevControlsEnabled;
-    }
-    if (this.editExtrusion && this.options.transformController.isActive()) {
-      this.options.transformController.finish(false);
-      this.options.cancelEditExtrusion(this.editExtrusion.token);
-      this.editExtrusion = null;
     }
     if (this.axisDrag.active) this.endAxisShiftDrag();
     this.options.keyboardCamera.clearKeys();
