@@ -3276,7 +3276,7 @@ function buildBeveledVertexData(
       radius += weight * length;
       for (let dim = 0; dim < dimension; dim++) {
         const delta = (data[(dim * oldVertexCount) + neighbor] ?? selectedValues[dim]) - selectedValues[dim];
-        direction[dim] += weight * (delta / length);
+        direction[dim] -= weight * (delta / length);
       }
     }
     let directionLengthSq = 0;

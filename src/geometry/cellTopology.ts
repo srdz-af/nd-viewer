@@ -253,6 +253,7 @@ function sortedCellSignature(cell: number[]) {
 
 function pushUniqueCell(cells: number[][], cell: number[], signatures?: Set<string>) {
   if (!cell.length) return -1;
+  if (new Set(cell).size !== cell.length) return -1;
   if (signatures) {
     const signature = sortedCellSignature(cell);
     if (signatures.has(signature)) return -1;
