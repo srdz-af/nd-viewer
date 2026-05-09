@@ -72,6 +72,7 @@ type TransformOperation = {
   lastHit: THREE.Vector3;
   vertexDataStart: Float32Array | null;
   lockAxis: -1 | 0 | 1 | 2;
+  localAxisDim: number;
   extraAxisDim: number;
   objectDataStart: Float32Array | null;
   originDataStart: Float32Array | null;
@@ -212,6 +213,7 @@ export class TransformController {
     lastHit: new THREE.Vector3(),
     vertexDataStart: null,
     lockAxis: -1,
+    localAxisDim: -1,
     extraAxisDim: -1,
     objectDataStart: null,
     originDataStart: null,
@@ -1151,6 +1153,7 @@ export class TransformController {
 
     if (this.options.isLightSelection(this.transformOp.instIdx)) {
       this.transformOp.lockAxis = dim as 0 | 1 | 2;
+      this.transformOp.localAxisDim = -1;
       this.transformOp.extraAxisDim = -1;
       this.transformOp.extraPlane = false;
       this.updateAxisGuide();
@@ -1161,7 +1164,13 @@ export class TransformController {
     const projected = [params.axesX, params.axesY, params.axesZ];
     const projectedSlot = projected.indexOf(dim);
     if (projectedSlot >= 0) {
+      if (this.transformOp.lockAxis === projectedSlot && this.transformOp.extraAxisDim < 0 && this.transformOp.localAxisDim !== dim) {
+        this.transformOp.localAxisDim = dim;
+        this.updateAxisGuide();
+        return true;
+      }
       this.transformOp.lockAxis = projectedSlot as 0 | 1 | 2;
+      this.transformOp.localAxisDim = -1;
       this.transformOp.extraAxisDim = -1;
       this.transformOp.extraPlane = false;
       this.updateAxisGuide();
@@ -1169,6 +1178,7 @@ export class TransformController {
     }
 
     this.transformOp.lockAxis = -1;
+    this.transformOp.localAxisDim = -1;
     this.transformOp.extraAxisDim = dim;
     this.transformOp.extraPlane = this.transformOp.mode === 'rotate';
     this.updateAxisGuide();
@@ -1180,6 +1190,25 @@ export class TransformController {
     const data = this.getObjectData(this.transformOp.instIdx);
     if (!data) return false;
     return data.axisMap.slice(0, data.originalN).includes(dim);
+  }
+
+  private localAxisSlotForDim(dim: number) {
+    const data = this.getObjectData(this.transformOp.instIdx);
+    if (!data) return -1;
+    const slot = data.axisMap.slice(0, data.originalN).indexOf(dim);
+    return slot >= 0 && slot <= 2 ? slot : -1;
+  }
+
+  private localAxisDirectionForDim(dim: number) {
+    const slot = this.localAxisSlotForDim(dim);
+    if (slot < 0) return null;
+    const primaryStart = this.transformOp.objectStarts.find(start => start.instIdx === this.transformOp.instIdx)
+      ?? this.transformOp.objectStarts[0];
+    const transform = this.getObjectTransformTarget(this.transformOp.instIdx);
+    const rotation = primaryStart?.startRot ?? transform?.rot;
+    if (!rotation) return null;
+    this.dragEuler.set(rotation.x, rotation.y, rotation.z);
+    return PROJECTED_AXIS_DIRECTIONS[slot].clone().applyEuler(this.dragEuler).normalize();
   }
 
   startFromPointer(mode: TransformMode, pointer: { x: number; y: number }) {
@@ -1219,6 +1248,7 @@ export class TransformController {
     this.transformOp.startScale = primaryStart.startScale.x;
     this.transformOp.pivotWorldStart.copy(primaryStart.originWorldStart);
     this.transformOp.lockAxis = -1;
+    this.transformOp.localAxisDim = -1;
     this.transformOp.extraAxisDim = -1;
     this.transformOp.extraPlane = false;
     this.applyPendingGizmoConstraint();
@@ -1289,6 +1319,7 @@ export class TransformController {
     this.transformOp.planeHitStart.copy(this.transformOp.vertexStart);
     this.transformOp.lastHit.copy(this.transformOp.vertexStart);
     this.transformOp.lockAxis = -1;
+    this.transformOp.localAxisDim = -1;
     this.transformOp.extraAxisDim = -1;
     this.transformOp.extraPlane = false;
     this.applyPendingGizmoConstraint();
@@ -1307,6 +1338,7 @@ export class TransformController {
   private applyPendingGizmoConstraint() {
     const constraint = this.pendingGizmoConstraint ?? FREE_GIZMO_CONSTRAINT;
     this.transformOp.lockAxis = constraint.kind === 'axis' ? constraint.axisSlot : -1;
+    this.transformOp.localAxisDim = -1;
     this.transformOp.extraAxisDim = constraint.kind === 'extra' ? constraint.extraDim : -1;
     this.transformOp.extraPlane = constraint.kind === 'extra' && this.transformOp.mode === 'rotate';
   }
@@ -1401,7 +1433,10 @@ export class TransformController {
     if (this.transformOp.mode === 'move') {
       const targetCenter = hit.clone().add(this.transformOp.moveOffset);
       const delta = targetCenter.sub(center);
-      if (locked === 0) {
+      const localDir = this.transformOp.localAxisDim >= 0 ? this.localAxisDirectionForDim(this.transformOp.localAxisDim) : null;
+      if (localDir) {
+        delta.copy(localDir).multiplyScalar(delta.dot(localDir));
+      } else if (locked === 0) {
         delta.y = 0;
         delta.z = 0;
       } else if (locked === 1) {
@@ -1415,9 +1450,13 @@ export class TransformController {
       this.transformOp.lastHit.copy(center).add(delta);
     } else if (this.transformOp.mode === 'scale') {
       const scale = Math.max(MIN_TRANSFORM_SCALE, 1 + ((dx - dy) * 0.005));
+      const localDir = this.transformOp.localAxisDim >= 0 ? this.localAxisDirectionForDim(this.transformOp.localAxisDim) : null;
       this.transformOp.editVertexStarts.forEach(start => {
         const offset = start.clone().sub(center);
-        if (locked === 0) offset.x *= scale;
+        if (localDir) {
+          const parallel = localDir.clone().multiplyScalar(offset.dot(localDir));
+          offset.sub(parallel).add(parallel.multiplyScalar(scale));
+        } else if (locked === 0) offset.x *= scale;
         else if (locked === 1) offset.y *= scale;
         else if (locked === 2) offset.z *= scale;
         else offset.multiplyScalar(scale);
@@ -1425,13 +1464,14 @@ export class TransformController {
       });
       this.transformOp.lastHit.copy(center);
     } else if (this.transformOp.mode === 'rotate') {
-      const axis = locked === 0
+      const localDir = this.transformOp.localAxisDim >= 0 ? this.localAxisDirectionForDim(this.transformOp.localAxisDim) : null;
+      const axis = localDir ?? (locked === 0
         ? new THREE.Vector3(1, 0, 0)
         : locked === 1
           ? new THREE.Vector3(0, 1, 0)
           : locked === 2
             ? new THREE.Vector3(0, 0, 1)
-            : this.transformOp.axis;
+            : this.transformOp.axis);
       const angle = (dx - dy) * 0.01;
       const q = new THREE.Quaternion().setFromAxisAngle(axis, angle);
       this.transformOp.editVertexStarts.forEach(start => {
@@ -1540,6 +1580,7 @@ export class TransformController {
     this.transformOp.editProjectedStarts = [];
     this.transformOp.vertexDataStart = null;
     this.transformOp.lockAxis = -1;
+    this.transformOp.localAxisDim = -1;
     this.transformOp.extraAxisDim = -1;
     this.transformOp.objectDataStart = null;
     this.transformOp.originDataStart = null;
@@ -1587,6 +1628,15 @@ export class TransformController {
 
   private transformAxisGuide() {
     const params = this.options.getParams();
+    if (this.transformOp.localAxisDim >= 0) {
+      const direction = this.localAxisDirectionForDim(this.transformOp.localAxisDim);
+      if (direction) {
+        return {
+          direction,
+          color: this.axisPaletteColor(this.transformOp.localAxisDim),
+        };
+      }
+    }
     if (this.transformOp.lockAxis >= 0 && this.transformOp.extraAxisDim < 0) {
       const axisSlot = this.transformOp.lockAxis;
       const projectedDim = this.options.isLightSelection(this.transformOp.instIdx)
@@ -1713,7 +1763,10 @@ export class TransformController {
       const hit = this.options.raycaster.ray.intersectPlane(this.transformOp.plane, this.tmpVec);
       if (!hit) return;
       const delta = hit.clone().add(this.transformOp.moveOffset).sub(this.transformOp.planeHitStart);
-      if (this.transformOp.lockAxis === 0) {
+      const localDir = this.transformOp.localAxisDim >= 0 ? this.localAxisDirectionForDim(this.transformOp.localAxisDim) : null;
+      if (localDir) {
+        delta.copy(localDir).multiplyScalar(delta.dot(localDir));
+      } else if (this.transformOp.lockAxis === 0) {
         delta.y = 0;
         delta.z = 0;
       } else if (this.transformOp.lockAxis === 1) {
@@ -1814,6 +1867,12 @@ export class TransformController {
   private objectRotationDelta(dx: number, dy: number) {
     const deltaX = dx * 0.005;
     const deltaY = dy * 0.005;
+    if (this.transformOp.localAxisDim >= 0) {
+      const slot = this.localAxisSlotForDim(this.transformOp.localAxisDim);
+      if (slot === 0) return new THREE.Vector3(deltaY, 0, 0);
+      if (slot === 1) return new THREE.Vector3(0, deltaX, 0);
+      if (slot === 2) return new THREE.Vector3(0, 0, deltaX);
+    }
     if (this.transformOp.lockAxis === 0) return new THREE.Vector3(deltaY, 0, 0);
     if (this.transformOp.lockAxis === 1) return new THREE.Vector3(0, deltaX, 0);
     if (this.transformOp.lockAxis === 2) return new THREE.Vector3(0, 0, deltaX);
@@ -1853,7 +1912,29 @@ export class TransformController {
       if (!target) return;
       target.scale.copy(start.startScale);
       const scaledOrigin = start.originWorldStart.clone().sub(this.transformOp.pivotWorldStart);
-      if (this.transformOp.lockAxis === 0) {
+      const localSlot = this.transformOp.localAxisDim >= 0 ? this.localAxisSlotForDim(this.transformOp.localAxisDim) : -1;
+      if (localSlot === 0) {
+        target.scale.x = start.startScale.x * scaleFactor;
+        const localDir = this.localAxisDirectionForDim(this.transformOp.localAxisDim);
+        if (localDir) {
+          const parallel = localDir.clone().multiplyScalar(scaledOrigin.dot(localDir));
+          scaledOrigin.sub(parallel).add(parallel.multiplyScalar(scaleFactor));
+        }
+      } else if (localSlot === 1) {
+        target.scale.y = start.startScale.y * scaleFactor;
+        const localDir = this.localAxisDirectionForDim(this.transformOp.localAxisDim);
+        if (localDir) {
+          const parallel = localDir.clone().multiplyScalar(scaledOrigin.dot(localDir));
+          scaledOrigin.sub(parallel).add(parallel.multiplyScalar(scaleFactor));
+        }
+      } else if (localSlot === 2) {
+        target.scale.z = start.startScale.z * scaleFactor;
+        const localDir = this.localAxisDirectionForDim(this.transformOp.localAxisDim);
+        if (localDir) {
+          const parallel = localDir.clone().multiplyScalar(scaledOrigin.dot(localDir));
+          scaledOrigin.sub(parallel).add(parallel.multiplyScalar(scaleFactor));
+        }
+      } else if (this.transformOp.lockAxis === 0) {
         target.scale.x = start.startScale.x * scaleFactor;
         scaledOrigin.x *= scaleFactor;
       } else if (this.transformOp.lockAxis === 1) {
