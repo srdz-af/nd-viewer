@@ -3933,7 +3933,7 @@ function applyEditBevelPreview(token: EditBevelToken) {
 
 function updateEditBevel(token: unknown, amount: number, smoothness: number) {
   if (!isEditBevelToken(token)) return;
-  token.amount = Math.max(0, Math.min(0.49, amount));
+  token.amount = Math.max(0, Math.min(BEVEL_MAX_AMOUNT, amount));
   token.smoothness = Math.max(1, Math.floor(smoothness));
   applyEditBevelPreview(token);
 }
