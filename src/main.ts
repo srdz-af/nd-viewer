@@ -101,7 +101,7 @@ type PackedSurface = [
 ];
 type PackedTopology = [string, string];
 type PackedCellTopology = Array<PackedTopology | null>;
-type PackedBackgroundState = [string, string, number, number];
+type PackedBackgroundState = [string, string, number, number, number];
 type PackedAnimationSettings = [number, number, 0 | 1, number, number];
 type PackedAnimationKeyframeState = {
   d: number;
@@ -363,8 +363,30 @@ const sceneRedoButton = document.getElementById('scene-redo-button') as HTMLButt
 const sceneSaveButton = document.getElementById('scene-save-button') as HTMLButtonElement | null;
 const sceneLoadButton = document.getElementById('scene-load-button') as HTMLButtonElement | null;
 const sceneLoadInput = document.getElementById('scene-load-input') as HTMLInputElement | null;
+const sceneControlTabButtons = Array.from(document.querySelectorAll('[data-scene-control-tab]')) as HTMLButtonElement[];
+const sceneControlPanels = Array.from(document.querySelectorAll('[data-scene-control-panel]')) as HTMLElement[];
 const modalOverlayController = new ModalOverlayController();
 const paneController = new PaneController();
+
+function setSceneControlTab(tab: string) {
+  sceneControlTabButtons.forEach(button => {
+    const active = button.dataset.sceneControlTab === tab;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+    button.tabIndex = active ? 0 : -1;
+  });
+  sceneControlPanels.forEach(panel => {
+    panel.hidden = panel.dataset.sceneControlPanel !== tab;
+  });
+  window.dispatchEvent(new CustomEvent('scene-control-tab-change', { detail: { tab } }));
+}
+
+sceneControlTabButtons.forEach(button => {
+  button.addEventListener('click', () => {
+    if (button.dataset.sceneControlTab) setSceneControlTab(button.dataset.sceneControlTab);
+  });
+});
+setSceneControlTab('environment');
 
 // --- Three.js setup ---
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -396,6 +418,8 @@ const backgroundController = new BackgroundController({
   blurValue: document.getElementById('background-blur-value') as HTMLOutputElement | null,
   lightnessInput: document.getElementById('background-lightness') as HTMLInputElement | null,
   lightnessValue: document.getElementById('background-lightness-value') as HTMLOutputElement | null,
+  colorInput: document.getElementById('background-color') as HTMLInputElement | null,
+  colorValue: document.getElementById('background-color-value') as HTMLOutputElement | null,
   qualityButtons: Array.from(document.querySelectorAll('#background-quality-toggle button[data-hdri-quality]')) as HTMLButtonElement[],
   controlsEl: document.getElementById('background-controls') as HTMLDivElement | null,
   getRenderMode: () => PARAMS.renderMode,
@@ -833,7 +857,7 @@ function applyCameraState(state: PackedCamera | undefined) {
 }
 
 function packBackgroundState(state: BackgroundUrlState): PackedBackgroundState {
-  return [state.key, state.quality, state.blur, state.lightness];
+  return [state.key, state.quality, state.blur, state.lightness, state.color];
 }
 
 function unpackBackgroundState(state: PackedBackgroundState | undefined): BackgroundUrlState | undefined {
@@ -843,6 +867,7 @@ function unpackBackgroundState(state: PackedBackgroundState | undefined): Backgr
     quality: state[1] === 'hd' ? 'hd' : 'sd',
     blur: finiteNumber(state[2], 0),
     lightness: finiteNumber(state[3], 0.15),
+    color: finiteInteger(state[4], 0x10141a),
   };
 }
 

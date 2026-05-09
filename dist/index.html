@@ -5,7 +5,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/x-icon" href="./favicon.ico" />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=1k,2k,add,chevron_left,chevron_right,delete,deployed_code,diagonal_line,download,edit,filter_4,filter_5,filter_6,filter_7,filter_8,filter_b_and_w,fullscreen,fullscreen_exit,grid_on,help,high_quality,imagesmode,keyboard_arrow_down,keyboard_arrow_up,line_end_circle,open_with,pause,play_arrow,recenter,redo,refresh,reset_focus,screen_record,screenshot_frame_2,settings,speed_1_5x,speed_2x,square,stop,sync_alt,undo,upload,visibility,visibility_off,vr180_create2d,vrpano,zoom_out_map&display=block" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=1k,2k,add,chevron_left,chevron_right,delete,deployed_code,diagonal_line,download,edit,ev_shadow,filter_4,filter_5,filter_6,filter_7,filter_8,filter_b_and_w,fullscreen,fullscreen_exit,grid_on,help,high_quality,imagesmode,keyboard_arrow_down,keyboard_arrow_up,line_end_circle,open_with,pause,photo_camera_back,play_arrow,public,recenter,redo,refresh,reset_focus,screen_record,screenshot_frame_2,settings,skip_next,skip_previous,speed_1_5x,speed_2x,square,stop,sync_alt,undo,upload,visibility,visibility_off,vr180_create2d,vrpano,zoom_out_map&display=block" />
     <title>BleND</title>
     <style>
       :root {
@@ -61,7 +61,6 @@
         display: contents;
       }
       #render-options,
-      #render-menu,
       #animation-timeline,
       #gizmo-dock,
       #scene-controls,
@@ -79,6 +78,7 @@
       #scene-save-button,
       #scene-load-button,
       #pane-toggle,
+      #background-controls input[type="color"],
       #texture-preview-wrap,
       #texture-controls input[type="color"],
       #texture-preset-select,
@@ -264,20 +264,68 @@
       body.pane-collapsed #pane-toggle .show-icon { display: block; }
       body.pane-collapsed #pane-toggle .hide-icon { display: none; }
       body.pane-collapsed #object-list,
-      body.pane-collapsed #background-selector,
-      body.pane-collapsed #render-effects,
-      body.pane-collapsed #texture-panel {
+      body.pane-collapsed #scene-control-tabs-layout {
         display: none;
       }
       body.pane-collapsed #pane-header {
         margin-bottom: 0;
+      }
+      #scene-control-tabs-layout {
+        display: grid;
+        grid-template-columns: 32px minmax(0, 1fr);
+        align-items: start;
+        gap: 12px;
+        width: 100%;
+        min-width: 0;
+      }
+      #scene-control-tabs {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        align-items: center;
+        position: sticky;
+        top: 0;
+        padding-top: 1px;
+      }
+      .scene-control-tab {
+        display: grid;
+        place-items: center;
+        width: 30px;
+        height: 30px;
+        padding: 0;
+        border: 0;
+        border-radius: 5px;
+        background: transparent;
+        color: var(--ui-muted);
+        cursor: pointer;
+        transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+      }
+      .scene-control-tab:hover,
+      .scene-control-tab:focus-visible {
+        background: var(--ui-bg-hover);
+        color: var(--ui-text-strong);
+      }
+      .scene-control-tab.active {
+        background: var(--ui-blue);
+        color: var(--ui-text-strong);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.16);
+      }
+      .scene-control-tab .material-symbols-rounded {
+        font-size: 20px;
+        line-height: 1;
+      }
+      #scene-control-tab-panels {
+        min-width: 0;
+      }
+      .scene-control-tab-panel[hidden] {
+        display: none !important;
       }
       #render-options {
         box-sizing: border-box;
         position: fixed;
         top: auto;
         right: auto;
-        bottom: calc(34px + var(--safe-bottom));
+        bottom: calc(48px + var(--safe-bottom));
         left: 50%;
         z-index: 20;
         display: flex;
@@ -299,31 +347,38 @@
       #render-options::-webkit-scrollbar {
         display: none;
       }
+      #render-settings {
+        display: grid;
+        gap: 12px;
+        margin: 0 0 16px 0;
+        padding: 0 0 16px 0;
+      }
+      #render-settings h4 {
+        margin: 0;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.2px;
+        line-height: 1.45;
+        color: var(--ui-text-strong);
+      }
       #view-toggle,
       #render-actions,
-      #render-menu-wrap,
       #transform-actions {
         display: inline-flex;
         flex-wrap: nowrap;
         align-items: center;
         gap: 2px;
       }
-      #render-menu-wrap,
       #transform-actions {
         margin-left: 3px;
         padding-left: 5px;
         border-left: 1px solid var(--ui-border);
-      }
-      #render-menu-wrap {
-        position: static;
       }
       #render-actions {
         align-items: center;
       }
       #view-toggle button,
       #render-actions button,
-      #animation-play-button,
-      #render-menu-toggle,
       #transform-actions button {
         display: grid;
         place-items: center;
@@ -345,68 +400,55 @@
       }
       #view-toggle button.active,
       #render-actions button.active,
-      #animation-play-button.active,
-      #render-menu-toggle.active,
       #transform-actions button.active {
         background: var(--ui-blue);
         color: var(--ui-text-strong);
       }
       #view-toggle button:hover,
       #render-actions button:hover,
-      #animation-play-button:hover,
-      #render-menu-toggle:hover,
       #transform-actions button:hover { background: var(--ui-bg-hover); color: var(--ui-text-strong); }
       #view-toggle button.active:hover,
       #render-actions button.active:hover,
-      #animation-play-button.active:hover,
-      #render-menu-toggle.active:hover,
       #transform-actions button.active:hover { background: var(--ui-blue-hover); }
       #render-actions button.recording,
       #render-actions button.recording:hover {
         background: rgba(201, 56, 56, 0.86);
         color: #fff;
       }
-      #render-menu {
+      #render-settings-controls {
         box-sizing: border-box;
-        position: absolute;
-        left: 0;
-        right: 0;
-        bottom: calc(100% + 7px);
-        z-index: 26;
-        display: none;
-        width: auto;
-        padding: 6px;
-        border-radius: 7px;
-        background: var(--ui-bg);
-        box-shadow: var(--ui-shadow);
+        position: static;
+        display: grid;
+        gap: 12px;
+        width: 100%;
+        padding: 0;
+        border-radius: 0;
+        background: transparent;
+        box-shadow: none;
         color: var(--ui-text);
         font: 12px/1.35 var(--ui-font);
       }
-      #render-menu.open {
-        display: grid;
-        gap: 9px;
+      .render-dimensions-row {
+        grid-template-columns: var(--scene-control-label-width) minmax(0, 1fr);
       }
-      .render-menu-row-dimensions {
-        grid-template-columns: 64px 1fr;
-      }
-      .render-menu-dimension-inputs {
+      .render-dimension-inputs {
         display: grid;
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 6px;
       }
-      .render-menu-row {
+      .render-setting-row {
         display: grid;
-        grid-template-columns: 64px 1fr;
+        grid-template-columns: var(--scene-control-label-width) minmax(0, 1fr);
         align-items: center;
-        gap: 8px;
+        gap: 14px;
       }
-      .render-menu-row label {
+      .render-setting-row label {
         color: var(--ui-text);
         font-size: 11px;
-        font-weight: 700;
+        font-weight: 600;
         letter-spacing: 0.2px;
       }
-      .render-menu-row input {
+      .render-setting-row input {
         box-sizing: border-box;
         width: 100%;
         height: 28px;
@@ -416,6 +458,34 @@
         background: var(--ui-bg-soft);
         color: var(--ui-text-strong);
         font: 12px/1 var(--ui-font);
+      }
+      .render-actions-row {
+        align-items: start;
+      }
+      #render-actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-start;
+        align-items: center;
+        justify-self: stretch;
+        width: 100%;
+        gap: 8px;
+        margin: 0;
+        padding: 0;
+        border: 0;
+      }
+      #render-actions button {
+        display: inline-flex;
+        width: auto;
+        min-width: 0;
+        height: 30px;
+        gap: 6px;
+        padding: 0 9px;
+        border-radius: 4px;
+      }
+      #render-actions .button-label {
+        font: 700 10px/1 var(--ui-font);
+        letter-spacing: 0.15px;
       }
       #camera-view-overlay {
         position: fixed;
@@ -427,20 +497,6 @@
           0 0 0 9999px rgba(0, 0, 0, 0.45),
           inset 0 0 0 1px rgba(0, 0, 0, 0.45);
         pointer-events: none;
-      }
-      #render-actions {
-        display: flex;
-        justify-content: flex-start;
-        align-items: center;
-        justify-self: start;
-        width: 100%;
-        gap: 2px;
-        margin: 0;
-        padding: 0;
-        border: 0;
-      }
-      #full-resolution-capture-toggle {
-        margin-left: auto;
       }
       #animation-keyframe-menu button {
         flex: 1 1 0;
@@ -468,10 +524,13 @@
         right: calc(12px + var(--safe-right));
         bottom: calc(8px + var(--safe-bottom));
         z-index: 19;
+        display: flex;
+        align-items: center;
+        gap: 8px;
         width: auto;
         max-width: none;
-        height: 22px;
-        padding: 4px 8px 4px 54px;
+        height: 28px;
+        padding: 4px 8px;
         border-radius: 6px;
         background: var(--ui-bg);
         box-shadow: var(--ui-shadow);
@@ -484,6 +543,41 @@
       }
       #animation-timeline::-webkit-scrollbar {
         display: none;
+      }
+      #animation-timeline-controls {
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        flex: 0 0 auto;
+      }
+      #animation-timeline-controls button {
+        display: grid;
+        place-items: center;
+        width: 20px;
+        height: 20px;
+        padding: 0;
+        border: 0;
+        border-radius: 4px;
+        background: transparent;
+        color: var(--ui-text);
+        cursor: pointer;
+        transition: background 120ms ease, color 120ms ease;
+      }
+      #animation-timeline-controls button:hover {
+        background: var(--ui-bg-hover);
+        color: var(--ui-text-strong);
+      }
+      #animation-timeline-controls button.active {
+        background: var(--ui-blue);
+        color: var(--ui-text-strong);
+      }
+      #animation-timeline-controls button.active:hover {
+        background: var(--ui-blue-hover);
+      }
+      #animation-timeline-controls .material-symbols-rounded {
+        display: block;
+        font-size: 15px;
+        line-height: 1;
       }
       #animation-keyframe-menu {
         position: fixed;
@@ -501,9 +595,8 @@
         display: grid;
       }
       #animation-current-frame {
-        position: absolute;
-        left: 6px;
-        top: 4px;
+        position: static;
+        flex: 0 0 42px;
         width: 42px;
         height: 14px;
         border-radius: 4px;
@@ -516,8 +609,9 @@
       }
       #animation-timeline-content {
         position: relative;
+        flex: 1 1 auto;
         height: 14px;
-        min-width: 100%;
+        min-width: 0;
       }
       #animation-timeline-track,
       #animation-timeline-progress,
@@ -602,16 +696,13 @@
       }
       #view-toggle button:disabled,
       #render-actions button:disabled,
-      #animation-play-button:disabled,
-      #render-menu-toggle:disabled,
+      #animation-timeline-controls button:disabled,
       #transform-actions button:disabled {
         opacity: 0.45;
         cursor: default;
       }
       #view-toggle .material-symbols-rounded,
       #render-actions .material-symbols-rounded,
-      #animation-play-button .material-symbols-rounded,
-      #render-menu-toggle .material-symbols-rounded,
       #transform-actions .material-symbols-rounded {
         display: inline-block;
         font-size: 18px;
@@ -1041,6 +1132,8 @@
       #object-list .object-eye,
       #dimension-control,
       #dimension-value,
+      #scene-control-tabs,
+      .scene-control-tab,
       #background-selector,
       #background-selector h4,
       #background-swatches button,
@@ -1048,6 +1141,12 @@
       #background-quality-toggle button,
       #background-controls label,
       #background-controls output,
+      #render-panel,
+      #render-options,
+      #render-settings,
+      #render-settings h4,
+      #view-toggle button,
+      #render-actions button,
       #render-effects,
       #render-effects h4,
       #render-effects-controls label,
@@ -1059,7 +1158,6 @@
       #texture-preset-controls label,
       #texture-preset-select,
       #texture-preset-save,
-      #render-menu,
       #animation-timeline,
       #animation-current-frame,
       #record-viewport-timer {
@@ -1159,11 +1257,22 @@
         box-shadow: none;
         position: relative;
       }
+      #render-panel {
+        background: transparent;
+        color: inherit;
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+        font: inherit;
+        margin-bottom: 0;
+        box-shadow: none;
+        position: relative;
+      }
       #texture-panel {
         position: relative;
       }
       #background-selector::before,
-      #render-effects::before,
+      #render-panel::before,
       #texture-panel::before {
         content: "";
         position: absolute;
@@ -1199,6 +1308,9 @@
       }
       #background-selector .section-title-row h4 {
         margin: 0;
+      }
+      #render-panel #render-effects::before {
+        display: none;
       }
       #background-swatches {
         display: flex;
@@ -1263,15 +1375,16 @@
         opacity: 0.72;
       }
       #background-swatches .background-swatch[data-hdri="plain"] {
+        --plain-background-color: #10141a;
         background-image: none;
         background:
-          radial-gradient(110% 80% at 20% 15%, rgba(112, 156, 255, 0.24), transparent 60%),
-          linear-gradient(145deg, #10151d 0%, #192230 55%, #111821 100%);
+          radial-gradient(110% 80% at 20% 15%, rgba(255, 255, 255, 0.18), transparent 60%),
+          linear-gradient(145deg, color-mix(in srgb, var(--plain-background-color) 72%, white 28%), var(--plain-background-color));
       }
       #background-swatches .background-swatch[data-hdri="plain"]::before {
         background:
-          radial-gradient(110% 80% at 20% 15%, rgba(112, 156, 255, 0.24), transparent 60%),
-          linear-gradient(145deg, #10151d 0%, #192230 55%, #111821 100%);
+          radial-gradient(110% 80% at 20% 15%, rgba(255, 255, 255, 0.18), transparent 60%),
+          linear-gradient(145deg, color-mix(in srgb, var(--plain-background-color) 72%, white 28%), var(--plain-background-color));
       }
       #background-swatches .background-swatch:hover {
         transform: translateY(-1px);
@@ -1290,7 +1403,7 @@
       #background-selector.plain-only #background-swatches .background-swatch:not([data-hdri="plain"]) {
         display: none;
       }
-      #background-controls.disabled {
+      #background-controls.disabled .background-row:not(.plain-color-row) {
         opacity: 0.52;
       }
       #background-controls {
@@ -1324,6 +1437,33 @@
         font-variant-numeric: tabular-nums;
         font-size: 11px;
         line-height: 1.45;
+      }
+      #background-controls input[type="color"] {
+        appearance: none;
+        -webkit-appearance: none;
+        width: 100%;
+        height: 20px;
+        padding: 0;
+        border: 0;
+        border-radius: 2px;
+        background: transparent;
+        cursor: pointer;
+        overflow: hidden;
+      }
+      #background-controls input[type="color"]::-webkit-color-swatch-wrapper {
+        padding: 0;
+      }
+      #background-controls input[type="color"]::-webkit-color-swatch {
+        border: 0;
+        border-radius: 2px;
+      }
+      #background-controls input[type="color"]::-moz-color-swatch {
+        border: 0;
+        border-radius: 2px;
+      }
+      #background-color-value {
+        font-family: var(--ui-font);
+        font-size: 11px;
       }
       #background-quality-toggle {
         display: inline-flex;
@@ -1735,7 +1875,7 @@
       #transform-actions {
         position: fixed;
         left: calc(12px + var(--safe-left));
-        bottom: calc(34px + var(--safe-bottom));
+        bottom: calc(48px + var(--safe-bottom));
         z-index: 20;
         display: inline-flex;
         flex-direction: column;
@@ -2073,20 +2213,31 @@
         }
         #animation-timeline {
           box-sizing: border-box;
-          left: calc(30px + var(--safe-left));
-          right: calc(8px + var(--safe-right));
+          left: calc(8px + var(--safe-left));
+          right: calc(30px + var(--safe-right));
           bottom: calc(6px + var(--safe-bottom));
           width: auto;
           max-width: none;
-          height: 20px;
-          padding-left: 46px;
+          height: 24px;
+          gap: 4px;
+          padding: 3px 6px;
           transform: none;
+        }
+        #animation-timeline-controls {
+          gap: 1px;
+        }
+        #animation-timeline-controls button {
+          width: 18px;
+          height: 18px;
+        }
+        #animation-timeline-controls .material-symbols-rounded {
+          font-size: 13px;
         }
         #bottom-controls > #mobile-fullscreen-toggle {
           display: grid;
           place-items: center;
           position: fixed;
-          left: calc(8px + var(--safe-left));
+          right: calc(8px + var(--safe-right));
           bottom: calc(8px + var(--safe-bottom));
           z-index: 21;
           width: 16px;
@@ -2113,6 +2264,7 @@
         }
         #animation-current-frame {
           width: 34px;
+          flex-basis: 34px;
           font-size: 9px;
         }
         #pane {
@@ -2239,31 +2391,29 @@
           flex-basis: 86px;
           margin: 0 24px 0 22px;
         }
-        #view-toggle,
-        #render-menu-wrap {
+        #view-toggle {
           flex-wrap: nowrap;
           align-items: center;
           gap: 1px;
         }
         #view-toggle button,
         #render-actions button,
-        #animation-play-button,
-        #render-menu-toggle,
         #background-quality-toggle button {
           width: 26px;
           height: 26px;
         }
+        #render-actions button {
+          width: auto;
+          height: 28px;
+          padding: 0 8px;
+        }
         #view-toggle .material-symbols-rounded,
         #render-actions .material-symbols-rounded,
-        #animation-play-button .material-symbols-rounded,
-        #render-menu-toggle .material-symbols-rounded,
         #transform-actions .material-symbols-rounded,
         #background-quality-toggle .material-symbols-rounded {
           font-size: 16px;
         }
-        #render-menu {
-          left: 0;
-          right: 0;
+        #render-settings-controls {
           width: auto;
         }
         #transform-actions {
@@ -2293,6 +2443,17 @@
           max-height: 146px;
           margin-bottom: 6px;
         }
+        #scene-control-tabs-layout {
+          grid-template-columns: 28px minmax(0, 1fr);
+          gap: 8px;
+        }
+        .scene-control-tab {
+          width: 26px;
+          height: 26px;
+        }
+        .scene-control-tab .material-symbols-rounded {
+          font-size: 17px;
+        }
         #background-selector {
           margin-bottom: 6px;
         }
@@ -2303,6 +2464,7 @@
           height: 108px;
         }
         #background-controls .background-row,
+        #render-settings-controls .render-setting-row,
         #render-effects-controls .render-effect-row,
         #texture-controls .texture-row {
           grid-template-columns: 1fr;
@@ -2332,7 +2494,7 @@
         border: 0 !important;
       }
     </style>
-    <script type="module" crossorigin src="/BleND/assets/index-CAQtEcT0.js"></script>
+    <script type="module" crossorigin src="/BleND/assets/index-JWcmhvva.js"></script>
   </head>
   <body>
     <div id="camera-view-overlay" aria-hidden="true"></div>
@@ -2349,58 +2511,22 @@
             <span class="material-symbols-rounded" aria-hidden="true">filter_b_and_w</span>
           </button>
         </div>
-        <button id="animation-play-button" type="button" aria-label="Play animation" aria-pressed="false" title="Play animation">
-          <span class="material-symbols-rounded" aria-hidden="true">play_arrow</span>
-        </button>
-        <div id="render-menu-wrap">
-          <button id="render-menu-toggle" type="button" aria-label="Render menu" aria-expanded="false" title="Render menu">
-            <span class="material-symbols-rounded" aria-hidden="true">settings</span>
-          </button>
-          <div id="render-menu" aria-label="Render settings menu">
-            <div class="render-menu-row">
-              <label for="recording-fps">FPS</label>
-              <input id="recording-fps" type="number" min="1" max="120" step="1" value="60" inputmode="numeric" />
-            </div>
-            <div class="render-menu-row">
-              <label for="animation-frame-count">Frames</label>
-              <input id="animation-frame-count" type="number" min="1" max="12000" step="1" value="180" inputmode="numeric" />
-            </div>
-            <div class="render-menu-row render-menu-row-dimensions">
-              <label>Camera</label>
-              <div class="render-menu-dimension-inputs">
-                <input id="camera-width" type="number" min="16" max="16384" step="1" value="0" inputmode="numeric" placeholder="Width" aria-label="Camera width in pixels" title="Camera width in pixels" />
-                <input id="camera-height" type="number" min="16" max="16384" step="1" value="0" inputmode="numeric" placeholder="Height" aria-label="Camera height in pixels" title="Camera height in pixels" />
-              </div>
-            </div>
-            <div id="render-actions" aria-label="Render capture actions">
-              <button id="render-animation-button" type="button" aria-label="Render animation video (Ctrl+Shift+E)" title="Render animation video (Ctrl+Shift+E)">
-                <span class="material-symbols-rounded" aria-hidden="true">vr180_create2d</span>
-              </button>
-              <button id="record-viewport-button" type="button" aria-label="Record viewport (Shift+R)" title="Record viewport (Shift+R)">
-                <span class="material-symbols-rounded" aria-hidden="true">screen_record</span>
-              </button>
-              <span id="record-viewport-timer" aria-live="polite" aria-hidden="true">00:00</span>
-              <button id="capture-frame-button" type="button" aria-label="Download current frame (Shift+S)" title="Download current frame (Shift+S)">
-                <span class="material-symbols-rounded" aria-hidden="true">screenshot_frame_2</span>
-              </button>
-              <button
-                id="full-resolution-capture-toggle"
-                type="button"
-                class="active"
-                aria-label="Full-resolution capture on"
-                aria-pressed="true"
-                title="Full-resolution capture on"
-              >
-                <span class="material-symbols-rounded" aria-hidden="true">high_quality</span>
-              </button>
-            </div>
-          </div>
-        </div>
       </div>
       <button id="mobile-fullscreen-toggle" type="button" aria-label="Enter fullscreen" title="Enter fullscreen">
         <span class="material-symbols-rounded" aria-hidden="true">fullscreen</span>
       </button>
       <div id="animation-timeline" aria-label="Animation timeline">
+        <div id="animation-timeline-controls" aria-label="Timeline playback controls">
+          <button id="animation-prev-frame-button" type="button" aria-label="Previous frame" title="Previous frame">
+            <span class="material-symbols-rounded" aria-hidden="true">skip_previous</span>
+          </button>
+          <button id="animation-play-button" type="button" aria-label="Play animation" aria-pressed="false" title="Play animation">
+            <span class="material-symbols-rounded" aria-hidden="true">play_arrow</span>
+          </button>
+          <button id="animation-next-frame-button" type="button" aria-label="Next frame" title="Next frame">
+            <span class="material-symbols-rounded" aria-hidden="true">skip_next</span>
+          </button>
+        </div>
         <output id="animation-current-frame" aria-live="polite">0/179</output>
         <div id="animation-timeline-content">
           <div id="animation-timeline-track">
@@ -2495,7 +2621,49 @@
         </div>
         <div id="axis-legend" style="display:none;"></div>
         <div id="object-list"></div>
-        <div id="background-selector" role="group" aria-label="Background environment selector">
+        <div id="scene-control-tabs-layout">
+          <div id="scene-control-tabs" role="tablist" aria-label="Scene control categories">
+            <button
+              type="button"
+              class="scene-control-tab active"
+              role="tab"
+              data-scene-control-tab="environment"
+              aria-controls="background-selector"
+              aria-label="Environment"
+              aria-selected="true"
+              title="Environment"
+            >
+              <span class="material-symbols-rounded" aria-hidden="true">public</span>
+            </button>
+            <button
+              type="button"
+              class="scene-control-tab"
+              role="tab"
+              data-scene-control-tab="render"
+              aria-controls="render-panel"
+              aria-label="Render"
+              aria-selected="false"
+              tabindex="-1"
+              title="Render"
+            >
+              <span class="material-symbols-rounded" aria-hidden="true">photo_camera_back</span>
+            </button>
+            <button
+              type="button"
+              class="scene-control-tab"
+              role="tab"
+              data-scene-control-tab="texture"
+              aria-controls="texture-panel"
+              aria-label="Texture"
+              aria-selected="false"
+              tabindex="-1"
+              title="Texture"
+            >
+              <span class="material-symbols-rounded" aria-hidden="true">ev_shadow</span>
+            </button>
+          </div>
+          <div id="scene-control-tab-panels">
+        <div id="background-selector" class="scene-control-tab-panel" role="tabpanel" data-scene-control-panel="environment" aria-label="Background environment selector">
           <div class="section-title-row">
             <h4>Background</h4>
             <div id="background-quality-toggle" role="group" aria-label="HDRI quality">
@@ -2545,6 +2713,11 @@
             ></button>
           </div>
           <div id="background-controls">
+            <div class="background-row plain-color-row">
+              <label for="background-color">Color</label>
+              <input id="background-color" type="color" value="#10141a" />
+              <output id="background-color-value">#10141a</output>
+            </div>
             <div class="background-row">
               <label for="background-blur">Blur</label>
               <input id="background-blur" type="range" min="0" max="1" step="0.01" value="0.00" />
@@ -2557,6 +2730,56 @@
             </div>
           </div>
         </div>
+        <div id="render-panel" class="scene-control-tab-panel" role="tabpanel" data-scene-control-panel="render" aria-label="Render settings" hidden>
+          <div id="render-settings" role="group" aria-label="Render options">
+            <h4>Render Options</h4>
+            <div id="render-settings-controls" aria-label="Render settings">
+                <div class="render-setting-row">
+                  <label for="recording-fps">FPS</label>
+                  <input id="recording-fps" type="number" min="1" max="120" step="1" value="60" inputmode="numeric" />
+                </div>
+                <div class="render-setting-row">
+                  <label for="animation-frame-count">Frames</label>
+                  <input id="animation-frame-count" type="number" min="1" max="12000" step="1" value="180" inputmode="numeric" />
+                </div>
+                <div class="render-setting-row render-dimensions-row">
+                  <label>Camera</label>
+                  <div class="render-dimension-inputs">
+                    <input id="camera-width" type="number" min="16" max="16384" step="1" value="0" inputmode="numeric" placeholder="Width" aria-label="Camera width in pixels" title="Camera width in pixels" />
+                    <input id="camera-height" type="number" min="16" max="16384" step="1" value="0" inputmode="numeric" placeholder="Height" aria-label="Camera height in pixels" title="Camera height in pixels" />
+                  </div>
+                </div>
+                <div class="render-setting-row render-actions-row">
+                  <label>Capture</label>
+                <div id="render-actions" aria-label="Render capture actions">
+                  <button id="render-animation-button" type="button" aria-label="Render animation video (Ctrl+Shift+E)" title="Render animation video (Ctrl+Shift+E)">
+                    <span class="material-symbols-rounded" aria-hidden="true">vr180_create2d</span>
+                    <span class="button-label">Render</span>
+                  </button>
+                  <button id="record-viewport-button" type="button" aria-label="Record viewport (Shift+R)" title="Record viewport (Shift+R)">
+                    <span class="material-symbols-rounded" aria-hidden="true">screen_record</span>
+                    <span class="button-label">Record</span>
+                  </button>
+                  <span id="record-viewport-timer" aria-live="polite" aria-hidden="true">00:00</span>
+                  <button id="capture-frame-button" type="button" aria-label="Download current frame (Shift+S)" title="Download current frame (Shift+S)">
+                    <span class="material-symbols-rounded" aria-hidden="true">screenshot_frame_2</span>
+                    <span class="button-label">Shot</span>
+                  </button>
+                  <button
+                    id="full-resolution-capture-toggle"
+                    type="button"
+                    class="active"
+                    aria-label="Full-resolution capture on"
+                    aria-pressed="true"
+                    title="Full-resolution capture on"
+                  >
+                    <span class="material-symbols-rounded" aria-hidden="true">high_quality</span>
+                    <span class="button-label">Quality</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         <div id="render-effects" role="group" aria-label="Render effects">
           <h4>Render Effects</h4>
           <div id="render-effects-controls">
@@ -2572,7 +2795,8 @@
             </div>
           </div>
         </div>
-        <div id="texture-panel" role="group" aria-label="Texture controls" class="empty disabled">
+        </div>
+        <div id="texture-panel" class="scene-control-tab-panel empty disabled" role="tabpanel" data-scene-control-panel="texture" aria-label="Texture controls" hidden>
           <h4>Texture</h4>
           <div id="texture-preview-wrap">
             <canvas id="texture-preview" aria-label="Texture preview"></canvas>
@@ -2656,6 +2880,8 @@
             </div>
           </div>
         </div>
+          </div>
+        </div>
       </div>
     </div>
     <div id="app"></div>
@@ -2683,7 +2909,7 @@
           <li><strong>Insert keyframe:</strong> press <code>I</code> at the current frame.</li>
           <li><strong>Remove keyframe:</strong> press <code>U</code> to remove the last keyframe at or before the current frame.</li>
           <li><strong>Animation playback:</strong> use the play button or Space to preview the keyframed animation.</li>
-          <li><strong>Render menu:</strong> set FPS and frame count, render the animation as video, record the live viewport, or capture a screenshot.</li>
+          <li><strong>Render controls:</strong> use the bottom mode box for wireframe/rendered/faceted, the timeline buttons for previous/play/next, and the Render tab for FPS, frame count, capture, quality, and effects.</li>
           <li><strong>Add object:</strong> <code>Shift + A</code> opens the primitive library.</li>
           <li><strong>Transform selected object:</strong> <code>G</code> move, <code>R</code> rotate, <code>S</code> scale.</li>
           <li><strong>Mobile transforms:</strong> touch and drag the Move/Rotate/Scale Transformation Controls, then release to confirm.</li>
@@ -2739,10 +2965,10 @@
             </article>
             <article class="mobile-onboarding-step" data-step="3">
               <h3>4. Render And Scene Controls</h3>
-              <p>Use the bottom Render Options and the Scene Controls panel for the rest of the workflow.</p>
+              <p>Use Scene Controls tabs and the timeline for the rest of the workflow.</p>
               <ul>
-                <li><strong>Render Options:</strong> switch render mode, play the animation, render animation video, record the viewport, or capture a screenshot.</li>
-                <li><strong>Scene Controls:</strong> manage objects, backgrounds, and texture settings.</li>
+                <li><strong>Render controls:</strong> switch render mode in the bottom box, control playback in the timeline, and use the Render tab for capture, quality, and effects.</li>
+                <li><strong>Scene tabs:</strong> manage environment, render, and texture settings without leaving the object list.</li>
               </ul>
             </article>
           </div>

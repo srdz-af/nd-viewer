@@ -102,9 +102,10 @@ History:
 Use these names when referring to the main UI groups:
 
 - **Projection Controls**: the gizmo panel. It controls which dimensions are projected, how extra dimensions rotate, and how projection axes are arranged.
-- **Scene Controls**: the right-side panel. It controls objects, background, and per-object texture/material settings.
+- **Scene Controls**: the right-side panel. It controls objects, environment, render settings/effects, and per-object texture/material settings through category tabs.
 - **Transformation Controls**: the circular bottom controls. They toggle edit mode and activate move, rotate, and scale.
-- **Render Options**: the rectangular bottom toolbar. It controls viewport render mode, animation playback/rendering, recording, and screenshots.
+- **Viewport Mode Controls**: the bottom render-mode box. It switches between wireframe, rendered, and faceted modes.
+- **Timeline Controls**: the bottom timeline. It scrubs frames and contains previous-frame, play/pause, and next-frame buttons.
 
 ## Projection Controls
 
@@ -126,8 +127,9 @@ Projection Controls contain the XYZ gizmo, dimension stepper, and extra-axis giz
 Scene Controls are the right-side panel.
 
 - Object list: select, rename, hide/show, and manage scene objects
-- Background: choose the plain background or a studio/HDRI background and tune its settings
-- Texture: edit the selected object's standard material or PBR glass controls
+- Environment tab: choose the plain background color or a studio/HDRI background and tune its settings
+- Render tab: set FPS/frame count/camera size, run labeled capture actions, toggle capture quality, and tune render effects
+- Texture tab: edit the selected object's standard material or PBR glass controls
 - Saved texture: save the current texture settings and reapply saved presets from the dropdown
 
 Texture controls are disabled/greyed out when no object is selected.
@@ -143,13 +145,13 @@ Transformation Controls are the circular bottom controls.
 
 On mobile, touch and drag a Transformation Control to transform the selected object, then release to confirm.
 
-## Render Options
+## Render Controls
 
-Render Options are the rectangular bottom toolbar.
+Render Controls are split between the bottom viewport/timeline controls and the Render tab of Scene Controls.
 
 - Wireframe / Rendered / Faceted: change viewport render mode
-- Play / Pause or Space: preview the keyframed animation
-- Render menu: set FPS and frame count, render the animation as a video, record the live viewport, or capture a screenshot
+- Previous / Play / Next or Space: step through or preview the keyframed animation
+- Render tab: set FPS and frame count, render the animation as a video, record the live viewport, capture a screenshot, or toggle capture quality
 - Timeline: scrub through frames and jump to added keyframes
 - Timeline or canvas right click: insert a keyframe or remove the last keyframe at/before the current frame
 - I: insert keyframe at the current frame

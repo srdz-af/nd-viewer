@@ -101,8 +101,8 @@ function cloneKeyframeState(state: AnimationKeyframeState): AnimationKeyframeSta
 
 export class KeyframeTimelineController {
   private readonly playButton = document.getElementById('animation-play-button') as HTMLButtonElement | null;
-  private readonly menuToggleButton = document.getElementById('render-menu-toggle') as HTMLButtonElement | null;
-  private readonly menuEl = document.getElementById('render-menu') as HTMLDivElement | null;
+  private readonly prevFrameButton = document.getElementById('animation-prev-frame-button') as HTMLButtonElement | null;
+  private readonly nextFrameButton = document.getElementById('animation-next-frame-button') as HTMLButtonElement | null;
   private readonly fpsInput = document.getElementById('recording-fps') as HTMLInputElement | null;
   private readonly frameCountInput = document.getElementById('animation-frame-count') as HTMLInputElement | null;
   private readonly cameraWidthInput = document.getElementById('camera-width') as HTMLInputElement | null;
@@ -140,14 +140,14 @@ export class KeyframeTimelineController {
     if (this.cameraHeightInput) this.cameraHeightInput.value = String(this.settings.cameraHeight);
 
     this.playButton?.addEventListener('click', () => this.togglePlayback());
-    this.menuToggleButton?.addEventListener('click', ev => {
-      ev.stopPropagation();
-      this.toggleMenu();
+    this.prevFrameButton?.addEventListener('click', () => this.stepFrame(-1));
+    this.nextFrameButton?.addEventListener('click', () => this.stepFrame(1));
+    [this.playButton, this.prevFrameButton, this.nextFrameButton].forEach(button => {
+      button?.addEventListener('pointerdown', ev => ev.stopPropagation());
+      button?.addEventListener('click', ev => ev.stopPropagation());
     });
-    this.menuEl?.addEventListener('click', ev => ev.stopPropagation());
     this.keyframeMenuEl?.addEventListener('click', ev => ev.stopPropagation());
     document.addEventListener('click', () => {
-      this.closeMenu();
       this.closeKeyframeMenu();
     });
 
@@ -277,6 +277,11 @@ export class KeyframeTimelineController {
     this.setPlaying(true);
   }
 
+  private stepFrame(direction: -1 | 1) {
+    if (this.playing) this.setPlaying(false);
+    this.setCurrentFrame(this.roundedCurrentFrame() + direction, true);
+  }
+
   private setPlaying(active: boolean) {
     const changed = this.playing !== active;
     this.playing = active;
@@ -290,21 +295,6 @@ export class KeyframeTimelineController {
     const icon = this.playButton?.querySelector('.material-symbols-rounded');
     if (icon) icon.textContent = active ? 'pause' : 'play_arrow';
     if (changed) this.options.onStateChange?.();
-  }
-
-  private toggleMenu() {
-    const open = !this.menuEl?.classList.contains('open');
-    this.setMenuOpen(open);
-  }
-
-  private closeMenu() {
-    this.setMenuOpen(false);
-  }
-
-  private setMenuOpen(open: boolean) {
-    this.menuEl?.classList.toggle('open', open);
-    this.menuToggleButton?.classList.toggle('active', open);
-    this.menuToggleButton?.setAttribute('aria-expanded', String(open));
   }
 
   private openKeyframeMenu(ev: MouseEvent) {

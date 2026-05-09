@@ -75,6 +75,10 @@ export class TextureEditorController {
     this.presetStore.load();
     this.updateTexturePresetSelect();
     this.bindControls();
+    window.addEventListener('scene-control-tab-change', ev => {
+      if (!(ev instanceof CustomEvent) || ev.detail?.tab !== 'texture') return;
+      requestAnimationFrame(() => this.updatePanel());
+    });
     this.updatePanel();
   }
 
