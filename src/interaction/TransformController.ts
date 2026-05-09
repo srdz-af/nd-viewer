@@ -66,6 +66,7 @@ type TransformOperation = {
   vertexStart: THREE.Vector3;
   editVertexStarts: THREE.Vector3[];
   editProjectedStarts: THREE.Vector3[];
+  editLocalDirections: Map<number, THREE.Vector3>;
   axis: THREE.Vector3;
   plane: THREE.Plane;
   planeHitStart: THREE.Vector3;
@@ -207,6 +208,7 @@ export class TransformController {
     vertexStart: new THREE.Vector3(),
     editVertexStarts: [],
     editProjectedStarts: [],
+    editLocalDirections: new Map(),
     axis: new THREE.Vector3(),
     plane: new THREE.Plane(),
     planeHitStart: new THREE.Vector3(),
@@ -1200,6 +1202,9 @@ export class TransformController {
   }
 
   private localAxisDirectionForDim(dim: number) {
+    if (this.transformOp.targetVertices.length > 0 && this.transformOp.editLocalDirections.size > 0) {
+      return this.averageEditLocalDirection();
+    }
     const slot = this.localAxisSlotForDim(dim);
     if (slot < 0) return null;
     const primaryStart = this.transformOp.objectStarts.find(start => start.instIdx === this.transformOp.instIdx)
@@ -1209,6 +1214,13 @@ export class TransformController {
     if (!rotation) return null;
     this.dragEuler.set(rotation.x, rotation.y, rotation.z);
     return PROJECTED_AXIS_DIRECTIONS[slot].clone().applyEuler(this.dragEuler).normalize();
+  }
+
+  private averageEditLocalDirection() {
+    const direction = new THREE.Vector3();
+    this.transformOp.editLocalDirections.forEach(value => direction.add(value));
+    if (direction.lengthSq() <= 1e-10) return null;
+    return direction.normalize();
   }
 
   startFromPointer(mode: TransformMode, pointer: { x: number; y: number }) {
@@ -1233,6 +1245,7 @@ export class TransformController {
     this.transformOp.targetVertices = [];
     this.transformOp.editVertexStarts = [];
     this.transformOp.editProjectedStarts = [];
+    this.transformOp.editLocalDirections = new Map();
     this.transformOp.startMouse.set(ev.clientX, ev.clientY);
     this.transformOp.objectStarts = [];
 
@@ -1306,6 +1319,12 @@ export class TransformController {
       const pIdx = vertex * 3;
       return new THREE.Vector3(posArr[pIdx], posArr[pIdx + 1], posArr[pIdx + 2]);
     });
+    this.transformOp.editLocalDirections = this.computeEditLocalDirections(
+      rendererRef.getCellTopologyForSelection(),
+      posArr,
+      data.count,
+      vertices,
+    );
     this.transformOp.editProjectedStarts = vertices.map(vertex => new THREE.Vector3(
       yArr[vertex],
       yArr[data.count + vertex],
@@ -1333,6 +1352,93 @@ export class TransformController {
     if (hit) this.transformOp.moveOffset.copy(this.transformOp.vertexStart).sub(hit);
     else this.transformOp.moveOffset.set(0, 0, 0);
     return true;
+  }
+
+  private computeEditLocalDirections(
+    topology: CellTopology | undefined,
+    positions: Float32Array,
+    vertexCount: number,
+    fallbackVertices: number[],
+  ) {
+    const directions = new Map<number, THREE.Vector3>();
+    if (!topology || this.editCellDimension < 1) return directions;
+
+    const selectedCellIds = this.selectedCellIds.length
+      ? this.selectedCellIds
+      : (this.selectedCellId >= 0 ? [this.selectedCellId] : []);
+    if (!selectedCellIds.length) return directions;
+
+    const objectCenter = new THREE.Vector3();
+    for (let vertex = 0; vertex < vertexCount; vertex++) {
+      const idx = vertex * 3;
+      objectCenter.x += positions[idx] ?? 0;
+      objectCenter.y += positions[idx + 1] ?? 0;
+      objectCenter.z += positions[idx + 2] ?? 0;
+    }
+    if (vertexCount > 0) objectCenter.multiplyScalar(1 / vertexCount);
+
+    const pointFor = (vertex: number) => {
+      const idx = vertex * 3;
+      return new THREE.Vector3(positions[idx] ?? 0, positions[idx + 1] ?? 0, positions[idx + 2] ?? 0);
+    };
+    const directionForCell = (vertices: number[]) => {
+      const points = vertices.map(pointFor);
+      if (!points.length) return null;
+      const center = computeCenterFromVectors(points);
+
+      let direction: THREE.Vector3 | null = null;
+      if (points.length >= 3) {
+        for (let i = 1; i < points.length - 1; i++) {
+          const a = points[i].clone().sub(points[0]);
+          const b = points[i + 1].clone().sub(points[0]);
+          const n = a.cross(b);
+          if (n.lengthSq() > 1e-10) {
+            direction = n.normalize();
+            break;
+          }
+        }
+      }
+      if (!direction && points.length >= 2) {
+        direction = points[1].clone().sub(points[0]).normalize();
+      }
+      if (!direction || direction.lengthSq() <= 1e-10) {
+        direction = center.clone().sub(objectCenter);
+        if (direction.lengthSq() <= 1e-10) direction.set(1, 0, 0);
+        else direction.normalize();
+      }
+
+      const outward = center.clone().sub(objectCenter);
+      if (outward.lengthSq() > 1e-10 && direction.dot(outward) < 0) direction.multiplyScalar(-1);
+      return direction;
+    };
+
+    const addDirection = (vertex: number, direction: THREE.Vector3) => {
+      if (!fallbackVertices.includes(vertex)) return;
+      const current = directions.get(vertex);
+      if (current) current.add(direction);
+      else directions.set(vertex, direction.clone());
+    };
+
+    selectedCellIds.forEach(cellId => {
+      const cellVertices = getCellVertices(topology, this.editCellDimension, cellId);
+      const surfaceVertices = this.editCellDimension === 2
+        ? [cellVertices]
+        : getCellBoundaryFaceIds(topology, this.editCellDimension, cellId)
+          .map(faceId => getCellVertices(topology, 2, faceId))
+          .filter(vertices => vertices.length >= 3);
+      const faces = surfaceVertices.length ? surfaceVertices : [cellVertices];
+      faces.forEach(vertices => {
+        const direction = directionForCell(vertices);
+        if (!direction) return;
+        cellVertices.forEach(vertex => addDirection(vertex, direction));
+      });
+    });
+
+    directions.forEach(direction => {
+      if (direction.lengthSq() <= 1e-10) direction.set(1, 0, 0);
+      else direction.normalize();
+    });
+    return directions;
   }
 
   private applyPendingGizmoConstraint() {
@@ -1434,20 +1540,36 @@ export class TransformController {
       const targetCenter = hit.clone().add(this.transformOp.moveOffset);
       const delta = targetCenter.sub(center);
       const localDir = this.transformOp.localAxisDim >= 0 ? this.localAxisDirectionForDim(this.transformOp.localAxisDim) : null;
-      if (localDir) {
+      if (this.transformOp.localAxisDim >= 0 && this.transformOp.editLocalDirections.size > 0) {
+        this.transformOp.editVertexStarts.forEach((start, index) => {
+          const vertex = this.transformOp.targetVertices[index];
+          const direction = this.transformOp.editLocalDirections.get(vertex) ?? localDir ?? new THREE.Vector3(1, 0, 0);
+          targets.push(start.clone().add(direction.clone().multiplyScalar(delta.dot(direction))));
+        });
+        this.transformOp.lastHit.copy(center).add(delta);
+      } else if (localDir) {
         delta.copy(localDir).multiplyScalar(delta.dot(localDir));
+        this.transformOp.editVertexStarts.forEach(start => targets.push(start.clone().add(delta)));
+        this.transformOp.lastHit.copy(center).add(delta);
       } else if (locked === 0) {
         delta.y = 0;
         delta.z = 0;
+        this.transformOp.editVertexStarts.forEach(start => targets.push(start.clone().add(delta)));
+        this.transformOp.lastHit.copy(center).add(delta);
       } else if (locked === 1) {
         delta.x = 0;
         delta.z = 0;
+        this.transformOp.editVertexStarts.forEach(start => targets.push(start.clone().add(delta)));
+        this.transformOp.lastHit.copy(center).add(delta);
       } else if (locked === 2) {
         delta.x = 0;
         delta.y = 0;
+        this.transformOp.editVertexStarts.forEach(start => targets.push(start.clone().add(delta)));
+        this.transformOp.lastHit.copy(center).add(delta);
+      } else {
+        this.transformOp.editVertexStarts.forEach(start => targets.push(start.clone().add(delta)));
+        this.transformOp.lastHit.copy(center).add(delta);
       }
-      this.transformOp.editVertexStarts.forEach(start => targets.push(start.clone().add(delta)));
-      this.transformOp.lastHit.copy(center).add(delta);
     } else if (this.transformOp.mode === 'scale') {
       const scale = Math.max(MIN_TRANSFORM_SCALE, 1 + ((dx - dy) * 0.005));
       const localDir = this.transformOp.localAxisDim >= 0 ? this.localAxisDirectionForDim(this.transformOp.localAxisDim) : null;
@@ -1578,6 +1700,7 @@ export class TransformController {
     this.transformOp.targetVertices = [];
     this.transformOp.editVertexStarts = [];
     this.transformOp.editProjectedStarts = [];
+    this.transformOp.editLocalDirections = new Map();
     this.transformOp.vertexDataStart = null;
     this.transformOp.lockAxis = -1;
     this.transformOp.localAxisDim = -1;
