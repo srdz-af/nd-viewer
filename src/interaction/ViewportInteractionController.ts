@@ -170,7 +170,28 @@ export class ViewportInteractionController {
   }
 
   startTransformFromLastPointer(mode: TransformMode) {
+    if (this.operationManager.isActive()) return;
     this.options.transformController.startFromPointer(mode, this.lastPointer);
+    if (!this.options.transformController.isActive()) return;
+    if (!this.operationManager.start({
+      kind: 'transform',
+      scope: this.options.getParams().editMode ? 'edit' : 'object',
+      blocksCamera: true,
+      blocksSelection: true,
+      blocksContextMenu: true,
+      updatePointer: point => {
+        this.lastPointer = { x: point.clientX, y: point.clientY };
+        this.options.transformController.applyPointer(point.clientX, point.clientY);
+        return true;
+      },
+      commit: () => {
+        this.options.pushUndoSnapshot();
+        this.options.transformController.finish(true);
+      },
+      cancel: () => this.options.transformController.finish(false),
+    })) {
+      this.options.transformController.finish(false);
+    }
   }
 
   startEditExtrusionFromLastPointer() {
@@ -566,12 +587,15 @@ export class ViewportInteractionController {
       if (ev.button === 0) {
         if (this.operationManager.isKind('edit-extrusion')) {
           this.operationManager.finish(true);
+        } else if (this.operationManager.isKind('transform')) {
+          this.operationManager.finish(true);
         } else {
           this.options.pushUndoSnapshot();
           this.options.transformController.finish(true);
         }
       } else if (ev.button === 2) {
         if (this.operationManager.isKind('edit-extrusion')) this.operationManager.finish(false);
+        else if (this.operationManager.isKind('transform')) this.operationManager.finish(false);
         else this.options.transformController.finish(false);
       }
       ev.preventDefault();
@@ -669,11 +693,16 @@ export class ViewportInteractionController {
       this.operationManager.finish(false);
       return;
     }
+    if (this.operationManager.isKind('transform')) {
+      this.operationManager.finish(false);
+      return;
+    }
     if (this.axisDrag.active) this.endAxisShiftDrag();
   }
 
   private handleWindowBlur() {
     if (this.operationManager.hasScope('edit')) this.operationManager.finish(false);
+    if (this.operationManager.isKind('transform')) this.operationManager.finish(false);
     if (this.operationManager.isKind('duplicate-placement')) this.operationManager.finish(false);
     if (this.options.transformController.cancelGizmoDrag()) {
       this.options.controls.enabled = this.transformGizmoPrevControlsEnabled;
