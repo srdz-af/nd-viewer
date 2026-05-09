@@ -18,6 +18,7 @@ type SurfaceTarget = {
   material: TextureMaterialEntry;
   materials: TextureMaterialEntry[];
   canSplit: boolean;
+  hasObjectTarget: boolean;
 };
 const OPAQUE_ALPHA_THRESHOLD = 0.999;
 
@@ -141,9 +142,11 @@ export class TextureEditorController {
     }
     if (this.materialSplitButton) {
       this.materialSplitButton.disabled = !target || !target.canSplit || !this.textureControlsEnabled;
-      this.materialSplitButton.title = target?.canSplit
-        ? 'Make selected object use an independent material'
-        : 'Selected object already has an independent material';
+      this.materialSplitButton.title = !target?.hasObjectTarget
+        ? 'Select an object to make its material independent'
+        : target?.canSplit
+          ? 'Make selected object use an independent material'
+          : 'Selected object already has an independent material';
     }
     this.syncingMaterialUI = false;
   }

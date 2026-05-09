@@ -9,6 +9,12 @@ export type AnimationKeyframeState = {
   renderMode: ViewMode;
   bloomIntensity: number;
   motionBlurIntensity: number;
+  colorHue: number;
+  colorSaturation: number;
+  colorBrightness: number;
+  colorContrast: number;
+  grainIntensity: number;
+  antialiasMode: AntialiasMode;
   cameraPosition: THREE.Vector3;
   cameraTarget: THREE.Vector3;
   cameraUp: THREE.Vector3;
@@ -25,6 +31,7 @@ export type AnimationSettings = {
 };
 
 export type RenderQuality = 'full' | 'high' | 'medium' | 'low';
+export type AntialiasMode = 'off' | 'smaa';
 
 type Keyframe = {
   frame: number;
@@ -52,6 +59,8 @@ const DEFAULT_FPS = 60;
 const DEFAULT_FRAME_COUNT = 180;
 const DEFAULT_RENDER_QUALITY: RenderQuality = 'full';
 const RENDER_QUALITIES: RenderQuality[] = ['full', 'high', 'medium', 'low'];
+const DEFAULT_ANTIALIAS_MODE: AntialiasMode = 'off';
+const ANTIALIAS_MODES: AntialiasMode[] = ['off', 'smaa'];
 const MIN_FPS = 1;
 const MAX_FPS = 120;
 const MIN_FRAME_COUNT = 1;
@@ -89,6 +98,10 @@ export function normalizeRenderQuality(value: unknown): RenderQuality {
   return RENDER_QUALITIES.includes(value as RenderQuality) ? value as RenderQuality : DEFAULT_RENDER_QUALITY;
 }
 
+export function normalizeAntialiasMode(value: unknown): AntialiasMode {
+  return ANTIALIAS_MODES.includes(value as AntialiasMode) ? value as AntialiasMode : DEFAULT_ANTIALIAS_MODE;
+}
+
 function cloneKeyframeState(state: AnimationKeyframeState): AnimationKeyframeState {
   return {
     dimension: state.dimension,
@@ -98,6 +111,12 @@ function cloneKeyframeState(state: AnimationKeyframeState): AnimationKeyframeSta
     renderMode: state.renderMode,
     bloomIntensity: state.bloomIntensity,
     motionBlurIntensity: state.motionBlurIntensity,
+    colorHue: state.colorHue,
+    colorSaturation: state.colorSaturation,
+    colorBrightness: state.colorBrightness,
+    colorContrast: state.colorContrast,
+    grainIntensity: state.grainIntensity,
+    antialiasMode: normalizeAntialiasMode(state.antialiasMode),
     cameraPosition: state.cameraPosition.clone(),
     cameraTarget: state.cameraTarget.clone(),
     cameraUp: state.cameraUp.clone(),

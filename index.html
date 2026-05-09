@@ -1549,6 +1549,18 @@
         width: 100%;
         min-width: 0;
       }
+      #render-effects-controls select {
+        width: 100%;
+        min-width: 0;
+        height: 31px;
+        border-radius: 7px;
+        border: 1px solid rgba(255,255,255,0.08);
+        background: var(--ui-control-bg);
+        color: var(--ui-text-strong);
+        font: inherit;
+        font-size: 11px;
+        padding: 0 9px;
+      }
       #render-effects-controls output {
         text-align: right;
         color: var(--ui-muted);
@@ -2833,10 +2845,43 @@
               <input id="motion-blur-intensity" type="range" min="0" max="1" step="0.01" value="0.00" />
               <output id="motion-blur-intensity-value">0.00</output>
             </div>
+            <div class="render-effect-row">
+              <label for="color-hue">Hue</label>
+              <input id="color-hue" type="range" min="-1" max="1" step="0.01" value="0.00" />
+              <output id="color-hue-value">0.00</output>
+            </div>
+            <div class="render-effect-row">
+              <label for="color-saturation">Saturation</label>
+              <input id="color-saturation" type="range" min="-1" max="1" step="0.01" value="0.00" />
+              <output id="color-saturation-value">0.00</output>
+            </div>
+            <div class="render-effect-row">
+              <label for="color-brightness">Brightness</label>
+              <input id="color-brightness" type="range" min="-1" max="1" step="0.01" value="0.00" />
+              <output id="color-brightness-value">0.00</output>
+            </div>
+            <div class="render-effect-row">
+              <label for="color-contrast">Contrast</label>
+              <input id="color-contrast" type="range" min="-1" max="1" step="0.01" value="0.00" />
+              <output id="color-contrast-value">0.00</output>
+            </div>
+            <div class="render-effect-row">
+              <label for="render-antialias">Antialias</label>
+              <select id="render-antialias" aria-label="Antialias">
+                <option value="off">Native</option>
+                <option value="smaa">SMAA</option>
+              </select>
+              <output id="render-antialias-value">Native</output>
+            </div>
+            <div class="render-effect-row">
+              <label for="grain-intensity">Grain</label>
+              <input id="grain-intensity" type="range" min="0" max="1" step="0.01" value="0.00" />
+              <output id="grain-intensity-value">0.00</output>
+            </div>
           </div>
         </div>
         </div>
-        <div id="texture-panel" class="scene-control-tab-panel empty disabled" role="tabpanel" data-scene-control-panel="texture" aria-label="Texture controls" hidden>
+        <div id="texture-panel" class="scene-control-tab-panel" role="tabpanel" data-scene-control-panel="texture" aria-label="Texture controls" hidden>
           <h4>Texture</h4>
           <div id="texture-preview-wrap">
             <canvas id="texture-preview" aria-label="Texture preview"></canvas>

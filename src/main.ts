@@ -5,6 +5,8 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { FullScreenQuad, Pass } from 'three/examples/jsm/postprocessing/Pass.js';
+import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { MAX_N, VIEW_MODES, type ViewMode } from './constants';
 import { RotND } from './RotND';
@@ -47,7 +49,9 @@ import { ViewportCaptureController } from './viewport/ViewportCaptureController'
 import { HypercubeRenderer } from './rendering/HypercubeRenderer';
 import {
   KeyframeTimelineController,
+  normalizeAntialiasMode,
   normalizeRenderQuality,
+  type AntialiasMode,
   type AnimationKeyframeState,
   type AnimationTimelineState,
   type RenderQuality,
@@ -115,6 +119,12 @@ type PackedAnimationKeyframeState = {
   m: ViewMode;
   b: number;
   mb: number;
+  ch?: number;
+  cs?: number;
+  cb?: number;
+  cc?: number;
+  gi?: number;
+  aa?: 0 | 1;
   c: PackedCamera;
 };
 type PackedAnimationTimelineState = {
@@ -155,7 +165,7 @@ type PackedSceneUrlState = {
   pk: PrimitiveMode;
   rm: ViewMode;
   em: 0 | 1;
-  fx: [number, number];
+  fx: [number, number, number, number, number, number, number, 0 | 1];
   r: string;
   ax: [number, number, number];
   ao: number[];
@@ -181,7 +191,16 @@ type PackedSceneUrlState = {
 
 const DEFAULT_BLOOM_INTENSITY = 0;
 const DEFAULT_MOTION_BLUR_INTENSITY = 0;
+const DEFAULT_COLOR_HUE = 0;
+const DEFAULT_COLOR_SATURATION = 0;
+const DEFAULT_COLOR_BRIGHTNESS = 0;
+const DEFAULT_COLOR_CONTRAST = 0;
+const DEFAULT_GRAIN_INTENSITY = 0;
+const DEFAULT_ANTIALIAS_MODE: AntialiasMode = 'off';
 const MAX_VIEWPORT_PIXEL_RATIO = 2;
+const POSTPROCESSING_MSAA_SAMPLES = 4;
+const GRAIN_UPDATE_INTERVAL_FRAMES = 3;
+const GRAIN_TEXTURE_SCALE = 0.5;
 
 let sceneUrlApplying = false;
 
@@ -341,8 +360,203 @@ class CopyFramePass extends Pass {
   }
 }
 
+class CachedGrainPass extends Pass {
+  readonly uniforms = {
+    tDiffuse: { value: null as THREE.Texture | null },
+    tNoise: { value: null as THREE.Texture | null },
+    intensity: { value: 0 },
+  };
+
+  private readonly noiseUniforms = {
+    seed: { value: 0 },
+    resolution: { value: new THREE.Vector2(1, 1) },
+  };
+
+  private readonly noiseMaterial = new THREE.ShaderMaterial({
+    uniforms: this.noiseUniforms,
+    vertexShader: /* glsl */`
+      void main() {
+        gl_Position = vec4(position.xy, 0.0, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */`
+      uniform float seed;
+      uniform vec2 resolution;
+
+      float hash(vec2 p) {
+        p = fract(p * vec2(123.34, 456.21));
+        p += dot(p, p + 45.32 + seed);
+        return fract(p.x * p.y);
+      }
+
+      void main() {
+        vec2 pixel = floor(gl_FragCoord.xy);
+        float noise = hash(pixel / max(resolution, vec2(1.0)));
+        gl_FragColor = vec4(vec3(noise), 1.0);
+      }
+    `,
+    depthTest: false,
+    depthWrite: false,
+  });
+
+  private readonly blendMaterial = new THREE.ShaderMaterial({
+    uniforms: this.uniforms,
+    vertexShader: /* glsl */`
+      varying vec2 vUv;
+
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */`
+      uniform sampler2D tDiffuse;
+      uniform sampler2D tNoise;
+      uniform float intensity;
+
+      varying vec2 vUv;
+
+      void main() {
+        vec4 color = texture2D(tDiffuse, vUv);
+        float grain = texture2D(tNoise, vUv).r - 0.5;
+        color.rgb = clamp(color.rgb + grain * intensity * 0.36, 0.0, 1.0);
+        gl_FragColor = color;
+      }
+    `,
+    depthTest: false,
+    depthWrite: false,
+  });
+
+  private readonly noiseFsQuad = new FullScreenQuad(this.noiseMaterial);
+  private readonly blendFsQuad = new FullScreenQuad(this.blendMaterial);
+  private readonly textureScale: number;
+  private readonly updateIntervalFrames: number;
+  private noiseTarget: THREE.WebGLRenderTarget;
+  private frameIndex = 0;
+  private needsNoiseUpdate = true;
+
+  constructor(updateIntervalFrames = 3, textureScale = 0.5) {
+    super();
+    this.needsSwap = true;
+    this.updateIntervalFrames = Math.max(1, Math.round(updateIntervalFrames));
+    this.textureScale = Math.max(0.1, Math.min(1, textureScale));
+    this.noiseTarget = this.createNoiseTarget(1, 1);
+    this.uniforms.tNoise.value = this.noiseTarget.texture;
+  }
+
+  setIntensity(intensity: number) {
+    this.uniforms.intensity.value = Math.max(0, Math.min(1, Number.isFinite(intensity) ? intensity : 0));
+  }
+
+  setSize(width: number, height: number) {
+    const nextWidth = Math.max(1, Math.round(width * this.textureScale));
+    const nextHeight = Math.max(1, Math.round(height * this.textureScale));
+    this.noiseTarget.setSize(nextWidth, nextHeight);
+    this.noiseUniforms.resolution.value.set(nextWidth, nextHeight);
+    this.needsNoiseUpdate = true;
+  }
+
+  render(renderer: THREE.WebGLRenderer, writeBuffer: THREE.WebGLRenderTarget, readBuffer: THREE.WebGLRenderTarget) {
+    if (this.needsNoiseUpdate || this.frameIndex % this.updateIntervalFrames === 0) {
+      this.updateNoiseTexture(renderer);
+      this.needsNoiseUpdate = false;
+    }
+    this.frameIndex = (this.frameIndex + 1) % this.updateIntervalFrames;
+
+    this.uniforms.tDiffuse.value = readBuffer.texture;
+    this.uniforms.tNoise.value = this.noiseTarget.texture;
+
+    if (this.renderToScreen) {
+      renderer.setRenderTarget(null);
+    } else {
+      renderer.setRenderTarget(writeBuffer);
+      if (this.clear) renderer.clear();
+    }
+
+    this.blendFsQuad.render(renderer);
+  }
+
+  dispose() {
+    this.noiseTarget.dispose();
+    this.noiseMaterial.dispose();
+    this.blendMaterial.dispose();
+    this.noiseFsQuad.dispose();
+    this.blendFsQuad.dispose();
+  }
+
+  private createNoiseTarget(width: number, height: number) {
+    const target = new THREE.WebGLRenderTarget(width, height, {
+      minFilter: THREE.NearestFilter,
+      magFilter: THREE.NearestFilter,
+      depthBuffer: false,
+      stencilBuffer: false,
+    });
+    target.texture.name = 'CachedGrainPass.noise';
+    return target;
+  }
+
+  private updateNoiseTexture(renderer: THREE.WebGLRenderer) {
+    this.noiseUniforms.seed.value = Math.random() * 1000;
+    renderer.setRenderTarget(this.noiseTarget);
+    renderer.clear();
+    this.noiseFsQuad.render(renderer);
+  }
+}
+
+const ColorGradeShader = {
+  name: 'ColorGradeShader',
+  uniforms: {
+    tDiffuse: { value: null },
+    hue: { value: 0 },
+    saturation: { value: 0 },
+    brightness: { value: 0 },
+    contrast: { value: 0 },
+  },
+  vertexShader: /* glsl */`
+    varying vec2 vUv;
+
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: /* glsl */`
+    uniform sampler2D tDiffuse;
+    uniform float hue;
+    uniform float saturation;
+    uniform float brightness;
+    uniform float contrast;
+
+    varying vec2 vUv;
+
+    void main() {
+      vec4 color = texture2D(tDiffuse, vUv);
+
+      float angle = hue * 3.14159265;
+      float s = sin(angle);
+      float c = cos(angle);
+      vec3 weights = (vec3(2.0 * c, -sqrt(3.0) * s - c, sqrt(3.0) * s - c) + 1.0) / 3.0;
+      color.rgb = vec3(
+        dot(color.rgb, weights.xyz),
+        dot(color.rgb, weights.zxy),
+        dot(color.rgb, weights.yzx)
+      );
+
+      float luma = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));
+      color.rgb = mix(vec3(luma), color.rgb, 1.0 + saturation);
+
+      // Exposure-style brightness: negative always darkens, positive always brightens.
+      color.rgb *= exp2(brightness);
+
+      float contrastScale = contrast > 0.0 ? 1.0 / max(0.001, 1.0 - contrast) : 1.0 + contrast;
+      color.rgb = (color.rgb - 0.5) * contrastScale + 0.5;
+
+      gl_FragColor = color;
+    }
+  `,
+};
+
 const app = document.getElementById('app')!;
-const tooltipEl = document.getElementById('tooltip') as HTMLDivElement | null;
 const ctxMenu = document.getElementById('context-menu') as HTMLDivElement | null;
 const renderAnimationButton = document.getElementById('render-animation-button') as HTMLButtonElement | null;
 const recordViewportButton = document.getElementById('record-viewport-button') as HTMLButtonElement | null;
@@ -364,6 +578,18 @@ const bloomIntensityInput = document.getElementById('bloom-intensity') as HTMLIn
 const bloomIntensityValue = document.getElementById('bloom-intensity-value') as HTMLOutputElement | null;
 const motionBlurIntensityInput = document.getElementById('motion-blur-intensity') as HTMLInputElement | null;
 const motionBlurIntensityValue = document.getElementById('motion-blur-intensity-value') as HTMLOutputElement | null;
+const colorHueInput = document.getElementById('color-hue') as HTMLInputElement | null;
+const colorHueValue = document.getElementById('color-hue-value') as HTMLOutputElement | null;
+const colorSaturationInput = document.getElementById('color-saturation') as HTMLInputElement | null;
+const colorSaturationValue = document.getElementById('color-saturation-value') as HTMLOutputElement | null;
+const colorBrightnessInput = document.getElementById('color-brightness') as HTMLInputElement | null;
+const colorBrightnessValue = document.getElementById('color-brightness-value') as HTMLOutputElement | null;
+const colorContrastInput = document.getElementById('color-contrast') as HTMLInputElement | null;
+const colorContrastValue = document.getElementById('color-contrast-value') as HTMLOutputElement | null;
+const renderAntialiasSelect = document.getElementById('render-antialias') as HTMLSelectElement | null;
+const renderAntialiasValue = document.getElementById('render-antialias-value') as HTMLOutputElement | null;
+const grainIntensityInput = document.getElementById('grain-intensity') as HTMLInputElement | null;
+const grainIntensityValue = document.getElementById('grain-intensity-value') as HTMLOutputElement | null;
 const sceneUndoButton = document.getElementById('scene-undo-button') as HTMLButtonElement | null;
 const sceneRedoButton = document.getElementById('scene-redo-button') as HTMLButtonElement | null;
 const sceneSaveButton = document.getElementById('scene-save-button') as HTMLButtonElement | null;
@@ -436,13 +662,28 @@ const backgroundController = new BackgroundController({
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.01, 100);
 const DEFAULT_CAMERA_POSITION = new THREE.Vector3(3.9, 2.7, 3.9);
 camera.position.copy(DEFAULT_CAMERA_POSITION);
-const composer = new EffectComposer(renderer);
+const composerRenderTarget = new THREE.WebGLRenderTarget(
+  window.innerWidth * renderer.getPixelRatio(),
+  window.innerHeight * renderer.getPixelRatio(),
+  {
+    type: THREE.HalfFloatType,
+    samples: renderer.capabilities.isWebGL2 ? POSTPROCESSING_MSAA_SAMPLES : 0,
+  },
+);
+composerRenderTarget.texture.name = 'ViewportPostprocess.rt1';
+const composer = new EffectComposer(renderer, composerRenderTarget);
 composer.addPass(new RenderPass(scene, camera));
 const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0, 0.58, 0.22);
 const afterimagePass = new SmoothAfterimagePass();
+const colorGradePass = new ShaderPass(ColorGradeShader);
+const smaaPass = new SMAAPass(window.innerWidth, window.innerHeight);
+const grainPass = new CachedGrainPass(GRAIN_UPDATE_INTERVAL_FRAMES, GRAIN_TEXTURE_SCALE);
 const copyFramePass = new CopyFramePass();
 composer.addPass(bloomPass);
 composer.addPass(afterimagePass);
+composer.addPass(colorGradePass);
+composer.addPass(smaaPass);
+composer.addPass(grainPass);
 composer.addPass(copyFramePass);
 const captureResolutionViewportSize = new THREE.Vector2();
 const fullViewportPixelRatio = () => Math.min(window.devicePixelRatio, MAX_VIEWPORT_PIXEL_RATIO);
@@ -674,6 +915,7 @@ let baseSurface: SurfaceState = cloneSurface(DEFAULT_SURFACE);
 let baseMaterialId = 'mat_1';
 let materialSlots: SceneMaterialState[] = [{ id: baseMaterialId, name: 'Material 1', surface: cloneSurface(DEFAULT_SURFACE) }];
 let materialIdCounter = 2;
+let textureEditorMaterialId = baseMaterialId;
 let baseCellTopology: CellTopology | undefined;
 let baseSurfaceTopology: PrimitiveSurfaceTopology | undefined;
 keyboardCamera = new KeyboardCameraController({
@@ -1037,6 +1279,12 @@ function packAnimationKeyframeState(state: AnimationKeyframeState): PackedAnimat
     m: state.renderMode,
     b: state.bloomIntensity,
     mb: state.motionBlurIntensity,
+    ch: state.colorHue,
+    cs: state.colorSaturation,
+    cb: state.colorBrightness,
+    cc: state.colorContrast,
+    gi: state.grainIntensity,
+    aa: state.antialiasMode === 'smaa' ? 1 : 0,
     c: [
       state.cameraPosition.x, state.cameraPosition.y, state.cameraPosition.z,
       state.cameraTarget.x, state.cameraTarget.y, state.cameraTarget.z,
@@ -1055,6 +1303,12 @@ function unpackAnimationKeyframeState(state: PackedAnimationKeyframeState): Anim
     renderMode: normalizeViewMode(state.m),
     bloomIntensity: clamp01(finiteNumber(state.b, DEFAULT_BLOOM_INTENSITY)),
     motionBlurIntensity: clamp01(finiteNumber(state.mb, DEFAULT_MOTION_BLUR_INTENSITY)),
+    colorHue: clampSigned01(finiteNumber(state.ch, DEFAULT_COLOR_HUE)),
+    colorSaturation: clampSigned01(finiteNumber(state.cs, DEFAULT_COLOR_SATURATION)),
+    colorBrightness: clampSigned01(finiteNumber(state.cb, DEFAULT_COLOR_BRIGHTNESS)),
+    colorContrast: clampSigned01(finiteNumber(state.cc, DEFAULT_COLOR_CONTRAST)),
+    grainIntensity: clamp01(finiteNumber(state.gi, DEFAULT_GRAIN_INTENSITY)),
+    antialiasMode: normalizeAntialiasMode(state.aa === 1 ? 'smaa' : 'off'),
     cameraPosition: unpackVec3(state.c, DEFAULT_CAMERA_POSITION),
     cameraTarget: unpackVec3([state.c[3], state.c[4], state.c[5]], new THREE.Vector3()),
     cameraUp: unpackVec3([state.c[6], state.c[7], state.c[8]], worldUp).normalize(),
@@ -1171,7 +1425,16 @@ function captureSceneUrlState(): PackedSceneUrlState {
     pk: snap.primitive,
     rm: PARAMS.renderMode,
     em: PARAMS.editMode ? 1 : 0,
-    fx: [PARAMS.bloomIntensity, PARAMS.motionBlurIntensity],
+    fx: [
+      PARAMS.bloomIntensity,
+      PARAMS.motionBlurIntensity,
+      PARAMS.colorHue,
+      PARAMS.colorSaturation,
+      PARAMS.colorBrightness,
+      PARAMS.colorContrast,
+      PARAMS.grainIntensity,
+      PARAMS.antialiasMode === 'smaa' ? 1 : 0,
+    ],
     r: packF32(snap.rotMatrix),
     ax: [snap.axes.x, snap.axes.y, snap.axes.z],
     ao: [...snap.axesOrder],
@@ -1246,6 +1509,12 @@ async function applySceneUrlState(state: PackedSceneUrlState) {
 
     PARAMS.bloomIntensity = clamp01(finiteNumber(state.fx?.[0], DEFAULT_BLOOM_INTENSITY));
     PARAMS.motionBlurIntensity = clamp01(finiteNumber(state.fx?.[1], DEFAULT_MOTION_BLUR_INTENSITY));
+    PARAMS.colorHue = clampSigned01(finiteNumber(state.fx?.[2], DEFAULT_COLOR_HUE));
+    PARAMS.colorSaturation = clampSigned01(finiteNumber(state.fx?.[3], DEFAULT_COLOR_SATURATION));
+    PARAMS.colorBrightness = clampSigned01(finiteNumber(state.fx?.[4], DEFAULT_COLOR_BRIGHTNESS));
+    PARAMS.colorContrast = clampSigned01(finiteNumber(state.fx?.[5], DEFAULT_COLOR_CONTRAST));
+    PARAMS.grainIntensity = clamp01(finiteNumber(state.fx?.[6], DEFAULT_GRAIN_INTENSITY));
+    PARAMS.antialiasMode = normalizeAntialiasMode(state.fx?.[7] === 1 ? 'smaa' : 'off');
     syncRenderEffects();
 
     axisController.applyExtraAxisState(state.ag);
@@ -1587,10 +1856,13 @@ function updateObjectList() {
 }
 
 function getTextureMaterialTarget() {
-  if (!isSelectableObject(selectedInstance)) return null;
   reconcileSceneMaterials();
-  const materialId = objectMaterialId(selectedInstance);
+  const hasObjectTarget = isSelectableObject(selectedInstance);
+  const materialId = hasObjectTarget
+    ? objectMaterialId(selectedInstance)
+    : (materialSlotById(textureEditorMaterialId)?.id ?? materialSlots[0]?.id ?? ensureMaterialSlot(undefined).id);
   const material = ensureMaterialSlot(materialId);
+  textureEditorMaterialId = material.id;
   const usage = materialUsageRows(material.id);
   return {
     materialId: material.id,
@@ -1601,17 +1873,26 @@ function getTextureMaterialTarget() {
       objectLabels: usage.map(row => row.label),
     },
     materials: sceneMaterialEntriesForTexture(),
-    canSplit: usage.length > 1,
+    canSplit: hasObjectTarget && usage.length > 1,
+    hasObjectTarget,
   };
 }
 
 function assignMaterialToSelection(materialId: string, recordUndo: boolean) {
-  if (!isSelectableObject(selectedInstance)) return false;
   const material = materialSlotById(materialId);
-  if (!material || objectMaterialId(selectedInstance) === material.id) return false;
+  if (!material) return false;
+
+  if (!isSelectableObject(selectedInstance)) {
+    textureEditorMaterialId = material.id;
+    textureEditor.updatePanel();
+    return true;
+  }
+
+  if (objectMaterialId(selectedInstance) === material.id) return false;
   if (recordUndo) pushUndoSnapshot();
   const changed = setObjectMaterialId(selectedInstance, material.id);
   if (!changed) return false;
+  textureEditorMaterialId = material.id;
   reconcileSceneMaterials();
   updateObjectList();
   textureEditor.updatePanel();
@@ -1653,8 +1934,10 @@ function splitSelectedMaterial(recordUndo: boolean) {
 }
 
 function applySurfaceToSelectionMaterial(surface: SurfaceState, recordUndo: boolean) {
-  if (!isSelectableObject(selectedInstance)) return false;
-  const material = ensureMaterialSlot(objectMaterialId(selectedInstance));
+  const material = ensureMaterialSlot(
+    isSelectableObject(selectedInstance) ? objectMaterialId(selectedInstance) : textureEditorMaterialId,
+  );
+  textureEditorMaterialId = material.id;
   const nextSurface = normalizeSurface(surface);
   const changed = !surfacesEqual(material.surface, nextSurface);
   if (changed && recordUndo) pushUndoSnapshot();
@@ -2109,10 +2392,20 @@ const PARAMS = {
   axesZ: 2,
   bloomIntensity: DEFAULT_BLOOM_INTENSITY,
   motionBlurIntensity: DEFAULT_MOTION_BLUR_INTENSITY,
+  colorHue: DEFAULT_COLOR_HUE,
+  colorSaturation: DEFAULT_COLOR_SATURATION,
+  colorBrightness: DEFAULT_COLOR_BRIGHTNESS,
+  colorContrast: DEFAULT_COLOR_CONTRAST,
+  grainIntensity: DEFAULT_GRAIN_INTENSITY,
+  antialiasMode: DEFAULT_ANTIALIAS_MODE as AntialiasMode,
 };
 
 function clamp01(value: number) {
   return Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+}
+
+function clampSigned01(value: number) {
+  return Math.max(-1, Math.min(1, Number.isFinite(value) ? value : 0));
 }
 
 function motionBlurBlendFromIntensity(intensity: number) {
@@ -2123,6 +2416,12 @@ function motionBlurBlendFromIntensity(intensity: number) {
 function syncRenderEffects() {
   PARAMS.bloomIntensity = clamp01(PARAMS.bloomIntensity);
   PARAMS.motionBlurIntensity = clamp01(PARAMS.motionBlurIntensity);
+  PARAMS.colorHue = clampSigned01(PARAMS.colorHue);
+  PARAMS.colorSaturation = clampSigned01(PARAMS.colorSaturation);
+  PARAMS.colorBrightness = clampSigned01(PARAMS.colorBrightness);
+  PARAMS.colorContrast = clampSigned01(PARAMS.colorContrast);
+  PARAMS.grainIntensity = clamp01(PARAMS.grainIntensity);
+  PARAMS.antialiasMode = normalizeAntialiasMode(PARAMS.antialiasMode);
 
   bloomPass.enabled = PARAMS.bloomIntensity > 0.001;
   bloomPass.strength = PARAMS.bloomIntensity * 1.6;
@@ -2133,14 +2432,44 @@ function syncRenderEffects() {
   afterimagePass.uniforms.blend.value = motionBlurBlendFromIntensity(PARAMS.motionBlurIntensity);
   if (!afterimagePass.enabled) afterimagePass.reset();
 
+  colorGradePass.enabled = Math.abs(PARAMS.colorHue) > 0.001
+    || Math.abs(PARAMS.colorSaturation) > 0.001
+    || Math.abs(PARAMS.colorBrightness) > 0.001
+    || Math.abs(PARAMS.colorContrast) > 0.001;
+  colorGradePass.uniforms.hue.value = PARAMS.colorHue;
+  colorGradePass.uniforms.saturation.value = PARAMS.colorSaturation;
+  colorGradePass.uniforms.brightness.value = PARAMS.colorBrightness;
+  colorGradePass.uniforms.contrast.value = PARAMS.colorContrast;
+
+  smaaPass.enabled = PARAMS.antialiasMode === 'smaa';
+
+  grainPass.enabled = PARAMS.grainIntensity > 0.001;
+  grainPass.setIntensity(PARAMS.grainIntensity);
+
   if (bloomIntensityInput) bloomIntensityInput.value = PARAMS.bloomIntensity.toFixed(2);
   if (bloomIntensityValue) bloomIntensityValue.textContent = PARAMS.bloomIntensity.toFixed(2);
   if (motionBlurIntensityInput) motionBlurIntensityInput.value = PARAMS.motionBlurIntensity.toFixed(2);
   if (motionBlurIntensityValue) motionBlurIntensityValue.textContent = PARAMS.motionBlurIntensity.toFixed(2);
+  if (colorHueInput) colorHueInput.value = PARAMS.colorHue.toFixed(2);
+  if (colorHueValue) colorHueValue.textContent = PARAMS.colorHue.toFixed(2);
+  if (colorSaturationInput) colorSaturationInput.value = PARAMS.colorSaturation.toFixed(2);
+  if (colorSaturationValue) colorSaturationValue.textContent = PARAMS.colorSaturation.toFixed(2);
+  if (colorBrightnessInput) colorBrightnessInput.value = PARAMS.colorBrightness.toFixed(2);
+  if (colorBrightnessValue) colorBrightnessValue.textContent = PARAMS.colorBrightness.toFixed(2);
+  if (colorContrastInput) colorContrastInput.value = PARAMS.colorContrast.toFixed(2);
+  if (colorContrastValue) colorContrastValue.textContent = PARAMS.colorContrast.toFixed(2);
+  if (renderAntialiasSelect) renderAntialiasSelect.value = PARAMS.antialiasMode;
+  if (renderAntialiasValue) renderAntialiasValue.textContent = PARAMS.antialiasMode === 'smaa' ? 'SMAA' : 'Native';
+  if (grainIntensityInput) grainIntensityInput.value = PARAMS.grainIntensity.toFixed(2);
+  if (grainIntensityValue) grainIntensityValue.textContent = PARAMS.grainIntensity.toFixed(2);
 }
 
 function hasRenderEffects() {
-  return bloomPass.enabled || afterimagePass.enabled;
+  return bloomPass.enabled
+    || afterimagePass.enabled
+    || colorGradePass.enabled
+    || smaaPass.enabled
+    || grainPass.enabled;
 }
 
 function lerpNumber(a: number, b: number, t: number) {
@@ -2256,6 +2585,12 @@ function captureAnimationState(): AnimationKeyframeState {
     renderMode: PARAMS.renderMode,
     bloomIntensity: PARAMS.bloomIntensity,
     motionBlurIntensity: PARAMS.motionBlurIntensity,
+    colorHue: PARAMS.colorHue,
+    colorSaturation: PARAMS.colorSaturation,
+    colorBrightness: PARAMS.colorBrightness,
+    colorContrast: PARAMS.colorContrast,
+    grainIntensity: PARAMS.grainIntensity,
+    antialiasMode: PARAMS.antialiasMode,
     cameraPosition: camera.position.clone(),
     cameraTarget: controls.target.clone(),
     cameraUp: camera.up.clone(),
@@ -2283,6 +2618,12 @@ function interpolateAnimationState(from: AnimationKeyframeState, to: AnimationKe
     renderMode: t < 0.5 ? from.renderMode : to.renderMode,
     bloomIntensity: lerpNumber(from.bloomIntensity, to.bloomIntensity, t),
     motionBlurIntensity: lerpNumber(from.motionBlurIntensity, to.motionBlurIntensity, t),
+    colorHue: lerpNumber(from.colorHue, to.colorHue, t),
+    colorSaturation: lerpNumber(from.colorSaturation, to.colorSaturation, t),
+    colorBrightness: lerpNumber(from.colorBrightness, to.colorBrightness, t),
+    colorContrast: lerpNumber(from.colorContrast, to.colorContrast, t),
+    grainIntensity: lerpNumber(from.grainIntensity, to.grainIntensity, t),
+    antialiasMode: t < 0.5 ? from.antialiasMode : to.antialiasMode,
     cameraPosition: interpolateCameraPosition(from.cameraPosition, from.cameraTarget, to.cameraPosition, to.cameraTarget, t),
     cameraTarget,
     cameraUp: lerpVector(from.cameraUp, to.cameraUp, t).normalize(),
@@ -2311,6 +2652,12 @@ function applyAnimationState(state: AnimationKeyframeState) {
 
   PARAMS.bloomIntensity = state.bloomIntensity;
   PARAMS.motionBlurIntensity = state.motionBlurIntensity;
+  PARAMS.colorHue = state.colorHue;
+  PARAMS.colorSaturation = state.colorSaturation;
+  PARAMS.colorBrightness = state.colorBrightness;
+  PARAMS.colorContrast = state.colorContrast;
+  PARAMS.grainIntensity = state.grainIntensity;
+  PARAMS.antialiasMode = state.antialiasMode;
   syncRenderEffects();
 
   if (PARAMS.renderMode !== state.renderMode) setViewMode(state.renderMode);
@@ -2383,16 +2730,45 @@ function renderViewportFrame() {
 }
 
 function bindRenderEffectControls() {
-  bloomIntensityInput?.addEventListener('input', () => {
-    PARAMS.bloomIntensity = clamp01(Number.parseFloat(bloomIntensityInput.value));
+  const bindRange = (
+    input: HTMLInputElement | null,
+    apply: (value: number) => void,
+  ) => {
+    input?.addEventListener('input', () => {
+      apply(Number.parseFloat(input.value));
+      syncRenderEffects();
+      requestSceneUrlUpdate();
+    });
+  };
+
+  bindRange(bloomIntensityInput, value => {
+    PARAMS.bloomIntensity = clamp01(value);
+  });
+  bindRange(motionBlurIntensityInput, value => {
+    PARAMS.motionBlurIntensity = clamp01(value);
+  });
+  bindRange(colorHueInput, value => {
+    PARAMS.colorHue = clampSigned01(value);
+  });
+  bindRange(colorSaturationInput, value => {
+    PARAMS.colorSaturation = clampSigned01(value);
+  });
+  bindRange(colorBrightnessInput, value => {
+    PARAMS.colorBrightness = clampSigned01(value);
+  });
+  bindRange(colorContrastInput, value => {
+    PARAMS.colorContrast = clampSigned01(value);
+  });
+  bindRange(grainIntensityInput, value => {
+    PARAMS.grainIntensity = clamp01(value);
+  });
+
+  renderAntialiasSelect?.addEventListener('change', () => {
+    PARAMS.antialiasMode = normalizeAntialiasMode(renderAntialiasSelect.value);
     syncRenderEffects();
     requestSceneUrlUpdate();
   });
-  motionBlurIntensityInput?.addEventListener('input', () => {
-    PARAMS.motionBlurIntensity = clamp01(Number.parseFloat(motionBlurIntensityInput.value));
-    syncRenderEffects();
-    requestSceneUrlUpdate();
-  });
+
   syncRenderEffects();
 }
 
@@ -2682,7 +3058,6 @@ viewportInteraction = new ViewportInteractionController({
   controls,
   raycaster,
   ndc,
-  tooltipEl,
   contextMenuEl: ctxMenu,
   keyboardCamera,
   transformController,

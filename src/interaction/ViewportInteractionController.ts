@@ -37,7 +37,6 @@ type ViewportInteractionControllerOptions = {
   controls: OrbitControls;
   raycaster: THREE.Raycaster;
   ndc: THREE.Vector2;
-  tooltipEl: HTMLDivElement | null;
   contextMenuEl: HTMLDivElement | null;
   keyboardCamera: KeyboardCameraController;
   transformController: TransformController;
@@ -101,9 +100,7 @@ export class ViewportInteractionController {
 
   bind() {
     const canvas = this.options.renderer.domElement;
-    canvas.addEventListener('pointermove', ev => this.handleHover(ev));
     canvas.addEventListener('pointermove', ev => this.handleTransformPointerMove(ev));
-    canvas.addEventListener('pointerleave', () => this.options.tooltipEl?.classList.remove('visible'));
     canvas.addEventListener('contextmenu', ev => this.handleContextMenu(ev));
     canvas.addEventListener('mousedown', ev => this.handleMiddleMouseDown(ev), { capture: true });
     canvas.addEventListener('pointerdown', ev => this.handlePointerDown(ev));
@@ -187,74 +184,6 @@ export class ViewportInteractionController {
     menu.style.left = `${x}px`;
     menu.style.top = `${y}px`;
     menu.style.display = 'block';
-  }
-
-  private handleHover(ev: PointerEvent) {
-    const tooltipEl = this.options.tooltipEl;
-    if (!tooltipEl) return;
-
-    const rect = this.options.renderer.domElement.getBoundingClientRect();
-    const mx = ev.clientX - rect.left;
-    const my = ev.clientY - rect.top;
-    const w = rect.width;
-    const h = rect.height;
-    let best = -1;
-    let bestDist2 = Number.POSITIVE_INFINITY;
-    let selectedHoverInst = -1;
-
-    const considerPoint = (px: number, py: number, pz: number, idx: number, instIdx: number) => {
-      this.tmpVec.set(px, py, pz).project(this.options.camera);
-      const sx = (this.tmpVec.x * 0.5 + 0.5) * w;
-      const sy = (-this.tmpVec.y * 0.5 + 0.5) * h;
-      const dx = sx - mx;
-      const dy = sy - my;
-      const d2 = dx * dx + dy * dy;
-      if (d2 < bestDist2) {
-        bestDist2 = d2;
-        best = idx;
-        selectedHoverInst = instIdx;
-      }
-    };
-
-    if (this.options.getBaseVisible()) {
-      const rendererND = this.options.getRendererND();
-      const M = this.options.getM();
-      for (let i = 0; i < M; i++) {
-        const pIdx = i * 3;
-        considerPoint(rendererND.positions[pIdx], rendererND.positions[pIdx + 1], rendererND.positions[pIdx + 2], i, this.options.baseSelection);
-      }
-    }
-
-    this.options.getExtraInstances().forEach((inst, instIdx) => {
-      if (!inst.visible) return;
-      const pos = inst.renderer.positions;
-      for (let i = 0; i < inst.M; i++) {
-        const pIdx = i * 3;
-        considerPoint(pos[pIdx], pos[pIdx + 1], pos[pIdx + 2], i, instIdx);
-      }
-    });
-
-    const thresh2 = 30 * 30;
-    if (best >= 0 && bestDist2 < thresh2) {
-      const hoverData = selectedHoverInst >= 0 && this.options.getExtraInstances()[selectedHoverInst]
-        ? { coords: this.options.getExtraInstances()[selectedHoverInst].X, count: this.options.getExtraInstances()[selectedHoverInst].M }
-        : { coords: this.options.getX(), count: this.options.getM() };
-      const lines = this.formatCoords(this.options.getN(), hoverData.coords, hoverData.count, best);
-      tooltipEl.replaceChildren();
-      const title = document.createElement('div');
-      title.style.fontWeight = '600';
-      title.style.marginBottom = '4px';
-      title.textContent = `v${best}`;
-      const body = document.createElement('div');
-      body.innerHTML = lines.join('<br>');
-      tooltipEl.append(title, body);
-      tooltipEl.style.left = `${ev.clientX}px`;
-      tooltipEl.style.top = `${ev.clientY}px`;
-      tooltipEl.classList.add('visible');
-    } else {
-      tooltipEl.classList.remove('visible');
-    }
-
   }
 
   private handleTransformPointerMove(ev: PointerEvent) {
@@ -905,12 +834,4 @@ export class ViewportInteractionController {
     this.options.controls.enablePan = this.axisDrag.prevPan;
   }
 
-  private formatCoords(Nloc: number, coords: Float32Array, count: number, idx: number) {
-    const parts: string[] = [];
-    for (let d = 0; d < Nloc; d++) {
-      const value = coords[d * count + idx];
-      parts.push(`d${d}: ${value.toFixed(3)}`);
-    }
-    return parts;
-  }
 }
