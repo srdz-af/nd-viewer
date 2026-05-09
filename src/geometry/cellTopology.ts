@@ -42,6 +42,20 @@ export type ExtrudeCellResult = {
   extrudedCellId: number;
 };
 
+export type BevelVertexCut = {
+  neighbor: number;
+  vertex: number;
+};
+
+export type BevelVertexResult = {
+  topology: CellTopology;
+  vertexMap: Int32Array;
+  vertexCount: number;
+  edges: Uint32Array;
+  cuts: BevelVertexCut[];
+  capCellId: number;
+};
+
 const DEFAULT_PRODUCT_TOPOLOGY_MAX_CELLS = 250000;
 const DEFAULT_PRODUCT_TOPOLOGY_MAX_VERTEX_REFS = 2000000;
 const boundaryFaceCache = new WeakMap<CellTopology, Map<number, Map<number, number[]>>>();
@@ -484,6 +498,135 @@ export function extrudeCell(
     capVertices,
     capCellId,
     extrudedCellId,
+  };
+}
+
+export function bevelVertex(
+  topology: CellTopology | undefined,
+  vertexId: number,
+  vertexCount: number,
+): BevelVertexResult | undefined {
+  if (!topology || vertexId < 0 || vertexId >= vertexCount) return undefined;
+
+  const incidentNeighbors: number[] = [];
+  for (let edgeId = 0; edgeId < cellCount(topology, 1); edgeId++) {
+    const edge = getCellVertices(topology, 1, edgeId);
+    if (edge.length < 2 || !edge.includes(vertexId)) continue;
+    const neighbor = edge[0] === vertexId ? edge[1] : edge[0];
+    if (neighbor >= 0 && neighbor < vertexCount && !incidentNeighbors.includes(neighbor)) {
+      incidentNeighbors.push(neighbor);
+    }
+  }
+  if (incidentNeighbors.length < 2) return undefined;
+
+  const vertexMap = new Int32Array(vertexCount);
+  vertexMap.fill(-1);
+  let nextVertex = 0;
+  for (let vertex = 0; vertex < vertexCount; vertex++) {
+    if (vertex === vertexId) continue;
+    vertexMap[vertex] = nextVertex++;
+  }
+
+  const cutByNeighbor = new Map<number, number>();
+  const cuts: BevelVertexCut[] = [];
+  incidentNeighbors.forEach(neighbor => {
+    const cutVertex = nextVertex++;
+    cutByNeighbor.set(neighbor, cutVertex);
+    cuts.push({ neighbor, vertex: cutVertex });
+  });
+
+  const highestSourceDimension = maxCellDimension(topology);
+  const highestCapDimension = Math.min(highestSourceDimension, incidentNeighbors.length - 1);
+  const highestTargetDimension = Math.max(highestSourceDimension, highestCapDimension);
+  const cellsByDim: number[][][] = Array.from({ length: highestTargetDimension + 1 }, () => []);
+  cellsByDim[0] = Array.from({ length: nextVertex }, (_entry, vertex) => [vertex]);
+
+  const remapCell = (cell: number[]) => {
+    const remapped = cell.map(vertex => vertexMap[vertex]).filter(vertex => vertex >= 0);
+    return remapped.length === cell.length ? remapped : [];
+  };
+
+  const replacementForFaceVertex = (face: number[], selectedIndex: number) => {
+    const prev = face[(selectedIndex - 1 + face.length) % face.length];
+    const next = face[(selectedIndex + 1) % face.length];
+    return [
+      cutByNeighbor.get(prev),
+      cutByNeighbor.get(next),
+    ].filter((vertex): vertex is number => typeof vertex === 'number');
+  };
+
+  for (let dim = 1; dim <= highestSourceDimension; dim++) {
+    const sourceCells = cellVerticesForMutation(topology, dim);
+    const targetCells = cellsByDim[dim];
+    const signatures = new Set<string>();
+
+    for (const cell of sourceCells) {
+      if (!cell.includes(vertexId)) {
+        pushUniqueCell(targetCells, remapCell(cell), signatures);
+        continue;
+      }
+
+      if (dim === 1) {
+        const neighbor = cell[0] === vertexId ? cell[1] : cell[0];
+        const cut = cutByNeighbor.get(neighbor);
+        const remappedNeighbor = vertexMap[neighbor];
+        if (typeof cut === 'number' && remappedNeighbor >= 0) pushUniqueCell(targetCells, [cut, remappedNeighbor], signatures);
+        continue;
+      }
+
+      if (dim === 2) {
+        const selectedIndex = cell.indexOf(vertexId);
+        const nextCell: number[] = [];
+        for (let idx = 0; idx < cell.length; idx++) {
+          const vertex = cell[idx];
+          if (vertex === vertexId) {
+            nextCell.push(...replacementForFaceVertex(cell, selectedIndex));
+          } else {
+            const remapped = vertexMap[vertex];
+            if (remapped >= 0) nextCell.push(remapped);
+          }
+        }
+        pushUniqueCell(targetCells, nextCell, signatures);
+        continue;
+      }
+
+      const selected = new Set(cell);
+      const nextCell = cell
+        .filter(vertex => vertex !== vertexId)
+        .map(vertex => vertexMap[vertex])
+        .filter(vertex => vertex >= 0);
+      for (const neighbor of incidentNeighbors) {
+        if (!selected.has(neighbor)) continue;
+        const cut = cutByNeighbor.get(neighbor);
+        if (typeof cut === 'number') nextCell.push(cut);
+      }
+      pushUniqueCell(targetCells, nextCell, signatures);
+    }
+  }
+
+  let capCellId = -1;
+  const cutVertices = cuts.map(cut => cut.vertex);
+  for (let dim = 1; dim <= highestCapDimension; dim++) {
+    const targetCells = cellsByDim[dim];
+    const signatures = new Set(targetCells.map(sortedCellSignature));
+    for (const cell of combinations(cutVertices.length, dim + 1).map(combo => combo.map(index => cutVertices[index]))) {
+      const nextId = pushUniqueCell(targetCells, cell, signatures);
+      if (dim === highestCapDimension && capCellId < 0 && nextId >= 0) capCellId = nextId;
+    }
+  }
+
+  const newCells = cellsByDim.map(cells => cells.length ? makeCellDim(cells) : undefined);
+  return {
+    topology: {
+      cells: newCells,
+      generatedKind: 'edited',
+      sourceDimension: topology.sourceDimension,
+    },
+    vertexMap,
+    vertexCount: nextVertex,
+    edges: edgeListFromCells(cellsByDim[1]),
+    cuts,
+    capCellId,
   };
 }
 
