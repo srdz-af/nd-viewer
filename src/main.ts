@@ -3461,7 +3461,7 @@ function buildBeveledVertexData(
       radius += weight * length;
       for (let dim = 0; dim < dimension; dim++) {
         const delta = (data[(dim * oldVertexCount) + neighbor] ?? selectedValues[dim]) - selectedValues[dim];
-        direction[dim] -= weight * (delta / length);
+        direction[dim] += weight * (delta / length);
       }
     }
     let directionLengthSq = 0;
@@ -3790,10 +3790,7 @@ function updateEditBevel(token: unknown, amount: number, smoothness: number) {
 
 function commitEditBevel(token: unknown) {
   if (!isEditBevelToken(token)) return;
-  if (token.applied) {
-    sceneHistory.push(token.undoSnapshot);
-    requestSceneUrlUpdate();
-  } else {
+  if (!token.applied) {
     restoreEditBevelTarget(token);
     projectAndRenderAll();
     if (PARAMS.editMode && getObjectVisible(token.instIdx)) updateVertexCloud(token.instIdx);
