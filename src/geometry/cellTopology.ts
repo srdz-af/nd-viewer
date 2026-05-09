@@ -44,6 +44,7 @@ export type ExtrudeCellResult = {
 
 export type BevelVertexCut = {
   vertex: number;
+  sourceVertex?: number;
   neighbors: number[];
   weights: number[];
 };
@@ -546,175 +547,128 @@ export function extrudeCell(
   };
 }
 
-export function bevelVertex(
+export function bevelVertices(
   topology: CellTopology | undefined,
-  vertexId: number,
+  vertexIds: number[],
   vertexCount: number,
   smoothness = 1,
 ): BevelVertexResult | undefined {
-  if (!topology || vertexId < 0 || vertexId >= vertexCount) return undefined;
-
-  const incidentNeighbors: number[] = [];
-  for (let edgeId = 0; edgeId < cellCount(topology, 1); edgeId++) {
-    const edge = getCellVertices(topology, 1, edgeId);
-    if (edge.length < 2 || !edge.includes(vertexId)) continue;
-    const neighbor = edge[0] === vertexId ? edge[1] : edge[0];
-    if (neighbor >= 0 && neighbor < vertexCount && !incidentNeighbors.includes(neighbor)) {
-      incidentNeighbors.push(neighbor);
-    }
-  }
-  if (incidentNeighbors.length < 2) return undefined;
-
-  const vertexMap = new Int32Array(vertexCount);
-  vertexMap.fill(-1);
-  let nextVertex = 0;
-  for (let vertex = 0; vertex < vertexCount; vertex++) {
-    if (vertex === vertexId) continue;
-    vertexMap[vertex] = nextVertex++;
-  }
+  if (!topology || vertexCount <= 0) return undefined;
+  const requestedVertices = vertexIds
+    .filter((vertex, index, arr) => Number.isInteger(vertex) && vertex >= 0 && vertex < vertexCount && arr.indexOf(vertex) === index);
+  if (!requestedVertices.length) return undefined;
 
   const layerCount = Math.max(1, Math.min(32, Math.floor(smoothness)));
-  const neighborIndexByVertex = new Map<number, number>();
-  incidentNeighbors.forEach((neighbor, index) => {
-    neighborIndexByVertex.set(neighbor, index);
-  });
-  const capVertexByKey = new Map<string, number>();
-  const cuts: BevelVertexCut[] = [];
-
-  const compositionKey = (weights: number[]) => weights.join(':');
-  const capVertex = (weights: number[]) => {
-    const key = compositionKey(weights);
-    const existing = capVertexByKey.get(key);
-    if (typeof existing === 'number') return existing;
-    const vertex = nextVertex++;
-    capVertexByKey.set(key, vertex);
-    const neighbors: number[] = [];
-    const normalizedWeights: number[] = [];
-    weights.forEach((weight, index) => {
-      if (weight <= 0) return;
-      neighbors.push(incidentNeighbors[index]);
-      normalizedWeights.push(weight / layerCount);
-    });
-    cuts.push({ vertex, neighbors, weights: normalizedWeights });
-    return vertex;
-  };
-
-  const weightsFor = (entries: Array<[number, number]>) => {
-    const weights = new Array(incidentNeighbors.length).fill(0);
-    for (const [neighborIndex, weight] of entries) weights[neighborIndex] = weight;
-    return weights;
-  };
-
-  const endpointWeights = (neighbor: number) => {
-    const index = neighborIndexByVertex.get(neighbor);
-    return typeof index === 'number' ? weightsFor([[index, layerCount]]) : null;
-  };
-
-  const arcBetween = (fromNeighbor: number, toNeighbor: number) => {
-    const from = neighborIndexByVertex.get(fromNeighbor);
-    const to = neighborIndexByVertex.get(toNeighbor);
-    if (typeof from !== 'number' || typeof to !== 'number') return [];
-    const vertices: number[] = [];
-    for (let step = 0; step <= layerCount; step++) {
-      vertices.push(capVertex(weightsFor([
-        [from, layerCount - step],
-        [to, step],
-      ])));
-    }
-    return vertices;
-  };
-
   const highestSourceDimension = maxCellDimension(topology);
-  const highestCapDimension = Math.min(highestSourceDimension, incidentNeighbors.length - 1);
-  const highestTargetDimension = Math.max(highestSourceDimension, highestCapDimension);
-  const cellsByDim: number[][][] = Array.from({ length: highestTargetDimension + 1 }, () => []);
   const sourceCellsByDim: number[][][] = Array.from({ length: highestSourceDimension + 1 }, (_entry, dim) => (
     dim > 0 ? cellVerticesForMutation(topology, dim) : []
   ));
 
-  const remapCell = (cell: number[]) => {
-    const remapped = cell.map(vertex => vertexMap[vertex]).filter(vertex => vertex >= 0);
-    return remapped.length === cell.length ? remapped : [];
+  type VertexBevelAnalysis = {
+    vertex: number;
+    incidentNeighbors: number[];
+    neighborIndexByVertex: Map<number, number>;
+    generatedByWeights: Map<string, number>;
+    profileByPair: Map<string, number[]>;
+    createdProfiles: number[][];
   };
 
-  const incidentNeighborsInCell = (cell: number[]) => {
+  const incidentNeighborsFor = (vertexId: number) => {
+    const neighbors: number[] = [];
+    for (let edgeId = 0; edgeId < cellCount(topology, 1); edgeId++) {
+      const edge = getCellVertices(topology, 1, edgeId);
+      if (edge.length < 2 || !edge.includes(vertexId)) continue;
+      const neighbor = edge[0] === vertexId ? edge[1] : edge[0];
+      if (neighbor >= 0 && neighbor < vertexCount && !neighbors.includes(neighbor)) neighbors.push(neighbor);
+    }
+    return neighbors;
+  };
+
+  const analysesByVertex = new Map<number, VertexBevelAnalysis>();
+  for (const vertex of requestedVertices) {
+    const incidentNeighbors = incidentNeighborsFor(vertex);
+    if (incidentNeighbors.length < 2) continue;
+    const neighborIndexByVertex = new Map<number, number>();
+    incidentNeighbors.forEach((neighbor, index) => neighborIndexByVertex.set(neighbor, index));
+    analysesByVertex.set(vertex, {
+      vertex,
+      incidentNeighbors,
+      neighborIndexByVertex,
+      generatedByWeights: new Map(),
+      profileByPair: new Map(),
+      createdProfiles: [],
+    });
+  }
+  if (!analysesByVertex.size) return undefined;
+
+  const selectedSet = new Set(analysesByVertex.keys());
+  const vertexMap = new Int32Array(vertexCount);
+  vertexMap.fill(-1);
+  let nextVertex = 0;
+  for (let vertex = 0; vertex < vertexCount; vertex++) {
+    if (selectedSet.has(vertex)) continue;
+    vertexMap[vertex] = nextVertex++;
+  }
+
+  const cuts: BevelVertexCut[] = [];
+  const weightsFor = (analysis: VertexBevelAnalysis, entries: Array<[number, number]>) => {
+    const weights = new Array(analysis.incidentNeighbors.length).fill(0);
+    for (const [neighborIndex, weight] of entries) weights[neighborIndex] = Math.max(0, weight);
+    return weights;
+  };
+
+  const capVertex = (analysis: VertexBevelAnalysis, weights: number[]) => {
+    const key = weights.join(':');
+    const existing = analysis.generatedByWeights.get(key);
+    if (typeof existing === 'number') return existing;
+    const vertex = nextVertex++;
+    analysis.generatedByWeights.set(key, vertex);
+    const neighbors: number[] = [];
+    const normalizedWeights: number[] = [];
+    weights.forEach((weight, index) => {
+      if (weight <= 0) return;
+      neighbors.push(analysis.incidentNeighbors[index]);
+      normalizedWeights.push(weight / layerCount);
+    });
+    cuts.push({ vertex, sourceVertex: analysis.vertex, neighbors, weights: normalizedWeights });
+    return vertex;
+  };
+
+  const boundaryCut = (analysis: VertexBevelAnalysis, neighbor: number) => {
+    const index = analysis.neighborIndexByVertex.get(neighbor);
+    return typeof index === 'number' ? capVertex(analysis, weightsFor(analysis, [[index, layerCount]])) : -1;
+  };
+
+  const profileKey = (a: number, b: number) => `${a}:${b}`;
+  const ensureProfile = (analysis: VertexBevelAnalysis, fromNeighbor: number, toNeighbor: number) => {
+    if (fromNeighbor === toNeighbor) {
+      const cut = boundaryCut(analysis, fromNeighbor);
+      return cut >= 0 ? [cut] : undefined;
+    }
+    const existing = analysis.profileByPair.get(profileKey(fromNeighbor, toNeighbor));
+    if (existing) return existing;
+    const from = analysis.neighborIndexByVertex.get(fromNeighbor);
+    const to = analysis.neighborIndexByVertex.get(toNeighbor);
+    if (typeof from !== 'number' || typeof to !== 'number') return undefined;
+    const sequence: number[] = [];
+    for (let step = 0; step <= layerCount; step++) {
+      sequence.push(capVertex(analysis, weightsFor(analysis, [
+        [from, layerCount - step],
+        [to, step],
+      ])));
+    }
+    analysis.profileByPair.set(profileKey(fromNeighbor, toNeighbor), sequence);
+    analysis.profileByPair.set(profileKey(toNeighbor, fromNeighbor), [...sequence].reverse());
+    analysis.createdProfiles.push(sequence);
+    return sequence;
+  };
+
+  const incidentNeighborsInCell = (analysis: VertexBevelAnalysis, cell: number[]) => {
     const source = new Set(cell);
-    return incidentNeighbors.filter(neighbor => source.has(neighbor));
+    return analysis.incidentNeighbors.filter(neighbor => source.has(neighbor));
   };
 
-  const replacementForFaceVertex = (face: number[], selectedIndex: number) => {
-    const prev = face[(selectedIndex - 1 + face.length) % face.length];
-    const next = face[(selectedIndex + 1) % face.length];
-    return arcBetween(prev, next);
-  };
-
-  const replaceFaceVertexWithArc = (face: number[], selectedIndex: number) => {
-    const arc = replacementForFaceVertex(face, selectedIndex);
-    if (!arc.length) return [];
-    const nextCell = [...arc];
-    let idx = (selectedIndex + 1) % face.length;
-    while (idx !== selectedIndex) {
-      const remapped = vertexMap[face[idx]];
-      if (remapped >= 0) nextCell.push(remapped);
-      idx = (idx + 1) % face.length;
-    }
-    return nextCell;
-  };
-
-  for (let dim = 1; dim <= highestSourceDimension; dim++) {
-    const sourceCells = sourceCellsByDim[dim] ?? [];
-    const targetCells = cellsByDim[dim];
-    const signatures = new Set<string>();
-
-    for (const cell of sourceCells) {
-      if (!cell.includes(vertexId)) {
-        pushUniqueCell(targetCells, remapCell(cell), signatures);
-        continue;
-      }
-
-      if (dim === 1) {
-        const neighbor = cell[0] === vertexId ? cell[1] : cell[0];
-        const remappedNeighbor = vertexMap[neighbor];
-        const endpoint = endpointWeights(neighbor);
-        const cut = endpoint ? capVertex(endpoint) : -1;
-        if (cut >= 0 && remappedNeighbor >= 0) pushUniqueCell(targetCells, [cut, remappedNeighbor], signatures);
-        continue;
-      }
-
-      if (dim === 2) {
-        const selectedIndex = cell.indexOf(vertexId);
-        pushUniqueCell(targetCells, replaceFaceVertexWithArc(cell, selectedIndex), signatures);
-        continue;
-      }
-
-      const selected = new Set(cell);
-      const nextCell = cell
-        .filter(vertex => vertex !== vertexId)
-        .map(vertex => vertexMap[vertex])
-        .filter(vertex => vertex >= 0);
-      for (const neighbor of incidentNeighbors) {
-        if (!selected.has(neighbor)) continue;
-        const endpoint = endpointWeights(neighbor);
-        if (endpoint) nextCell.push(capVertex(endpoint));
-      }
-      pushUniqueCell(targetCells, nextCell, signatures);
-    }
-  }
-
-  const capEdgeSignatures = new Set((cellsByDim[1] ?? []).map(sortedCellSignature));
-  const addCapEdge = (a: number, b: number) => {
-    if (a === b) return;
-    pushUniqueCell(cellsByDim[1], [a, b], capEdgeSignatures);
-  };
-  for (const sourceFace of sourceCellsByDim[2] ?? []) {
-    if (!sourceFace.includes(vertexId)) continue;
-    const faceNeighbors = incidentNeighborsInCell(sourceFace);
-    if (faceNeighbors.length !== 2) continue;
-    const arc = arcBetween(faceNeighbors[0], faceNeighbors[1]);
-    for (let idx = 0; idx < arc.length - 1; idx++) addCapEdge(arc[idx], arc[idx + 1]);
-  }
-
-  const orderedLinkCycle = (sourceCell: number[], cellNeighbors: number[]) => {
+  const orderedLinkCycle = (analysis: VertexBevelAnalysis, sourceCell: number[], cellNeighbors: number[]) => {
     if (cellNeighbors.length <= 3) return cellNeighbors;
     const source = new Set(sourceCell);
     const allowed = new Set(cellNeighbors);
@@ -736,10 +690,12 @@ export function bevelVertex(
     };
 
     for (const sourceFace of sourceCellsByDim[2] ?? []) {
-      if (!sourceFace.includes(vertexId) || !isSubsetCell(sourceFace, source)) continue;
-      const faceNeighbors = incidentNeighbors
-        .filter(neighbor => allowed.has(neighbor) && sourceFace.includes(neighbor));
-      if (faceNeighbors.length === 2) addLinkEdge(faceNeighbors[0], faceNeighbors[1]);
+      if (!sourceFace.includes(analysis.vertex) || !isSubsetCell(sourceFace, source)) continue;
+      const idx = sourceFace.indexOf(analysis.vertex);
+      if (idx < 0) continue;
+      const prev = sourceFace[(idx - 1 + sourceFace.length) % sourceFace.length];
+      const next = sourceFace[(idx + 1) % sourceFace.length];
+      if (allowed.has(prev) && allowed.has(next)) addLinkEdge(prev, next);
     }
 
     if (cellNeighbors.some(neighbor => (adjacency.get(neighbor)?.size ?? 0) !== 2)) return cellNeighbors;
@@ -759,14 +715,124 @@ export function bevelVertex(
     return current === start && order.length === cellNeighbors.length ? order : cellNeighbors;
   };
 
-  const capVerticesForNeighborSet = (neighborSet: Set<number>) => (
-    cuts
-      .filter(cut => cut.neighbors.length > 0 && cut.neighbors.every(neighbor => neighborSet.has(neighbor)))
-      .map(cut => cut.vertex)
-  );
+  const remapCell = (cell: number[]) => {
+    const remapped = cell.map(vertex => vertexMap[vertex]).filter(vertex => vertex >= 0);
+    return remapped.length === cell.length ? remapped : [];
+  };
+
+  const dedupeSequence = (sequence: number[]) => {
+    const result: number[] = [];
+    for (const vertex of sequence) {
+      if (vertex < 0) continue;
+      if (result[result.length - 1] === vertex) continue;
+      result.push(vertex);
+    }
+    if (result.length > 1 && result[0] === result[result.length - 1]) result.pop();
+    return result;
+  };
+
+  const replaceSelectedVerticesInFace = (face: number[]) => {
+    const nextFace: number[] = [];
+    for (let idx = 0; idx < face.length; idx++) {
+      const vertex = face[idx];
+      const analysis = analysesByVertex.get(vertex);
+      if (analysis) {
+        const prev = face[(idx - 1 + face.length) % face.length];
+        const next = face[(idx + 1) % face.length];
+        const profile = ensureProfile(analysis, prev, next);
+        if (!profile?.length) return [];
+        nextFace.push(...profile);
+        continue;
+      }
+      const mapped = vertexMap[vertex];
+      if (mapped >= 0) nextFace.push(mapped);
+    }
+    return dedupeSequence(nextFace);
+  };
+
+  const replacementCutsForCell = (analysis: VertexBevelAnalysis, cell: number[]) => {
+    const cutsForCell: number[] = [];
+    const seen = new Set<number>();
+    for (const neighbor of incidentNeighborsInCell(analysis, cell)) {
+      const cut = boundaryCut(analysis, neighbor);
+      if (cut < 0 || seen.has(cut)) continue;
+      seen.add(cut);
+      cutsForCell.push(cut);
+    }
+    return cutsForCell;
+  };
+
+  const replaceSelectedVerticesInCell = (cell: number[]) => {
+    const nextCell: number[] = [];
+    const seen = new Set<number>();
+    for (const vertex of cell) {
+      if (selectedSet.has(vertex)) continue;
+      const mapped = vertexMap[vertex];
+      if (mapped < 0 || seen.has(mapped)) continue;
+      seen.add(mapped);
+      nextCell.push(mapped);
+    }
+    for (const vertex of cell) {
+      const analysis = analysesByVertex.get(vertex);
+      if (!analysis) continue;
+      for (const cut of replacementCutsForCell(analysis, cell)) {
+        if (seen.has(cut)) continue;
+        seen.add(cut);
+        nextCell.push(cut);
+      }
+    }
+    return nextCell;
+  };
+
+  const cellsByDim: number[][][] = Array.from({ length: highestSourceDimension + 1 }, () => []);
+  for (let dim = 1; dim <= highestSourceDimension; dim++) {
+    const sourceCells = sourceCellsByDim[dim] ?? [];
+    const targetCells = cellsByDim[dim];
+    const signatures = new Set<string>();
+    for (const cell of sourceCells) {
+      const selectedInCell = cell.filter(vertex => selectedSet.has(vertex));
+      if (!selectedInCell.length) {
+        pushUniqueCell(targetCells, remapCell(cell), signatures);
+        continue;
+      }
+
+      if (dim === 1 && cell.length >= 2) {
+        const a = cell[0];
+        const b = cell[1];
+        const aAnalysis = analysesByVertex.get(a);
+        const bAnalysis = analysesByVertex.get(b);
+        const nextEdge: number[] = [];
+        if (aAnalysis) nextEdge.push(boundaryCut(aAnalysis, b));
+        else if (vertexMap[a] >= 0) nextEdge.push(vertexMap[a]);
+        if (bAnalysis) nextEdge.push(boundaryCut(bAnalysis, a));
+        else if (vertexMap[b] >= 0) nextEdge.push(vertexMap[b]);
+        pushUniqueCell(targetCells, nextEdge, signatures);
+        continue;
+      }
+
+      if (dim === 2) {
+        pushUniqueCell(targetCells, replaceSelectedVerticesInFace(cell), signatures);
+        continue;
+      }
+
+      pushUniqueCell(targetCells, replaceSelectedVerticesInCell(cell), signatures);
+    }
+  }
+
+  const edgeSignatures = new Set((cellsByDim[1] ?? []).map(sortedCellSignature));
+  const addCapEdge = (a: number, b: number) => {
+    if (a === b) return;
+    pushUniqueCell(cellsByDim[1], [a, b], edgeSignatures);
+  };
+  for (const analysis of analysesByVertex.values()) {
+    for (const profile of analysis.createdProfiles) {
+      for (let idx = 0; idx < profile.length - 1; idx++) addCapEdge(profile[idx], profile[idx + 1]);
+    }
+  }
 
   const capCellSignaturesByDim = new Map<number, Set<string>>();
   const capSignaturesFor = (dimension: number) => {
+    while (cellsByDim.length <= dimension) cellsByDim.push([]);
     let signatures = capCellSignaturesByDim.get(dimension);
     if (!signatures) {
       signatures = new Set((cellsByDim[dimension] ?? []).map(sortedCellSignature));
@@ -775,13 +841,14 @@ export function bevelVertex(
     return signatures;
   };
 
-  const addTriangularCapPatch = (neighborIds: number[], faceSignatures: Set<string>) => {
-    const indices = neighborIds.map(neighbor => neighborIndexByVertex.get(neighbor));
+  let capCellId = -1;
+  const addTriangularCapPatch = (analysis: VertexBevelAnalysis, neighborIds: number[], faceSignatures: Set<string>) => {
+    const indices = neighborIds.map(neighbor => analysis.neighborIndexByVertex.get(neighbor));
     if (indices.some(index => typeof index !== 'number')) return -1;
     const [a, b, c] = indices as number[];
     let firstCellId = -1;
     const tripleVertex = (wa: number, wb: number, wc: number) => (
-      capVertex(weightsFor([[a, wa], [b, wb], [c, wc]]))
+      capVertex(analysis, weightsFor(analysis, [[a, wa], [b, wb], [c, wc]]))
     );
     for (let i = 0; i < layerCount; i++) {
       for (let j = 0; j < layerCount - i; j++) {
@@ -806,42 +873,60 @@ export function bevelVertex(
     return firstCellId;
   };
 
-  const addPolygonCapPatch = (sourceCell: number[], neighborIds: number[], faceSignatures: Set<string>) => {
-    const ordered = orderedLinkCycle(sourceCell, neighborIds);
+  const addPolygonCapPatch = (
+    analysis: VertexBevelAnalysis,
+    sourceCell: number[],
+    neighborIds: number[],
+    faceSignatures: Set<string>,
+  ) => {
+    const ordered = orderedLinkCycle(analysis, sourceCell, neighborIds);
     const polygon: number[] = [];
     for (let idx = 0; idx < ordered.length; idx++) {
-      const arc = arcBetween(ordered[idx], ordered[(idx + 1) % ordered.length]);
-      if (arc.length < 2) continue;
-      polygon.push(...arc.slice(0, -1));
+      const profile = ensureProfile(analysis, ordered[idx], ordered[(idx + 1) % ordered.length]);
+      if (!profile || profile.length < 2) continue;
+      polygon.push(...profile.slice(0, -1));
     }
-    return pushUniqueCell(cellsByDim[2], polygon, faceSignatures);
+    return pushUniqueCell(cellsByDim[2], dedupeSequence(polygon), faceSignatures);
   };
 
-  let capCellId = -1;
-  if (highestCapDimension >= 2) {
+  if (highestSourceDimension >= 3) {
     const faceSignatures = capSignaturesFor(2);
     for (const sourceVolume of sourceCellsByDim[3] ?? []) {
-      if (!sourceVolume.includes(vertexId)) continue;
-      const volumeNeighbors = incidentNeighborsInCell(sourceVolume);
-      if (volumeNeighbors.length < 3) continue;
-      const nextId = volumeNeighbors.length === 3
-        ? addTriangularCapPatch(volumeNeighbors, faceSignatures)
-        : addPolygonCapPatch(sourceVolume, volumeNeighbors, faceSignatures);
-      if (capCellId < 0 && nextId >= 0) capCellId = nextId;
+      for (const vertex of sourceVolume) {
+        const analysis = analysesByVertex.get(vertex);
+        if (!analysis) continue;
+        const volumeNeighbors = incidentNeighborsInCell(analysis, sourceVolume);
+        if (volumeNeighbors.length < 3) continue;
+        const nextId = volumeNeighbors.length === 3
+          ? addTriangularCapPatch(analysis, volumeNeighbors, faceSignatures)
+          : addPolygonCapPatch(analysis, sourceVolume, volumeNeighbors, faceSignatures);
+        if (capCellId < 0 && nextId >= 0) capCellId = nextId;
+      }
     }
   }
 
+  const capVerticesForNeighborSet = (analysis: VertexBevelAnalysis, neighborSet: Set<number>) => (
+    cuts
+      .filter(cut => cut.sourceVertex === analysis.vertex
+        && cut.neighbors.length > 0
+        && cut.neighbors.every(neighbor => neighborSet.has(neighbor)))
+      .map(cut => cut.vertex)
+  );
+
   for (let sourceDim = 4; sourceDim <= highestSourceDimension; sourceDim++) {
     const capDim = sourceDim - 1;
-    if (capDim > highestCapDimension) continue;
     const signatures = capSignaturesFor(capDim);
     for (const sourceCell of sourceCellsByDim[sourceDim] ?? []) {
-      if (!sourceCell.includes(vertexId)) continue;
-      const neighborSet = new Set(incidentNeighborsInCell(sourceCell));
-      if (neighborSet.size < capDim + 1) continue;
-      const capVertices = capVerticesForNeighborSet(neighborSet);
-      const nextId = pushUniqueCell(cellsByDim[capDim], capVertices, signatures);
-      if (capDim === highestCapDimension && capCellId < 0 && nextId >= 0) capCellId = nextId;
+      for (const vertex of sourceCell) {
+        const analysis = analysesByVertex.get(vertex);
+        if (!analysis) continue;
+        const neighborSet = new Set(incidentNeighborsInCell(analysis, sourceCell));
+        if (neighborSet.size < capDim + 1) continue;
+        const capVertices = capVerticesForNeighborSet(analysis, neighborSet);
+        if (capVertices.length < capDim + 1) continue;
+        const nextId = pushUniqueCell(cellsByDim[capDim], capVertices, signatures);
+        if (capCellId < 0 && nextId >= 0) capCellId = nextId;
+      }
     }
   }
 
@@ -860,6 +945,15 @@ export function bevelVertex(
     capCellId,
     smoothness: layerCount,
   };
+}
+
+export function bevelVertex(
+  topology: CellTopology | undefined,
+  vertexId: number,
+  vertexCount: number,
+  smoothness = 1,
+): BevelVertexResult | undefined {
+  return bevelVertices(topology, [vertexId], vertexCount, smoothness);
 }
 
 export function bevelEdge(

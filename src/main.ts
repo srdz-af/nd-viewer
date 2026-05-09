@@ -30,7 +30,7 @@ import {
   cloneCellTopology,
   bevelEdge,
   bevelSelectedEdges,
-  bevelVertex,
+  bevelVertices,
   deleteCellAndPrune,
   extrudeCell,
   getCellVertices,
@@ -3759,8 +3759,16 @@ function buildBeveledVertexData(
     }
   }
 
-  const sphere = buildBevelSphere(data, oldVertexCount, selectedVertex, bevel, amount);
+  const spheres = new Map<number, BevelSphereBase | null>();
+  const sphereFor = (sourceVertex: number) => {
+    if (!spheres.has(sourceVertex)) {
+      spheres.set(sourceVertex, buildBevelSphere(data, oldVertexCount, sourceVertex, bevel, amount));
+    }
+    return spheres.get(sourceVertex) ?? null;
+  };
   for (const cut of bevel.cuts) {
+    const sourceVertex = cut.sourceVertex ?? selectedVertex;
+    const sphere = sphereFor(sourceVertex);
     if (!sphere) continue;
     if (cut.neighbors.length === 1) {
       const point = bevelEndpointPoint(sphere, cut.neighbors[0]);
@@ -3950,13 +3958,6 @@ function initialVertexOrigins(vertexCount: number) {
   return Int32Array.from({ length: vertexCount }, (_entry, vertex) => vertex);
 }
 
-function findVertexWithOrigin(origins: Int32Array, origin: number) {
-  for (let vertex = 0; vertex < origins.length; vertex++) {
-    if (origins[vertex] === origin) return vertex;
-  }
-  return -1;
-}
-
 function vertexDistanceSquared(data: Float32Array, vertexCount: number, a: number, b: number) {
   if (a < 0 || b < 0 || a >= vertexCount || b >= vertexCount) return 0;
   const dimension = vertexCount > 0 ? Math.floor(data.length / vertexCount) : 0;
@@ -4034,7 +4035,7 @@ function remapOriginsAfterVertexBevel(
     if (mapped >= 0) next[mapped] = origins[vertex];
   }
   const selectedOrigin = origins[selectedVertex] ?? -1;
-  for (const cut of bevel.cuts) next[cut.vertex] = selectedOrigin;
+  for (const cut of bevel.cuts) next[cut.vertex] = origins[cut.sourceVertex ?? selectedVertex] ?? selectedOrigin;
   return next;
 }
 
@@ -4383,18 +4384,15 @@ function applyEditBevelPreview(token: EditBevelToken) {
   let appliedAny = false;
 
   if (token.kind === 'vertex') {
-    for (const targetVertex of token.targetVertices) {
-      const currentVertex = findVertexWithOrigin(currentOrigins, targetVertex);
-      if (currentVertex < 0) continue;
-      const bevel = bevelVertex(currentTopology, currentVertex, currentVertexCount, token.smoothness);
-      if (!bevel) continue;
-      const nextX = buildBeveledVertexData(currentX, currentVertexCount, currentVertex, bevel, token.amount);
-      currentOrigins = remapOriginsAfterVertexBevel(currentOrigins, currentVertex, bevel);
-      currentTopology = bevel.topology;
-      currentX = nextX;
-      currentVertexCount = bevel.vertexCount;
-      appliedAny = true;
-    }
+    const bevel = bevelVertices(currentTopology, token.targetVertices, currentVertexCount, token.smoothness);
+    if (!bevel) return;
+    const sourceVertex = token.targetVertices[0] ?? -1;
+    const nextX = buildBeveledVertexData(currentX, currentVertexCount, sourceVertex, bevel, token.amount);
+    currentOrigins = remapOriginsAfterVertexBevel(currentOrigins, sourceVertex, bevel);
+    currentTopology = bevel.topology;
+    currentX = nextX;
+    currentVertexCount = bevel.vertexCount;
+    appliedAny = true;
   } else if (token.targetEdgeIds.length > 1) {
     const bevel = bevelSelectedEdges(currentTopology, token.targetEdgeIds, currentVertexCount, token.smoothness);
     if (!bevel) return;
