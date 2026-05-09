@@ -3653,98 +3653,37 @@ function blendedBevelCapPoint(
   return point;
 }
 
-function readDimensionMajorPoint(data: Float32Array, vertexCount: number, vertex: number, dimension: number) {
-  const point = new Float64Array(dimension);
-  for (let dim = 0; dim < dimension; dim++) point[dim] = data[(dim * vertexCount) + vertex] ?? 0;
+function sphericalBevelCapPoint(
+  sphere: BevelSphereBase,
+  neighbors: number[],
+  weights: number[],
+) {
+  const localSphere = buildLocalBevelSphere(sphere, neighbors);
+  if (!localSphere) return null;
+
+  const radial = new Float64Array(sphere.dimension);
+  for (let idx = 0; idx < neighbors.length; idx++) {
+    const endpoint = localSphere.endpointRadials.get(neighbors[idx]);
+    const weight = weights[idx] ?? 0;
+    if (!endpoint || weight <= 0) continue;
+    for (let dim = 0; dim < sphere.dimension; dim++) radial[dim] += endpoint[dim] * weight;
+  }
+
+  const radialLength = vectorLength(radial);
+  if (radialLength <= 1e-8) return null;
+  for (let dim = 0; dim < radial.length; dim++) radial[dim] /= radialLength;
+
+  const point = new Float64Array(sphere.dimension);
+  for (let dim = 0; dim < sphere.dimension; dim++) {
+    point[dim] = sphere.origin[dim]
+      + localSphere.center[dim]
+      + (radial[dim] * localSphere.radius);
+  }
   return point;
 }
 
 function writeDimensionMajorPoint(data: Float32Array, vertexCount: number, vertex: number, point: ArrayLike<number>) {
   for (let dim = 0; dim < point.length; dim++) data[(dim * vertexCount) + vertex] = point[dim];
-}
-
-function relaxBevelCapInterior(
-  data: Float32Array,
-  dimension: number,
-  bevel: BevelVertexResult,
-) {
-  const cutByVertex = new Map(bevel.cuts.map(cut => [cut.vertex, cut]));
-  const interiorVertices = bevel.cuts
-    .filter(cut => cut.neighbors.length >= 3)
-    .map(cut => cut.vertex);
-  if (!interiorVertices.length) return;
-
-  const adjacency = new Map<number, Set<number>>();
-  const addAdjacent = (a: number, b: number) => {
-    if (!cutByVertex.has(a) || !cutByVertex.has(b) || a === b) return;
-    let aSet = adjacency.get(a);
-    if (!aSet) {
-      aSet = new Set();
-      adjacency.set(a, aSet);
-    }
-    aSet.add(b);
-    let bSet = adjacency.get(b);
-    if (!bSet) {
-      bSet = new Set();
-      adjacency.set(b, bSet);
-    }
-    bSet.add(a);
-  };
-
-  const faceCount = cellCount(bevel.topology, 2);
-  for (let faceId = 0; faceId < faceCount; faceId++) {
-    const face = getCellVertices(bevel.topology, 2, faceId);
-    for (let idx = 0; idx < face.length; idx++) {
-      addAdjacent(face[idx], face[(idx + 1) % face.length]);
-    }
-  }
-
-  const positions = new Map<number, Float64Array>();
-  for (const cut of bevel.cuts) {
-    positions.set(cut.vertex, readDimensionMajorPoint(data, bevel.vertexCount, cut.vertex, dimension));
-  }
-
-  const laplacianStep = (
-    source: Map<number, Float64Array>,
-    scale: number,
-  ) => {
-    const nextPositions = new Map<number, Float64Array>();
-    for (const vertex of interiorVertices) {
-      const current = source.get(vertex);
-      const neighbors = Array.from(adjacency.get(vertex) ?? []).filter(neighbor => source.has(neighbor));
-      if (!current) continue;
-      if (!neighbors.length) continue;
-
-      const average = new Float64Array(dimension);
-      for (const neighbor of neighbors) {
-        const neighborPoint = source.get(neighbor);
-        if (!neighborPoint) continue;
-        for (let dim = 0; dim < dimension; dim++) average[dim] += neighborPoint[dim];
-      }
-      const point = new Float64Array(dimension);
-      for (let dim = 0; dim < dimension; dim++) {
-        average[dim] /= neighbors.length;
-        point[dim] = current[dim] + ((average[dim] - current[dim]) * scale);
-      }
-      nextPositions.set(vertex, point);
-    }
-
-    const target = new Map(source);
-    for (const [vertex, point] of nextPositions) target.set(vertex, point);
-    return target;
-  };
-
-  const iterations = Math.min(32, Math.max(8, Math.ceil(Math.sqrt(interiorVertices.length))));
-  for (let iteration = 0; iteration < iterations; iteration++) {
-    const smoothed = laplacianStep(positions, 0.45);
-    positions.clear();
-    for (const [vertex, point] of laplacianStep(smoothed, -0.48)) positions.set(vertex, point);
-  }
-
-  for (const vertex of interiorVertices) {
-    const point = positions.get(vertex);
-    if (point) writeDimensionMajorPoint(data, bevel.vertexCount, vertex, point);
-  }
 }
 
 function buildBeveledVertexData(
@@ -3783,7 +3722,8 @@ function buildBeveledVertexData(
         cut.weights[1] ?? 0,
       );
     } else {
-      point = blendedBevelCapPoint(sphere, cut.neighbors, cut.weights);
+      point = sphericalBevelCapPoint(sphere, cut.neighbors, cut.weights)
+        ?? blendedBevelCapPoint(sphere, cut.neighbors, cut.weights);
     }
     if (!point) continue;
 
@@ -3791,7 +3731,6 @@ function buildBeveledVertexData(
       next[(dim * bevel.vertexCount) + cut.vertex] = point[dim];
     }
   }
-  if (sphere) relaxBevelCapInterior(next, dimension, bevel);
   return next;
 }
 
