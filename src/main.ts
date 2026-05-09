@@ -4156,6 +4156,16 @@ function selectedGeometryDimension() {
   return extraInstances[selectedInstance]?.originalN ?? 0;
 }
 
+function finalizeCommittedGeometryEdit() {
+  projectAndRenderAll();
+  applyObjectVisibility();
+  updateObjectList();
+  updateSelectionOutline();
+  updateTransformActionButtons();
+  if (PARAMS.editMode && getObjectVisible(selectedInstance)) updateVertexCloud(selectedInstance);
+  requestSceneUrlUpdate();
+}
+
 function extrudeSelectedEditCell(): EditExtrusionToken | null {
   if (!PARAMS.editMode || !isGeometrySelectionIndex(selectedInstance) || !getObjectVisible(selectedInstance)) return null;
   const selection = transformController.getEditSelection();
@@ -4212,7 +4222,7 @@ function commitEditExtrusion(token: unknown) {
   if (!isEditExtrusionToken(token)) return;
   if (sceneUrlApplying) return;
   sceneHistory.push(token.undoSnapshot);
-  requestSceneUrlUpdate();
+  finalizeCommittedGeometryEdit();
 }
 
 function cancelEditExtrusion(token: unknown) {
@@ -4473,7 +4483,14 @@ function commitEditBevel(token: unknown) {
     restoreEditBevelTarget(token);
     projectAndRenderAll();
     if (PARAMS.editMode && getObjectVisible(token.instIdx)) updateVertexCloud(token.instIdx);
+    updateSelectionOutline();
+    updateTransformActionButtons();
+    updateObjectList();
+    return;
   }
+  if (sceneUrlApplying) return;
+  sceneHistory.push(token.undoSnapshot);
+  finalizeCommittedGeometryEdit();
 }
 
 function cancelEditBevel(token: unknown) {

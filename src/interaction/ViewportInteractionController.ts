@@ -133,6 +133,7 @@ export class ViewportInteractionController {
     startX: number;
     startY: number;
   } | null = null;
+  private lastBevelSmoothness = BEVEL_MIN_SMOOTHNESS;
   private suppressNextContextMenu = false;
 
   constructor(private readonly options: ViewportInteractionControllerOptions) {}
@@ -195,7 +196,7 @@ export class ViewportInteractionController {
     if (this.editBevel || this.editExtrusion || this.duplicatePlacement) return;
     if (!this.options.getParams().editMode) return;
     if (this.options.transformController.isActive() || this.options.transformController.isGizmoDragging()) return;
-    const smoothness = BEVEL_MIN_SMOOTHNESS;
+    const smoothness = this.lastBevelSmoothness;
     const token = this.options.startEditBevel(smoothness, kind);
     if (!token) return;
     this.editBevel = {
@@ -638,6 +639,7 @@ export class ViewportInteractionController {
     if (smoothness === this.editBevel.smoothness) return;
 
     this.editBevel.smoothness = smoothness;
+    this.lastBevelSmoothness = smoothness;
     this.options.updateEditBevel(this.editBevel.token, this.editBevel.amount, smoothness);
   }
 
