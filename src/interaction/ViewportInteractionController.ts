@@ -104,7 +104,6 @@ export class ViewportInteractionController {
   private readonly tmpVec = new THREE.Vector3();
   private readonly tmpVec2 = new THREE.Vector2();
   private lastPointer = { x: window.innerWidth - 180, y: window.innerHeight - 80 };
-  private deletePending = false;
   private readonly lastObjectClick = {
     time: Number.NEGATIVE_INFINITY,
     x: 0,
@@ -359,10 +358,8 @@ export class ViewportInteractionController {
 
   deleteOrConfirmSelection() {
     if (!this.hasDeleteTarget()) return;
-    if (this.deletePending) {
-      this.deletePending = false;
-      if (this.options.contextMenuEl) this.options.contextMenuEl.style.display = 'none';
-      this.deleteCurrentTarget();
+    if (this.operationManager.isKind('delete-confirm')) {
+      this.operationManager.finish(true);
     } else {
       this.showDeleteConfirm();
     }
@@ -384,15 +381,13 @@ export class ViewportInteractionController {
   private showDeleteConfirm(ev?: MouseEvent) {
     const menu = this.options.contextMenuEl;
     if (!menu) return;
-    this.deletePending = true;
+    if (this.operationManager.isActive()) return;
     menu.replaceChildren();
 
     const confirm = document.createElement('button');
     confirm.textContent = 'Delete';
     confirm.onclick = () => {
-      menu.style.display = 'none';
-      this.deletePending = false;
-      this.deleteCurrentTarget();
+      this.operationManager.finish(true);
     };
 
     menu.append(confirm);
@@ -401,6 +396,20 @@ export class ViewportInteractionController {
     menu.style.left = `${x}px`;
     menu.style.top = `${y}px`;
     menu.style.display = 'block';
+    this.operationManager.start({
+      kind: 'delete-confirm',
+      scope: this.options.getParams().editMode ? 'edit' : 'object',
+      blocksSelection: true,
+      commit: () => this.deleteCurrentTarget(),
+      cleanup: () => {
+        menu.style.display = 'none';
+      },
+    });
+  }
+
+  private runImmediateOperation(kind: string, scope: 'edit' | 'object' | 'viewport' | 'light' | 'axis', commit: () => void) {
+    if (!this.operationManager.start({ kind, scope, commit })) return;
+    this.operationManager.finish(true);
   }
 
   private handleTransformPointerMove(ev: PointerEvent) {
@@ -431,7 +440,6 @@ export class ViewportInteractionController {
 
     ev.preventDefault();
     this.lastPointer = { x: ev.clientX, y: ev.clientY };
-    this.deletePending = false;
     menu.replaceChildren();
     menu.classList.remove('primitive-menu', 'submenu-left');
     const spawnPoint = this.pickPointOnTargetPlane(ev);
@@ -458,7 +466,7 @@ export class ViewportInteractionController {
         productButton.textContent = 'Add product mesh';
         productButton.onclick = () => {
           menu.style.display = 'none';
-          this.options.addProductMesh();
+          this.runImmediateOperation('add-product-mesh', 'object', () => this.options.addProductMesh());
         };
         menu.appendChild(productButton);
       }
@@ -466,7 +474,7 @@ export class ViewportInteractionController {
       recalculateOriginButton.textContent = 'Recalculate origin';
       recalculateOriginButton.onclick = () => {
         menu.style.display = 'none';
-        this.options.recalculateSelectedOrigin();
+        this.runImmediateOperation('recalculate-origin', 'object', () => this.options.recalculateSelectedOrigin());
       };
       menu.appendChild(recalculateOriginButton);
       const deleteButton = document.createElement('button');
@@ -503,14 +511,14 @@ export class ViewportInteractionController {
     insert.textContent = 'Insert keyframe';
     insert.onclick = () => {
       menu.style.display = 'none';
-      this.options.insertKeyframe();
+      this.runImmediateOperation('insert-keyframe', 'viewport', () => this.options.insertKeyframe());
     };
 
     const remove = document.createElement('button');
     remove.textContent = 'Remove last keyframe';
     remove.onclick = () => {
       menu.style.display = 'none';
-      this.options.removeLastKeyframe();
+      this.runImmediateOperation('remove-keyframe', 'viewport', () => this.options.removeLastKeyframe());
     };
 
     menu.append(insert, remove);
@@ -529,8 +537,10 @@ export class ViewportInteractionController {
       btn.textContent = opt.label;
       btn.onclick = () => {
         if (menu) menu.style.display = 'none';
-        this.options.pushUndoSnapshot();
-        this.options.addPrimitiveInstanceAt(opt.kind, `${opt.label} #${this.options.getExtraInstances().length + 1}`, spawnPoint, syncMode);
+        this.runImmediateOperation('add-primitive', 'object', () => {
+          this.options.pushUndoSnapshot();
+          this.options.addPrimitiveInstanceAt(opt.kind, `${opt.label} #${this.options.getExtraInstances().length + 1}`, spawnPoint, syncMode);
+        });
       };
       container.appendChild(btn);
     }
@@ -543,8 +553,10 @@ export class ViewportInteractionController {
       btn.textContent = opt.label;
       btn.onclick = () => {
         if (menu) menu.style.display = 'none';
-        this.options.pushUndoSnapshot();
-        this.options.addSceneLightAt(opt.kind, spawnPoint);
+        this.runImmediateOperation('add-scene-light', 'light', () => {
+          this.options.pushUndoSnapshot();
+          this.options.addSceneLightAt(opt.kind, spawnPoint);
+        });
       };
       container.appendChild(btn);
     }
@@ -731,9 +743,12 @@ export class ViewportInteractionController {
     const menu = this.options.contextMenuEl;
     const target = ev.target;
     if (this.operationManager.current?.blocksContextMenu) return;
-    if (this.deletePending && target instanceof Node && menu?.contains(target)) return;
+    if (this.operationManager.isKind('delete-confirm') && target instanceof Node && menu?.contains(target)) return;
+    if (this.operationManager.isKind('delete-confirm')) {
+      this.operationManager.finish(false);
+      return;
+    }
     if (menu) menu.style.display = 'none';
-    this.deletePending = false;
   }
 
   private handleWheel(ev: WheelEvent) {
