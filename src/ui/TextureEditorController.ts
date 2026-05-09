@@ -24,10 +24,6 @@ const OPAQUE_ALPHA_THRESHOLD = 0.999;
 
 type TextureEditorControllerOptions = {
   renderer: THREE.WebGLRenderer;
-  scene: THREE.Scene;
-  light: THREE.DirectionalLight;
-  ambient: THREE.AmbientLight;
-  hemi: THREE.HemisphereLight;
   getSurfaceTarget: () => SurfaceTarget | null;
   applySurfaceToTarget: (surface: SurfaceState, recordUndo: boolean) => boolean;
   assignMaterialToTarget: (materialId: string, recordUndo: boolean) => boolean;
@@ -289,17 +285,17 @@ export class TextureEditorController {
     cube.rotation.set(0.45, 0.68, 0);
     sceneRef.add(cube);
 
-    const previewLight = new THREE.DirectionalLight(0xffffff, Math.max(1.2, this.options.light.intensity * 1.25));
+    const previewLight = new THREE.DirectionalLight(0xffffff, 1.25);
     previewLight.position.set(2.4, 2.2, 2.8);
     const previewFill = new THREE.DirectionalLight(0xc6d8ff, 0.55);
     previewFill.position.set(-2.1, 1.0, 1.5);
     const previewRim = new THREE.DirectionalLight(0xffe6c4, 0.42);
     previewRim.position.set(0.7, 1.35, -2.6);
-    const previewAmbient = new THREE.AmbientLight(0xffffff, Math.max(0.42, this.options.ambient.intensity));
+    const previewAmbient = new THREE.AmbientLight(0xffffff, 0.42);
     const previewHemi = new THREE.HemisphereLight(
-      this.options.hemi.color.getHex(),
-      this.options.hemi.groundColor.getHex(),
-      Math.max(0.72, this.options.hemi.intensity),
+      0x88aaff,
+      0x090b12,
+      0.72,
     );
     sceneRef.add(previewAmbient, previewHemi, previewLight, previewFill, previewRim);
 

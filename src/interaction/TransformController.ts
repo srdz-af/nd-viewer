@@ -105,6 +105,7 @@ const SELECTED_MARKER_PIXEL_DIAMETER = 11;
 const TRANSFORM_GIZMO_MIN_PIXEL_RADIUS = 54;
 const TRANSFORM_GIZMO_HANDLE_PIXEL_DIAMETER = 15;
 const TRANSFORM_GIZMO_SEGMENTS = 96;
+const MIN_TRANSFORM_SCALE = 1e-4;
 const PROJECTED_AXIS_DIRECTIONS = [
   new THREE.Vector3(1, 0, 0),
   new THREE.Vector3(0, 1, 0),
@@ -1335,7 +1336,7 @@ export class TransformController {
       this.transformOp.editVertexStarts.forEach(start => targets.push(start.clone().add(delta)));
       this.transformOp.lastHit.copy(center).add(delta);
     } else if (this.transformOp.mode === 'scale') {
-      const scale = Math.max(0.05, Math.min(8, 1 + ((dx - dy) * 0.005)));
+      const scale = Math.max(MIN_TRANSFORM_SCALE, 1 + ((dx - dy) * 0.005));
       this.transformOp.editVertexStarts.forEach(start => {
         const offset = start.clone().sub(center);
         if (locked === 0) offset.x *= scale;
@@ -1393,7 +1394,7 @@ export class TransformController {
     }
 
     if (this.transformOp.mode === 'scale') {
-      const scale = Math.max(0.05, Math.min(8, 1 + ((dx - dy) * 0.005)));
+      const scale = Math.max(MIN_TRANSFORM_SCALE, 1 + ((dx - dy) * 0.005));
       const pivot = this.averageSourceValue(sourceStart, data.count, dim, this.transformOp.targetVertices);
       for (const vertex of this.transformOp.targetVertices) {
         const start = sourceStart[offset + vertex];
@@ -1766,8 +1767,8 @@ export class TransformController {
 
   private applyObjectScale(dx: number, dy: number) {
     const delta = (dx - dy) * 0.005;
-    const scale = Math.max(0.1, Math.min(5, this.transformOp.startScale + delta));
-    const scaleFactor = scale / Math.max(this.transformOp.startScale, 1e-6);
+    const scale = Math.max(MIN_TRANSFORM_SCALE, this.transformOp.startScale + delta);
+    const scaleFactor = scale / Math.max(this.transformOp.startScale, MIN_TRANSFORM_SCALE);
 
     this.transformOp.objectStarts.forEach(start => {
       const target = this.getObjectTransformTarget(start.instIdx);
@@ -1795,8 +1796,8 @@ export class TransformController {
   private applyObjectExtraScale(dx: number, dy: number) {
     const dim = this.transformOp.extraAxisDim;
     const delta = (dx - dy) * 0.005;
-    const scale = Math.max(0.1, Math.min(5, this.transformOp.startScale + delta));
-    const scaleFactor = scale / Math.max(this.transformOp.startScale, 1e-6);
+    const scale = Math.max(MIN_TRANSFORM_SCALE, this.transformOp.startScale + delta);
+    const scaleFactor = scale / Math.max(this.transformOp.startScale, MIN_TRANSFORM_SCALE);
     const primaryStart = this.transformOp.objectStarts.find(start => start.instIdx === this.transformOp.instIdx)
       ?? this.transformOp.objectStarts[0];
     const pivot = primaryStart?.originDataStart?.[dim] ?? 0;

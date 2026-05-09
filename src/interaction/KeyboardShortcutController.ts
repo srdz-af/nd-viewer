@@ -20,6 +20,7 @@ type KeyboardShortcutControllerOptions = {
   toggleEditMode: () => void;
   startTransformFromPointer: (mode: TransformMode) => void;
   showAddObjectMenuAtPointer: () => void;
+  duplicateSelectionFromPointer: () => void;
   deleteOrConfirmSelection: () => void;
   hasSelection: () => boolean;
   undo: () => void;
@@ -151,6 +152,12 @@ export class KeyboardShortcutController {
     if (key === 'a' && ev.shiftKey) {
       ev.preventDefault();
       this.options.showAddObjectMenuAtPointer();
+      return;
+    }
+    if (key === 'd' && ev.shiftKey) {
+      ev.preventDefault();
+      if (!this.options.hasSelection()) return;
+      this.options.duplicateSelectionFromPointer();
       return;
     }
     if (!ev.shiftKey && key === 'x') {

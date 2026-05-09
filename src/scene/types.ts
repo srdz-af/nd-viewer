@@ -20,6 +20,7 @@ export type SceneLightState = {
   color: number;
   intensity: number;
   position: THREE.Vector3;
+  target: THREE.Vector3;
   visible: boolean;
   castShadow: boolean;
 };

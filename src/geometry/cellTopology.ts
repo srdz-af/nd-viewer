@@ -603,6 +603,9 @@ export function buildGeneratedCellTopology(
   edges: Uint32Array,
   surfaceTopology?: PrimitiveSurfaceTopology,
 ): CellTopology {
+  if (kind === 'plane' && vertexCount === 4) {
+    return buildPolygonCellTopology(4);
+  }
   if (kind === 'hypercube' && isHypercubeGraph(vertexCount, dimension, edges)) {
     return buildHypercubeCellTopology(dimension);
   }
