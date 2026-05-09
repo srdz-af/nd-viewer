@@ -32,8 +32,8 @@ import {
   bevelSelectedEdges,
   bevelVertices,
   deleteCellAndPrune,
-  extrudeCell,
-  insetCell,
+  extrudeCells,
+  insetCells,
   getCellVertices,
   type BevelEdgeResult,
   type BevelFaceBoundaryResult,
@@ -4328,7 +4328,8 @@ function extrudeSelectedEditCell(): EditExtrusionToken | null {
   const target = targetIsBase ? null : extraInstances[selectedInstance];
   const topology = targetIsBase ? baseCellTopology : target?.cellTopology;
   const vertexCount = targetIsBase ? M : (target?.M ?? 0);
-  const extrusion = extrudeCell(topology, selection.dimension, selection.cellId, vertexCount);
+  const selectedCellIds = selection.cellIds.length ? selection.cellIds : [selection.cellId];
+  const extrusion = extrudeCells(topology, selection.dimension, selectedCellIds, vertexCount);
   if (!extrusion) return null;
 
   const undoSnapshot = captureSceneUrlState();
@@ -4356,7 +4357,8 @@ function extrudeSelectedEditCell(): EditExtrusionToken | null {
   }
 
   projectAndRenderAll();
-  transformController.setSelectedEditElement(selection.dimension, extrusion.capVertices, extrusion.capCellId);
+  const nextTopology = targetIsBase ? baseCellTopology : target?.cellTopology;
+  transformController.setSelectedEditCells(selection.dimension, extrusion.capCellIds?.length ? extrusion.capCellIds : [extrusion.capCellId], nextTopology);
   transformController.updateVertexCloud(selectedInstance);
   updateSelectionOutline();
   updateTransformActionButtons();
@@ -4479,7 +4481,8 @@ function startEditInset(): EditInsetToken | null {
   const target = targetIsBase ? null : extraInstances[selectedInstance];
   const topology = targetIsBase ? baseCellTopology : target?.cellTopology;
   const vertexCount = targetIsBase ? M : (target?.M ?? 0);
-  const inset = insetCell(topology, selection.dimension, selection.cellId, vertexCount);
+  const selectedCellIds = selection.cellIds.length ? selection.cellIds : [selection.cellId];
+  const inset = insetCells(topology, selection.dimension, selectedCellIds, vertexCount);
   if (!inset) return null;
   const original = captureEditGeometrySnapshot(selectedInstance);
   if (!original) return null;
@@ -4509,7 +4512,8 @@ function startEditInset(): EditInsetToken | null {
   }
 
   projectAndRenderAll();
-  transformController.setSelectedEditElement(selection.dimension, inset.insetVertices, inset.insetCellId);
+  const nextTopology = targetIsBase ? baseCellTopology : target?.cellTopology;
+  transformController.setSelectedEditCells(selection.dimension, inset.insetCellIds?.length ? inset.insetCellIds : [inset.insetCellId], nextTopology);
   transformController.updateVertexCloud(selectedInstance);
   updateSelectionOutline();
   updateTransformActionButtons();
