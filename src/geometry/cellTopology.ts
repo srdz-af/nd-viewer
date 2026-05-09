@@ -597,6 +597,19 @@ export function bevelVertex(
     return arcBetween(prev, next);
   };
 
+  const replaceFaceVertexWithArc = (face: number[], selectedIndex: number) => {
+    const arc = replacementForFaceVertex(face, selectedIndex);
+    if (!arc.length) return [];
+    const nextCell = [...arc];
+    let idx = (selectedIndex + 1) % face.length;
+    while (idx !== selectedIndex) {
+      const remapped = vertexMap[face[idx]];
+      if (remapped >= 0) nextCell.push(remapped);
+      idx = (idx + 1) % face.length;
+    }
+    return nextCell;
+  };
+
   for (let dim = 1; dim <= highestSourceDimension; dim++) {
     const sourceCells = cellVerticesForMutation(topology, dim);
     const targetCells = cellsByDim[dim];
@@ -619,17 +632,7 @@ export function bevelVertex(
 
       if (dim === 2) {
         const selectedIndex = cell.indexOf(vertexId);
-        const nextCell: number[] = [];
-        for (let idx = 0; idx < cell.length; idx++) {
-          const vertex = cell[idx];
-          if (vertex === vertexId) {
-            nextCell.push(...replacementForFaceVertex(cell, selectedIndex));
-          } else {
-            const remapped = vertexMap[vertex];
-            if (remapped >= 0) nextCell.push(remapped);
-          }
-        }
-        pushUniqueCell(targetCells, nextCell, signatures);
+        pushUniqueCell(targetCells, replaceFaceVertexWithArc(cell, selectedIndex), signatures);
         continue;
       }
 
