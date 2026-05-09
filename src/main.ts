@@ -29,11 +29,13 @@ import {
   cellCount,
   cloneCellTopology,
   bevelEdge,
+  bevelFaceBoundary,
   bevelVertex,
   deleteCellAndPrune,
   extrudeCell,
   getCellVertices,
   type BevelEdgeResult,
+  type BevelFaceBoundaryResult,
   type BevelVertexResult,
   maxCellDimension,
   surfaceTopologyFromCellTopology,
@@ -3789,7 +3791,7 @@ function buildBeveledVertexData(
 function buildBeveledEdgeData(
   data: Float32Array,
   oldVertexCount: number,
-  bevel: BevelEdgeResult,
+  bevel: BevelEdgeResult | BevelFaceBoundaryResult,
   amount: number,
   fixedDistance?: number,
 ) {
@@ -3996,7 +3998,7 @@ function remapOriginsAfterVertexBevel(
 
 function remapOriginsAfterEdgeBevel(
   origins: Int32Array,
-  bevel: BevelEdgeResult,
+  bevel: BevelEdgeResult | BevelFaceBoundaryResult,
 ) {
   const next = new Int32Array(bevel.vertexCount);
   next.fill(-1);
@@ -4347,6 +4349,15 @@ function applyEditBevelPreview(token: EditBevelToken) {
       currentVertexCount = bevel.vertexCount;
       appliedAny = true;
     }
+  } else if (token.dimension === 2) {
+    const bevel = bevelFaceBoundary(currentTopology, token.cellId, currentVertexCount, token.smoothness);
+    if (!bevel) return;
+    const nextX = buildBeveledEdgeData(currentX, currentVertexCount, bevel, token.amount, sharedEdgeDistance);
+    currentOrigins = remapOriginsAfterEdgeBevel(currentOrigins, bevel);
+    currentTopology = bevel.topology;
+    currentX = nextX;
+    currentVertexCount = bevel.vertexCount;
+    appliedAny = true;
   } else {
     for (const [originA, originB] of token.targetEdges) {
       const currentEdge = findEdgeWithOrigins(
