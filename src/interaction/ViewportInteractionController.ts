@@ -717,13 +717,17 @@ export class ViewportInteractionController {
     }
 
     if (bestInst === this.options.noSelection) {
+      if (this.options.getParams().editMode && ev.shiftKey) return this.options.noSelection;
       this.options.selectObject(this.options.noSelection, ev.shiftKey);
       return this.options.noSelection;
     }
 
-    const additive = ev.shiftKey && !this.options.getParams().editMode;
-    this.options.selectObject(bestInst, additive);
-    if (this.options.getParams().editMode) this.selectNearestEditElement(bestInst, mx, my, w, h, ev.altKey);
+    const editMode = this.options.getParams().editMode;
+    const additive = ev.shiftKey && !editMode;
+    if (!(editMode && ev.shiftKey && bestInst === this.options.getSelectedInstance())) {
+      this.options.selectObject(bestInst, additive);
+    }
+    if (editMode) this.selectNearestEditElement(bestInst, mx, my, w, h, ev.shiftKey, ev.altKey);
     return bestInst;
   }
 
@@ -785,20 +789,28 @@ export class ViewportInteractionController {
     return bestDist2 < 35 * 35 ? bestInst : this.options.noSelection;
   }
 
-  private selectNearestEditElement(instIdx: number, mx: number, my: number, width: number, height: number, forceCycle = false) {
+  private selectNearestEditElement(
+    instIdx: number,
+    mx: number,
+    my: number,
+    width: number,
+    height: number,
+    additive = false,
+    forceCycle = false,
+  ) {
     const dimension = this.options.transformController.getEditCellDimension();
     if (dimension === 1) {
-      this.selectNearestEdge(instIdx, mx, my, width, height);
+      this.selectNearestEdge(instIdx, mx, my, width, height, additive);
       return;
     }
     if (dimension >= 2) {
-      this.selectNearestCell(instIdx, dimension, mx, my, width, height, forceCycle);
+      this.selectNearestCell(instIdx, dimension, mx, my, width, height, additive, forceCycle);
       return;
     }
-    this.selectNearestVertex(instIdx, mx, my, width, height);
+    this.selectNearestVertex(instIdx, mx, my, width, height, additive);
   }
 
-  private selectNearestVertex(instIdx: number, mx: number, my: number, width: number, height: number) {
+  private selectNearestVertex(instIdx: number, mx: number, my: number, width: number, height: number, additive = false) {
     const targetRenderer = instIdx === this.options.baseSelection
       ? this.options.getRendererND()
       : this.options.getExtraInstances()[instIdx].renderer;
@@ -819,11 +831,12 @@ export class ViewportInteractionController {
         nearest = i;
       }
     }
-    this.options.transformController.setSelectedEditElement(0, nearest >= 0 ? [nearest] : [], nearest);
+    if (additive) this.options.transformController.toggleSelectedEditElement(0, nearest >= 0 ? [nearest] : [], nearest, targetRenderer.getCellTopologyForSelection());
+    else this.options.transformController.setSelectedEditElement(0, nearest >= 0 ? [nearest] : [], nearest);
     this.options.transformController.updateVertexCloud(instIdx);
   }
 
-  private selectNearestEdge(instIdx: number, mx: number, my: number, width: number, height: number) {
+  private selectNearestEdge(instIdx: number, mx: number, my: number, width: number, height: number, additive = false) {
     const targetRenderer = instIdx === this.options.baseSelection
       ? this.options.getRendererND()
       : this.options.getExtraInstances()[instIdx]?.renderer;
@@ -855,8 +868,9 @@ export class ViewportInteractionController {
     }
 
     if (best && bestD2 < 32 * 32) {
-      this.options.transformController.setSelectedEditElement(1, best, bestCellId);
-    } else {
+      if (additive) this.options.transformController.toggleSelectedEditElement(1, best, bestCellId, topology);
+      else this.options.transformController.setSelectedEditElement(1, best, bestCellId);
+    } else if (!additive) {
       this.options.transformController.clearEditSelection();
     }
     this.options.transformController.updateVertexCloud(instIdx);
@@ -869,6 +883,7 @@ export class ViewportInteractionController {
     my: number,
     width: number,
     height: number,
+    additive = false,
     forceCycle = false,
   ) {
     const targetRenderer = instIdx === this.options.baseSelection
@@ -887,8 +902,9 @@ export class ViewportInteractionController {
     const candidates = this.cellPickCandidates(topology, dimension, posArr, point, width, height);
     if (candidates.length) {
       const selected = this.selectCellCandidateFromCycle(instIdx, dimension, mx, my, candidates, forceCycle);
-      this.options.transformController.setSelectedEditElement(dimension, selected.vertices, selected.cellId);
-    } else {
+      if (additive) this.options.transformController.toggleSelectedEditElement(dimension, selected.vertices, selected.cellId, topology);
+      else this.options.transformController.setSelectedEditElement(dimension, selected.vertices, selected.cellId);
+    } else if (!additive) {
       this.options.transformController.clearEditSelection();
     }
     this.options.transformController.updateVertexCloud(instIdx);

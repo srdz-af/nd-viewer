@@ -21,6 +21,7 @@ type KeyboardShortcutControllerOptions = {
   startTransformFromPointer: (mode: TransformMode) => void;
   extrudeEditSelectionFromPointer: () => void;
   startBevelEditSelection: (kind?: 'vertex' | 'edge') => void;
+  selectAllEditCells: () => void;
   showAddObjectMenuAtPointer: () => void;
   duplicateSelectionFromPointer: () => void;
   deleteOrConfirmSelection: () => void;
@@ -157,6 +158,13 @@ export class KeyboardShortcutController {
     if (ev.key === 'Tab') {
       ev.preventDefault();
       this.options.toggleEditMode();
+    }
+    if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && transformMode === 'none' && key === 'a') {
+      if (this.options.isEditMode()) {
+        ev.preventDefault();
+        this.options.selectAllEditCells();
+      }
+      return;
     }
     if (hasSystemMod) return;
 

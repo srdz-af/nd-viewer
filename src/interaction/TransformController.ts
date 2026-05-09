@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { RotND } from '../RotND';
 import { AXIS_PALETTE } from '../constants';
-import { cellCount, getCellBoundaryFaceIds, getCellVertices } from '../geometry/cellTopology';
+import { cellCount, getCellBoundaryFaceIds, getCellVertices, type CellTopology } from '../geometry/cellTopology';
 import type { NDProjector } from '../geometry/NDProjector';
 import { perspectiveScaleFrom, type AxisMap } from '../geometry/projectionUtils';
 import type { HypercubeRenderer } from '../rendering/HypercubeRenderer';
@@ -158,7 +158,8 @@ export class TransformController {
   private selectedVertex = -1;
   private selectedEditVertices: number[] = [];
   private selectedCellId = -1;
-  private selectionVertexMarker: THREE.Mesh | null = null;
+  private selectedCellIds: number[] = [];
+  private selectionVertexMarker: THREE.InstancedMesh | null = null;
   private vertexCloud: THREE.InstancedMesh | null = null;
   private faceCenterCloud: THREE.InstancedMesh | null = null;
   private editWireOverlay: THREE.LineSegments | null = null;
@@ -245,6 +246,7 @@ export class TransformController {
     this.selectedVertex = vertex;
     this.selectedEditVertices = vertex >= 0 ? [vertex] : [];
     this.selectedCellId = vertex;
+    this.selectedCellIds = vertex >= 0 ? [vertex] : [];
     this.updateActionButtons();
   }
 
@@ -267,13 +269,66 @@ export class TransformController {
     this.selectedEditVertices = uniqueVertices;
     this.selectedVertex = this.editCellDimension === 0 && uniqueVertices.length ? uniqueVertices[0] : -1;
     this.selectedCellId = cellId;
+    this.selectedCellIds = cellId >= 0 ? [cellId] : [];
     this.updateActionButtons();
+  }
+
+  setSelectedEditCells(dimension: EditCellDimension, cellIds: number[], topology: CellTopology | undefined) {
+    const nextDimension = Math.max(0, Math.floor(dimension));
+    this.editCellDimension = nextDimension;
+    const count = cellCount(topology, nextDimension);
+    const nextCellIds = cellIds
+      .filter(cellId => Number.isInteger(cellId) && cellId >= 0 && cellId < count)
+      .filter((cellId, index, arr) => arr.indexOf(cellId) === index);
+    const vertices: number[] = [];
+    for (const cellId of nextCellIds) {
+      for (const vertex of getCellVertices(topology, nextDimension, cellId)) {
+        if (vertex >= 0 && !vertices.includes(vertex)) vertices.push(vertex);
+      }
+    }
+    this.selectedCellIds = nextCellIds;
+    this.selectedCellId = nextCellIds[nextCellIds.length - 1] ?? -1;
+    this.selectedEditVertices = vertices;
+    this.selectedVertex = nextDimension === 0 && vertices.length ? vertices[0] : -1;
+    if (!nextCellIds.length) this.clearEditSelection();
+    else this.updateActionButtons();
+  }
+
+  toggleSelectedEditElement(
+    dimension: EditCellDimension,
+    vertices: number[],
+    cellId: number,
+    topology: CellTopology | undefined,
+  ) {
+    const nextDimension = Math.max(0, Math.floor(dimension));
+    const currentCellIds = this.editCellDimension === nextDimension ? [...this.selectedCellIds] : [];
+    const existingIndex = currentCellIds.indexOf(cellId);
+    if (existingIndex >= 0) currentCellIds.splice(existingIndex, 1);
+    else if (cellId >= 0) currentCellIds.push(cellId);
+
+    if (topology) {
+      this.setSelectedEditCells(nextDimension, currentCellIds, topology);
+      return;
+    }
+
+    if (existingIndex >= 0) {
+      this.clearEditSelection();
+      return;
+    }
+    this.setSelectedEditElement(nextDimension, vertices, cellId);
+  }
+
+  selectAllEditCells(dimension: EditCellDimension, topology: CellTopology | undefined) {
+    const nextDimension = Math.max(0, Math.floor(dimension));
+    const count = cellCount(topology, nextDimension);
+    this.setSelectedEditCells(nextDimension, Array.from({ length: count }, (_entry, cellId) => cellId), topology);
   }
 
   clearEditSelection() {
     this.selectedVertex = -1;
     this.selectedEditVertices = [];
     this.selectedCellId = -1;
+    this.selectedCellIds = [];
     this.clearVertexMarker();
     this.clearEditComponentOverlay();
     this.updateActionButtons();
@@ -288,6 +343,7 @@ export class TransformController {
     return {
       dimension: this.editCellDimension,
       cellId: this.selectedCellId,
+      cellIds: [...this.selectedCellIds],
       vertices: [...this.selectedEditVertices],
       label: this.editSelectionLabel(),
     };
@@ -310,6 +366,8 @@ export class TransformController {
   clearVertexMarker() {
     if (this.selectionVertexMarker) {
       this.options.scene.remove(this.selectionVertexMarker);
+      if (Array.isArray(this.selectionVertexMarker.material)) this.selectionVertexMarker.material.forEach(material => material.dispose());
+      else this.selectionVertexMarker.material.dispose();
       this.selectionVertexMarker = null;
     }
   }
@@ -423,7 +481,7 @@ export class TransformController {
     this.vertexCloud.instanceMatrix.needsUpdate = true;
     this.vertexCloud.renderOrder = 5;
     this.options.scene.add(this.vertexCloud);
-    if (this.selectedVertex >= 0) this.placeVertexMarker(instIdx, this.selectedVertex);
+    if (this.selectedEditVertices.length) this.placeVertexMarkers(instIdx, this.selectedEditVertices);
   }
 
   private updateFaceCenterCloud(instIdx: number) {
@@ -481,10 +539,7 @@ export class TransformController {
   updateScreenSpaceMarkerScales() {
     this.updateInstancedMarkerScale(this.vertexCloud, VERTEX_MARKER_PIXEL_DIAMETER);
     this.updateInstancedMarkerScale(this.faceCenterCloud, CELL_CENTER_MARKER_PIXEL_DIAMETER);
-    if (this.selectionVertexMarker) {
-      const scale = this.screenSpaceMarkerScale(this.selectionVertexMarker.position, SELECTED_MARKER_PIXEL_DIAMETER);
-      this.selectionVertexMarker.scale.setScalar(scale);
-    }
+    this.updateInstancedMarkerScale(this.selectionVertexMarker, SELECTED_MARKER_PIXEL_DIAMETER);
     this.updateTransformGizmo();
   }
 
@@ -559,13 +614,25 @@ export class TransformController {
       return true;
     };
     const pushVertex = (vertex: number) => { pushVertexTo(points, vertex); };
+    const topology = rendererRef.getCellTopologyForSelection();
+    const selectedCellIds = this.selectedCellIds.length
+      ? this.selectedCellIds
+      : (this.selectedCellId >= 0 ? [this.selectedCellId] : []);
 
     if (this.editCellDimension === 1) {
-      if (this.selectedEditVertices.length < 2) return;
-      pushVertex(this.selectedEditVertices[0]);
-      pushVertex(this.selectedEditVertices[1]);
+      if (topology && selectedCellIds.length) {
+        selectedCellIds.forEach(cellId => {
+          const edge = getCellVertices(topology, 1, cellId);
+          if (edge.length < 2) return;
+          pushVertex(edge[0]);
+          pushVertex(edge[1]);
+        });
+      } else {
+        if (this.selectedEditVertices.length < 2) return;
+        pushVertex(this.selectedEditVertices[0]);
+        pushVertex(this.selectedEditVertices[1]);
+      }
     } else if (this.editCellDimension >= 2) {
-      const topology = rendererRef.getCellTopologyForSelection();
       if (!topology) return;
       const tintPoints: THREE.Vector3[] = [];
       const edgeCounts = new Map<string, [number, number, number]>();
@@ -590,14 +657,12 @@ export class TransformController {
       };
 
       if (this.editCellDimension === 2) {
-        const faceVertices = this.selectedCellId >= 0
-          ? getCellVertices(topology, 2, this.selectedCellId)
-          : this.selectedEditVertices;
-        addFace(faceVertices);
+        if (selectedCellIds.length) selectedCellIds.forEach(cellId => addFace(getCellVertices(topology, 2, cellId)));
+        else addFace(this.selectedEditVertices);
       } else {
-        const faceIds = this.selectedCellId >= 0
-          ? getCellBoundaryFaceIds(topology, this.editCellDimension, this.selectedCellId)
-          : [];
+        const faceIds = selectedCellIds.flatMap(cellId => (
+          getCellBoundaryFaceIds(topology, this.editCellDimension, cellId)
+        ));
         if (faceIds.length) {
           faceIds.forEach(faceId => addFace(getCellVertices(topology, 2, faceId)));
         } else {
@@ -650,25 +715,38 @@ export class TransformController {
   }
 
   placeVertexMarker(instIdx: number, vertexIdx: number) {
+    this.placeVertexMarkers(instIdx, [vertexIdx]);
+  }
+
+  private placeVertexMarkers(instIdx: number, vertexIndices: number[]) {
     if (!this.options.getObjectVisible(instIdx)) return;
-    if (!this.selectionVertexMarker) {
-      const mat = new THREE.MeshBasicMaterial({
-        color: 0xffa64d,
-        depthTest: false,
-        depthWrite: false,
-      });
-      this.selectionVertexMarker = new THREE.Mesh(this.options.vertexGeo, mat);
-      this.selectionVertexMarker.renderOrder = 20;
-    }
     const rendererRef = instIdx === -1
       ? this.options.getRendererND()
       : this.options.getExtraInstances()[instIdx].renderer;
+    const count = instIdx === -1 ? this.options.getM() : this.options.getExtraInstances()[instIdx].M;
     const posArr = rendererRef.positions;
-    const pIdx = vertexIdx * 3;
-    this.selectionVertexMarker.position.set(posArr[pIdx], posArr[pIdx + 1], posArr[pIdx + 2]);
-    this.selectionVertexMarker.scale.setScalar(
-      this.screenSpaceMarkerScale(this.selectionVertexMarker.position, SELECTED_MARKER_PIXEL_DIAMETER),
-    );
+    const vertices = vertexIndices
+      .filter(vertex => Number.isInteger(vertex) && vertex >= 0 && vertex < count)
+      .filter((vertex, index, arr) => arr.indexOf(vertex) === index);
+    this.clearVertexMarker();
+    if (!vertices.length) return;
+
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xffa64d,
+      depthTest: false,
+      depthWrite: false,
+    });
+    this.selectionVertexMarker = new THREE.InstancedMesh(this.options.vertexGeo, mat, vertices.length);
+    const dummy = new THREE.Object3D();
+    vertices.forEach((vertex, idx) => {
+      const pIdx = vertex * 3;
+      dummy.position.set(posArr[pIdx], posArr[pIdx + 1], posArr[pIdx + 2]);
+      dummy.scale.setScalar(this.screenSpaceMarkerScale(dummy.position, SELECTED_MARKER_PIXEL_DIAMETER));
+      dummy.updateMatrix();
+      this.selectionVertexMarker?.setMatrixAt(idx, dummy.matrix);
+    });
+    this.selectionVertexMarker.instanceMatrix.needsUpdate = true;
+    this.selectionVertexMarker.renderOrder = 20;
     this.options.scene.add(this.selectionVertexMarker);
   }
 

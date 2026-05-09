@@ -206,6 +206,7 @@ type PackedSceneUrlState = {
   si: number;
   ss: number[];
   sv: number;
+  es?: [number, number[]];
   i: PackedInstanceState[];
   c: PackedCamera;
   bg: PackedBackgroundState;
@@ -238,6 +239,7 @@ type EditBevelToken = {
   instIdx: number;
   dimension: number;
   cellId: number;
+  cellIds: number[];
   vertices: number[];
   targetVertices: number[];
   targetEdges: Array<[number, number]>;
@@ -2387,6 +2389,7 @@ function unpackInstanceState(instance: PackedInstanceState): InstanceSnapshot {
 
 function captureSceneUrlState(): PackedSceneUrlState {
   const snap = captureSnapshot();
+  const editSelection = transformController.getEditSelection();
   return {
     v: 1,
     n: snap.N,
@@ -2426,6 +2429,7 @@ function captureSceneUrlState(): PackedSceneUrlState {
     si: snap.selectedInstance,
     ss: [...(snap.selectedInstances ?? [])],
     sv: transformController.getSelectedVertex(),
+    es: editSelection?.cellIds.length ? [editSelection.dimension, [...editSelection.cellIds]] : undefined,
     i: snap.instances.map(packInstanceState),
     c: packCameraState(),
     bg: packBackgroundState(backgroundController.getUrlState()),
@@ -2501,10 +2505,20 @@ async function applySceneUrlState(state: PackedSceneUrlState) {
     paneController.setCollapsed(state.pc === 1);
     applyCameraState(state.c);
     setEditMode(state.em === 1);
-    transformController.setSelectedVertex(finiteInteger(state.sv, -1));
-    if (PARAMS.editMode && transformController.getSelectedVertex() >= 0 && getObjectVisible(selectedInstance)) {
+    const packedEditSelection = Array.isArray(state.es) ? state.es : null;
+    if (packedEditSelection && PARAMS.editMode && isGeometrySelectionIndex(selectedInstance)) {
+      const dimension = finiteInteger(packedEditSelection[0], 0);
+      const cellIds = Array.isArray(packedEditSelection[1])
+        ? packedEditSelection[1].map(cellId => finiteInteger(cellId, -1))
+        : [];
+      transformController.setSelectedEditCells(dimension, cellIds, selectedObjectCellTopology());
+    } else {
+      transformController.setSelectedVertex(finiteInteger(state.sv, -1));
+    }
+    const activeEditSelection = transformController.getEditSelection();
+    if (PARAMS.editMode && activeEditSelection && getObjectVisible(selectedInstance)) {
       updateVertexCloud(selectedInstance);
-      placeVertexMarker(selectedInstance, transformController.getSelectedVertex());
+      if (transformController.getSelectedVertex() >= 0) placeVertexMarker(selectedInstance, transformController.getSelectedVertex());
     }
 
     animationTimeline?.applyTimelineState(state.tl ? unpackTimelineState(state.tl) : undefined, false);
@@ -4285,7 +4299,7 @@ function restoreEditBevelTarget(token: EditBevelToken) {
 
 function collectEditBevelTargets(
   topology: CellTopology | undefined,
-  selection: { dimension: number; cellId: number; vertices: number[] },
+  selection: { dimension: number; cellId: number; cellIds?: number[]; vertices: number[] },
   kind: 'vertex' | 'edge',
 ) {
   if (!topology) return null;
@@ -4319,7 +4333,8 @@ function collectEditBevelTargets(
   };
 
   if (selection.dimension === 1) {
-    addEdge(selection.cellId, getCellVertices(topology, 1, selection.cellId));
+    const edgeIds = selection.cellIds?.length ? selection.cellIds : [selection.cellId];
+    edgeIds.forEach(edgeId => addEdge(edgeId, getCellVertices(topology, 1, edgeId)));
   } else {
     for (let edgeId = 0; edgeId < cellCount(topology, 1); edgeId++) {
       addEdge(edgeId, getCellVertices(topology, 1, edgeId));
@@ -4346,6 +4361,7 @@ function startEditBevel(smoothness: number, kind: 'vertex' | 'edge' = 'edge'): E
     instIdx: selectedInstance,
     dimension: selection.dimension,
     cellId: selection.cellId,
+    cellIds: [...selection.cellIds],
     vertices: [...selection.vertices],
     targetVertices: targets.targetVertices,
     targetEdges: targets.targetEdges,
@@ -4496,7 +4512,11 @@ function commitEditBevel(token: unknown) {
 function cancelEditBevel(token: unknown) {
   if (!isEditBevelToken(token)) return;
   restoreEditBevelTarget(token);
-  transformController.setSelectedEditElement(token.dimension, token.vertices, token.cellId);
+  const topology = token.instIdx === BASE_SELECTION
+    ? baseCellTopology
+    : extraInstances[token.instIdx]?.cellTopology;
+  if (token.cellIds.length && topology) transformController.setSelectedEditCells(token.dimension, token.cellIds, topology);
+  else transformController.setSelectedEditElement(token.dimension, token.vertices, token.cellId);
   projectAndRenderAll();
   applyObjectVisibility();
   updateObjectList();
@@ -5290,6 +5310,17 @@ function setEditCellDimension(dimension: number) {
   updateTransformActionButtons();
 }
 
+function selectAllEditCells() {
+  if (!PARAMS.editMode || !isGeometrySelectionIndex(selectedInstance) || !getObjectVisible(selectedInstance)) return;
+  const topology = selectedObjectCellTopology();
+  if (!topology) return;
+  const dimension = transformController.getEditCellDimension();
+  transformController.selectAllEditCells(dimension, topology);
+  updateVertexCloud(selectedInstance);
+  updateSelectionOutline();
+  updateTransformActionButtons();
+}
+
 const primitiveMenuOptions: { label: string; kind: PrimitiveKind }[] = [
   { label: 'Plane', kind: 'plane' },
   { label: 'Hypercube', kind: 'hypercube' },
@@ -5643,6 +5674,7 @@ new KeyboardShortcutController({
   startTransformFromPointer: mode => viewportInteraction.startTransformFromLastPointer(mode),
   extrudeEditSelectionFromPointer: () => viewportInteraction.startEditExtrusionFromLastPointer(),
   startBevelEditSelection: kind => viewportInteraction.startEditBevelFromLastPointer(kind),
+  selectAllEditCells,
   showAddObjectMenuAtPointer: () => viewportInteraction.showAddObjectMenuAtLastPointer(),
   duplicateSelectionFromPointer: () => viewportInteraction.startDuplicateFromLastPointer(),
   deleteOrConfirmSelection: () => viewportInteraction.deleteOrConfirmSelection(),
