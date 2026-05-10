@@ -6062,7 +6062,6 @@ new KeyboardShortcutController({
 
 updateTransformActionButtons();
 paneController.syncToViewport(true);
-modalOverlayController.initializeMobileOnboarding();
 renderer.domElement.addEventListener('pointerdown', handleSceneLightPointerDown, { capture: true });
 window.addEventListener('pointermove', ev => {
   if (viewportInteraction.isOperationKind('scene-light-drag')) viewportInteraction.updateActiveOperationPointer(ev);
