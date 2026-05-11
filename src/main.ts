@@ -893,17 +893,17 @@ Object.assign(perfOverlay.style, {
   minWidth: '128px',
   boxSizing: 'border-box',
   padding: '7px 8px',
-  border: '1px solid rgba(255, 255, 255, 0.14)',
+  border: '1px solid rgba(207, 241, 240, 0.2)',
   borderRadius: '7px',
-  background: 'rgba(8, 11, 18, 0.72)',
-  color: 'rgba(236, 243, 255, 0.92)',
+  background: 'rgba(25, 23, 15, 0.78)',
+  color: 'rgba(207, 241, 240, 0.94)',
   font: '700 10px/1.36 SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace',
   letterSpacing: '0.01em',
   pointerEvents: 'none',
   whiteSpace: 'pre',
-  boxShadow: '0 10px 26px rgba(0, 0, 0, 0.28)',
-  backdropFilter: 'blur(10px) saturate(0.85)',
-  WebkitBackdropFilter: 'blur(10px) saturate(0.85)',
+  boxShadow: '0 10px 26px rgba(25, 23, 15, 0.36)',
+  backdropFilter: 'blur(10px) saturate(1.08)',
+  WebkitBackdropFilter: 'blur(10px) saturate(1.08)',
 });
 document.body.appendChild(perfOverlay);
 

@@ -243,7 +243,7 @@ export class AxisGizmoController {
       const color = AXIS_PALETTE[i % AXIS_PALETTE.length];
       return `<span class="badge" style="background:${color};">${axisLabel(i)}</span>`;
     }).join('');
-    this.axisLegend.innerHTML = `<h4 style="margin:0 0 6px 0; font-size:12px; color:#e6ecf5;">Axes</h4><div>${badges}</div>`;
+    this.axisLegend.innerHTML = `<h4 style="margin:0 0 6px 0; font-size:12px; color:#cff1f0;">Axes</h4><div>${badges}</div>`;
   }
 
   renderAxisList() {

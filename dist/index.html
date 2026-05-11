@@ -15,27 +15,33 @@
     <title>Polyple</title>
     <style>
       :root {
-        --ui-bg:
-          linear-gradient(145deg, rgba(255,255,255,0.07), rgba(255,255,255,0.018)),
-          rgba(17,21,29,0.66);
-        --ui-bg-soft:
-          linear-gradient(145deg, rgba(255,255,255,0.055), rgba(255,255,255,0.012)),
-          rgba(27,32,42,0.52);
-        --ui-bg-hover: rgba(255,255,255,0.13);
-        --ui-border: rgba(255,255,255,0.19);
-        --ui-border-soft: rgba(255,255,255,0.11);
-        --ui-text: #c4ccd8;
-        --ui-text-strong: #ffffff;
-        --ui-muted: #8d96a5;
-        --ui-blue: #3159b7;
-        --ui-blue-hover: #3b68d0;
-        --ui-blue-soft: rgba(49,89,183,0.38);
-        --ui-slider-track: rgba(164,170,180,0.7);
-        --ui-slider-fill: rgba(188,193,202,0.95);
+        --brand-ink: #19170f;
+        --brand-navy: #042471;
+        --brand-blue: #0b46a8;
+        --brand-green: #60c979;
+        --brand-mint: #afe8b4;
+        --brand-ice: #cff1f0;
+        --brand-paper: #e6e6e6;
+        --ui-bg: rgba(25,23,15,0.82);
+        --ui-bg-soft: rgba(4,36,113,0.46);
+        --ui-control-bg: rgba(25,23,15,0.54);
+        --ui-bg-hover: rgba(230,230,230,0.16);
+        --ui-border: rgba(207,241,240,0.28);
+        --ui-border-soft: rgba(230,230,230,0.15);
+        --ui-text: var(--brand-paper);
+        --ui-text-strong: var(--brand-ice);
+        --ui-muted: rgba(230,230,230,0.64);
+        --ui-blue: var(--brand-blue);
+        --ui-blue-hover: var(--brand-blue);
+        --ui-blue-soft: rgba(11,70,168,0.44);
+        --ui-accent: var(--brand-paper);
+        --ui-accent-soft: rgba(230,230,230,0.18);
+        --ui-slider-track: rgba(230,230,230,0.28);
+        --ui-slider-fill: var(--brand-paper);
         --scene-control-label-width: 82px;
         --scene-control-value-width: 66px;
-        --ui-shadow: 0 16px 36px rgba(0,0,0,0.26), inset 0 1px 0 rgba(255,255,255,0.05);
-        --ui-glass-filter: blur(16px) saturate(0.82);
+        --ui-shadow: 0 18px 40px rgba(25,23,15,0.42), inset 0 1px 0 rgba(207,241,240,0.055);
+        --ui-glass-filter: blur(16px) saturate(1.08);
         --ui-font: Helvetica, "Helvetica Neue", Arial, sans-serif;
         --safe-top: env(safe-area-inset-top, 0px);
         --safe-right: env(safe-area-inset-right, 0px);
@@ -62,7 +68,16 @@
           "GRAD" 0,
           "opsz" 24;
       }
-      html, body, #app { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:#0f1117; color:var(--ui-text); font-family:var(--ui-font); }
+      html, body, #app {
+        margin:0;
+        padding:0;
+        width:100%;
+        height:100%;
+        overflow:hidden;
+        background: var(--brand-ink);
+        color:var(--ui-text);
+        font-family:var(--ui-font);
+      }
       #bottom-controls {
         display: contents;
       }
@@ -119,7 +134,7 @@
       #scene-light-controls input[type="range"]:focus-visible,
       #render-effects-controls input[type="range"]:focus-visible,
       #texture-controls input[type="range"]:focus-visible {
-        outline: 2px solid rgba(255,255,255,0.55);
+        outline: 2px solid rgba(230,230,230,0.72);
         outline-offset: 2px;
       }
       #background-controls input[type="range"]::-webkit-slider-runnable-track,
@@ -255,7 +270,7 @@
         flex: 0 0 auto;
         width: 86%;
         height: 1px;
-        background: linear-gradient(90deg, transparent, var(--ui-border), transparent);
+        background: var(--ui-border);
         opacity: 0.9;
       }
       #extra-axis-scrollbar {
@@ -303,24 +318,38 @@
         padding: 0;
         border: 0;
         border-radius: 5px;
+        background-image: none;
         background: transparent;
         color: var(--ui-muted);
         cursor: pointer;
-        transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+        box-shadow: none;
+        filter: none;
+        text-shadow: none;
+        transition: background 120ms ease, color 120ms ease;
       }
       .scene-control-tab:hover,
       .scene-control-tab:focus-visible {
         background: var(--ui-bg-hover);
+        background-image: none;
         color: var(--ui-text-strong);
+        box-shadow: none;
+        filter: none;
       }
       .scene-control-tab.active {
         background: var(--ui-blue);
+        background-image: none;
         color: var(--ui-text-strong);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.16);
+        box-shadow: none;
+        filter: none;
       }
       .scene-control-tab .material-symbols-rounded {
         font-size: 20px;
         line-height: 1;
+        background: transparent;
+        background-image: none;
+        box-shadow: none;
+        filter: none;
+        text-shadow: none;
       }
       #scene-control-tab-panels {
         min-width: 0;
@@ -420,8 +449,8 @@
       #transform-actions button.active:hover { background: var(--ui-blue-hover); }
       #render-actions button.recording,
       #render-actions button.recording:hover {
-        background: rgba(201, 56, 56, 0.86);
-        color: #fff;
+        background: var(--brand-paper);
+        color: var(--brand-ink);
       }
       #render-settings-controls {
         box-sizing: border-box;
@@ -511,7 +540,7 @@
         z-index: 9;
         display: none;
         box-sizing: border-box;
-        border: 2px solid rgba(190, 196, 205, 0.98);
+        border: 2px solid rgba(230, 230, 230, 0.98);
         box-shadow:
           0 0 0 9999px rgba(0, 0, 0, 0.45),
           inset 0 0 0 1px rgba(0, 0, 0, 0.72);
@@ -644,7 +673,7 @@
         top: 50%;
         height: 3px;
         border-radius: 999px;
-        background: rgba(116, 124, 138, 0.28);
+        background: rgba(175, 232, 180, 0.22);
         transform: translateY(-50%);
       }
       #animation-timeline-progress {
@@ -653,7 +682,7 @@
         bottom: 0;
         width: 0%;
         border-radius: inherit;
-        background: rgba(188, 193, 202, 0.82);
+        background: var(--brand-paper);
       }
       #animation-keyframe-markers {
         inset: 0;
@@ -666,13 +695,13 @@
         padding: 0;
         border: 0;
         border-radius: 50%;
-        background: #f0c674;
-        box-shadow: 0 0 8px rgba(240, 198, 116, 0.5);
+        background: var(--brand-paper);
+        box-shadow: 0 0 8px rgba(96, 201, 121, 0.46);
         transform: translate(-50%, -50%);
         cursor: pointer;
       }
       .animation-keyframe-marker.active {
-        background: #fff;
+        background: var(--brand-ice);
       }
       #animation-playhead {
         top: 0;
@@ -693,7 +722,7 @@
         bottom: 0;
         width: 2px;
         border-radius: 2px;
-        background: #fff;
+        background: var(--brand-ice);
       }
       #record-viewport-timer {
         display: none;
@@ -701,9 +730,9 @@
         padding: 0 6px;
         height: 30px;
         border-radius: 3px;
-        border: 1px solid rgba(201, 56, 56, 0.42);
-        background: rgba(201, 56, 56, 0.18);
-        color: #ffd7d7;
+        border: 1px solid rgba(96, 201, 121, 0.42);
+        background: rgba(96, 201, 121, 0.18);
+        color: var(--brand-paper);
         font-size: 11px;
         font-weight: 700;
         line-height: 30px;
@@ -797,7 +826,7 @@
         overflow: visible;
       }
       #axis-gizmo line {
-        stroke: rgba(229,238,255,0.68);
+        stroke: rgba(207,241,240,0.72);
         stroke-width: 1.8;
       }
       #axis-gizmo button {
@@ -811,7 +840,7 @@
         border: 0;
         border-radius: 50%;
         background: var(--axis-color);
-        color: #11141a;
+        color: var(--brand-ink);
         cursor: pointer;
         font: 700 13px/1 var(--ui-font);
         pointer-events: auto;
@@ -840,7 +869,7 @@
         stroke-width: 2.8;
       }
       .extra-axis-gizmo {
-        --extra-axis-color: #9b59b6;
+        --extra-axis-color: var(--brand-paper);
         position: relative;
         width: 86px;
         height: 86px;
@@ -905,7 +934,7 @@
       }
       .extra-axis-gizmo button.positive {
         background: var(--extra-axis-color);
-        color: #11141a;
+        color: var(--brand-ink);
       }
       .extra-axis-gizmo button.negative {
         background: color-mix(in srgb, var(--extra-axis-color) 28%, transparent);
@@ -934,9 +963,9 @@
         appearance: none;
         -webkit-appearance: none;
         overflow: hidden;
-        border-radius: 50%;
+        border-radius: 5px;
         border-width: 0;
-        background: var(--ui-bg-soft);
+        background: transparent;
         color: var(--ui-text);
         font: 700 10px/1 var(--ui-font);
         transform: translateY(-50%);
@@ -975,9 +1004,9 @@
         appearance: none;
         -webkit-appearance: none;
         overflow: hidden;
-        border-radius: 50%;
+        border-radius: 5px;
         border-width: 0;
-        background: var(--ui-bg-soft);
+        background: transparent;
         color: var(--ui-text);
         transform: translateY(-50%);
         z-index: 4;
@@ -1010,7 +1039,7 @@
         border: 0;
         border-radius: 8px;
         background: transparent;
-        color: rgba(116, 124, 138, 0.78);
+        color: rgba(230, 230, 230, 0.58);
         box-shadow: none;
         cursor: grab;
         transform: translateY(-50%);
@@ -1032,8 +1061,8 @@
         left: calc(50% + 2px);
       }
       .extra-axis-gizmo button.axis-order-handle:hover {
-        background: rgba(255,255,255,0.06);
-        color: rgba(148, 156, 170, 0.9);
+        background: rgba(230,230,230,0.1);
+        color: rgba(207, 241, 240, 0.82);
         filter: none;
         transform: translateY(-50%);
       }
@@ -1071,7 +1100,7 @@
         display: grid;
         place-items: center;
         padding: 0;
-        background: var(--ui-bg-soft);
+        background: transparent;
         color: var(--ui-text);
         cursor: pointer;
         transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
@@ -1087,7 +1116,7 @@
         width: 24px;
         height: 24px;
         border: 0;
-        border-radius: 50%;
+        border-radius: 5px;
       }
       #pane-toggle {
         width: 22px;
@@ -1096,6 +1125,10 @@
         border-radius: 4px;
       }
       #pane-toggle:hover,
+      #axis-cycle-button:hover,
+      #axis-sync-rotations-button:hover,
+      #camera-recenter-button:hover,
+      #focus-reset-button:hover,
       #scene-undo-button:hover,
       #scene-redo-button:hover,
       #scene-save-button:hover,
@@ -1123,12 +1156,10 @@
         width: 86px;
         height: 86px;
         border-radius: 12px;
-        background:
-          linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,255,255,0.02)),
-          rgba(148, 163, 184, 0.14);
+        background: rgba(4, 36, 113, 0.2);
         box-shadow:
-          inset 0 0 0 2px rgba(226, 232, 240, 0.22),
-          0 0 18px rgba(15, 23, 42, 0.16);
+          inset 0 0 0 2px rgba(175, 232, 180, 0.24),
+          0 0 18px rgba(25, 23, 15, 0.18);
       }
       .extra-axis-drag-ghost {
         position: fixed;
@@ -1302,14 +1333,7 @@
         right: 2px;
         top: -8px;
         height: 1px;
-        background: linear-gradient(
-          90deg,
-          transparent 0%,
-          rgba(255, 255, 255, 0.2) 14%,
-          rgba(255, 255, 255, 0.12) 50%,
-          rgba(255, 255, 255, 0.04) 86%,
-          transparent 100%
-        );
+        background: rgba(175, 232, 180, 0.16);
         opacity: 0.78;
         pointer-events: none;
       }
@@ -1347,8 +1371,8 @@
         scroll-padding: 12px;
         scrollbar-width: none;
         -webkit-overflow-scrolling: touch;
-        mask-image: linear-gradient(to right, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
-        -webkit-mask-image: linear-gradient(to right, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
+        mask-image: none;
+        -webkit-mask-image: none;
       }
       #background-swatches::-webkit-scrollbar {
         display: none;
@@ -1360,13 +1384,13 @@
         flex: 0 0 78px;
         width: 78px;
         height: 78px;
-        border: 1px solid rgba(255,255,255,0.18);
+        border: 1px solid rgba(207,241,240,0.22);
         border-radius: 50%;
-        background-color: #1b1f28;
+        background-color: var(--brand-navy);
         background-image: none;
         background-size: cover;
         background-position: center;
-        box-shadow: 0 3px 8px rgba(0,0,0,0.25);
+        box-shadow: 0 3px 8px rgba(25,23,15,0.3);
         cursor: pointer;
         overflow: hidden;
         padding: 0;
@@ -1389,37 +1413,30 @@
       }
       #background-swatches .background-swatch::after {
         z-index: 1;
-        background:
-          radial-gradient(circle at 31% 24%, rgba(255,255,255,0.18) 0 9%, transparent 24%),
-          radial-gradient(circle at 50% 50%, transparent 0 58%, rgba(255,255,255,0.055) 72%, rgba(0,0,0,0.16) 100%),
-          linear-gradient(145deg, rgba(255,255,255,0.045), transparent 46%, rgba(0,0,0,0.055));
+        background: rgba(207,241,240,0.04);
         mix-blend-mode: screen;
         opacity: 0.72;
       }
       #background-swatches .background-swatch[data-hdri="plain"] {
-        --plain-background-color: #10141a;
+        --plain-background-color: #19170f;
         background-image: none;
-        background:
-          radial-gradient(110% 80% at 20% 15%, rgba(255, 255, 255, 0.18), transparent 60%),
-          linear-gradient(145deg, color-mix(in srgb, var(--plain-background-color) 72%, white 28%), var(--plain-background-color));
+        background: var(--plain-background-color);
       }
       #background-swatches .background-swatch[data-hdri="plain"]::before {
-        background:
-          radial-gradient(110% 80% at 20% 15%, rgba(255, 255, 255, 0.18), transparent 60%),
-          linear-gradient(145deg, color-mix(in srgb, var(--plain-background-color) 72%, white 28%), var(--plain-background-color));
+        background: var(--plain-background-color);
       }
       #background-swatches .background-swatch:hover {
         transform: translateY(-1px);
       }
       #background-swatches .background-swatch.active {
-        border-color: rgba(255,255,255,0.94);
-        box-shadow: 0 0 0 2px rgba(255,255,255,0.2), 0 6px 12px rgba(0,0,0,0.3);
+        border-color: var(--brand-paper);
+        box-shadow: 0 0 0 2px rgba(230,230,230,0.22), 0 6px 12px rgba(25,23,15,0.36);
       }
       #background-swatches .background-swatch.loading {
         opacity: 0.58;
       }
       #background-swatches .background-swatch:focus-visible {
-        outline: 2px solid rgba(255,255,255,0.9);
+        outline: 2px solid var(--brand-paper);
         outline-offset: 2px;
       }
       #background-selector.plain-only #background-swatches .background-swatch:not([data-hdri="plain"]) {
@@ -1501,7 +1518,7 @@
       }
       #environment-light-toggle.active {
         background: var(--ui-blue);
-        border-color: rgba(130, 176, 255, 0.58);
+        border-color: rgba(230, 230, 230, 0.58);
         color: var(--ui-text-strong);
       }
       #background-color-value {
@@ -1550,8 +1567,8 @@
         border-color: var(--ui-border);
       }
       #scene-light-actions button.active {
-        background: rgba(255, 166, 77, 0.22);
-        border-color: rgba(255, 185, 112, 0.58);
+        background: var(--ui-accent-soft);
+        border-color: rgba(230, 230, 230, 0.58);
         color: var(--ui-text-strong);
       }
       #scene-light-actions button:disabled,
@@ -1707,7 +1724,7 @@
         min-width: 0;
         height: 31px;
         border-radius: 7px;
-        border: 1px solid rgba(255,255,255,0.08);
+        border: 1px solid var(--ui-border-soft);
         background: var(--ui-control-bg);
         color: var(--ui-text-strong);
         font: inherit;
@@ -1747,12 +1764,8 @@
         height: 132px;
         border-radius: 5px;
         border: 1px solid var(--ui-border-soft);
-        background-color: #1e2530;
-        background-image:
-          linear-gradient(45deg, rgba(255,255,255,0.08) 25%, transparent 25%),
-          linear-gradient(-45deg, rgba(255,255,255,0.08) 25%, transparent 25%),
-          linear-gradient(45deg, transparent 75%, rgba(255,255,255,0.08) 75%),
-          linear-gradient(-45deg, transparent 75%, rgba(255,255,255,0.08) 75%);
+        background-color: var(--brand-navy);
+        background-image: none;
         background-size: 16px 16px;
         background-position: 0 0, 0 8px, 8px -8px, -8px 0;
         overflow: hidden;
@@ -1937,7 +1950,7 @@
       #object-list tr.object-row { cursor: pointer; border-radius: 6px; }
       #object-list tr.object-row:hover { background: var(--ui-bg-hover); }
       #object-list tr.object-row.active { background: var(--ui-blue-soft); }
-      #object-list tr.object-row.secondary { background: rgba(49,89,183,0.18); }
+      #object-list tr.object-row.secondary { background: rgba(11,70,168,0.22); }
       #object-list tr.object-row.hidden { opacity: 0.52; }
       #object-list td { min-width: 0; overflow: hidden; padding: 6px 6px; line-height: 1.5; vertical-align: middle; }
       #object-list .object-eye {
@@ -2018,7 +2031,7 @@
       #context-menu .context-menu-separator {
         height: 1px;
         margin: 4px 8px;
-        background: rgba(148, 156, 170, 0.28);
+        background: rgba(175, 232, 180, 0.26);
       }
       #context-menu .context-menu-submenu {
         position: relative;
@@ -2113,21 +2126,21 @@
       #transform-actions button {
         width: 44px;
         height: 44px;
-        border-radius: 50%;
-        border: 1px solid var(--ui-border);
-        background: var(--ui-bg);
-        box-shadow: var(--ui-shadow);
+        border-radius: 7px;
+        border: 0;
+        background: transparent;
+        box-shadow: none;
       }
       #edit-cell-dimension-buttons button {
         width: 25px;
         height: 25px;
-        border-radius: 50%;
+        border-radius: 5px;
         opacity: 0.84;
       }
       #edit-operation-buttons button {
         width: 34px;
         height: 34px;
-        border-radius: 50%;
+        border-radius: 6px;
         opacity: 0.92;
       }
       #transform-actions button:hover {
@@ -2136,7 +2149,7 @@
       }
       #transform-actions button.active {
         background: var(--ui-blue);
-        border-color: rgba(79, 121, 220, 0.78);
+        border-color: rgba(230, 230, 230, 0.78);
       }
       #transform-actions .material-symbols-rounded {
         font-size: 18px;
@@ -2161,7 +2174,7 @@
         padding-right: calc(18px + var(--safe-right));
         padding-bottom: calc(18px + var(--safe-bottom));
         padding-left: calc(18px + var(--safe-left));
-        background: rgba(8, 11, 17, 0.68);
+        background: rgba(25, 23, 15, 0.72);
         backdrop-filter: blur(3px);
       }
       #help-overlay.open {
@@ -2295,16 +2308,16 @@
           padding: 0;
           border: 0;
           border-radius: 50%;
-          background: rgba(14, 18, 27, 0.28);
+          background: rgba(25, 23, 15, 0.32);
           box-shadow: none;
-          color: rgba(235, 241, 255, 0.68);
+          color: rgba(207, 241, 240, 0.7);
           opacity: 0.72;
           transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
         }
         #bottom-controls > #mobile-fullscreen-toggle:hover,
         #bottom-controls > #mobile-fullscreen-toggle.active {
-          background: rgba(35, 45, 66, 0.42);
-          color: rgba(255, 255, 255, 0.86);
+          background: rgba(96, 201, 121, 0.22);
+          color: rgba(207, 241, 240, 0.9);
           opacity: 0.88;
         }
         #bottom-controls > #mobile-fullscreen-toggle .material-symbols-rounded {
@@ -2373,8 +2386,8 @@
           padding: 0 18px;
           scrollbar-width: none;
           -webkit-overflow-scrolling: touch;
-          mask-image: linear-gradient(to right, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
-          -webkit-mask-image: linear-gradient(to right, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+          mask-image: none;
+          -webkit-mask-image: none;
         }
         #extra-axis-scroll-wrap {
           flex: 1 1 auto;
@@ -2389,7 +2402,7 @@
           height: auto;
           min-height: 104px;
           margin: 0 4px;
-          background: linear-gradient(180deg, transparent, var(--ui-border), transparent);
+          background: var(--ui-border);
         }
         #extra-axis-scrollbar {
           display: block;
@@ -2407,7 +2420,7 @@
           top: 50%;
           height: 3px;
           border-radius: 999px;
-          background: rgba(116, 124, 138, 0.24);
+          background: rgba(175, 232, 180, 0.2);
           transform: translateY(-50%);
         }
         #extra-axis-scrollbar.inactive {
@@ -2421,7 +2434,7 @@
           width: 40px;
           height: 3px;
           border-radius: 999px;
-          background: rgba(148, 156, 170, 0.78);
+          background: rgba(96, 201, 121, 0.78);
           transform: translateY(-50%);
         }
         #extra-axis-gizmos::-webkit-scrollbar {
@@ -2560,7 +2573,7 @@
         border: 0 !important;
       }
     </style>
-    <script type="module" crossorigin src="/assets/index-uANzm-VW.js"></script>
+    <script type="module" crossorigin src="/assets/index-CFEltWMU.js"></script>
   </head>
   <body>
     <div id="camera-view-overlay" aria-hidden="true"></div>

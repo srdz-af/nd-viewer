@@ -285,16 +285,16 @@ export class TextureEditorController {
     cube.rotation.set(0.45, 0.68, 0);
     sceneRef.add(cube);
 
-    const previewLight = new THREE.DirectionalLight(0xffffff, 1.25);
+    const previewLight = new THREE.DirectionalLight(0xcff1f0, 1.25);
     previewLight.position.set(2.4, 2.2, 2.8);
-    const previewFill = new THREE.DirectionalLight(0xc6d8ff, 0.55);
+    const previewFill = new THREE.DirectionalLight(0xe6e6e6, 0.55);
     previewFill.position.set(-2.1, 1.0, 1.5);
-    const previewRim = new THREE.DirectionalLight(0xffe6c4, 0.42);
+    const previewRim = new THREE.DirectionalLight(0xe6e6e6, 0.42);
     previewRim.position.set(0.7, 1.35, -2.6);
-    const previewAmbient = new THREE.AmbientLight(0xffffff, 0.42);
+    const previewAmbient = new THREE.AmbientLight(0xe6e6e6, 0.42);
     const previewHemi = new THREE.HemisphereLight(
-      0x88aaff,
-      0x090b12,
+      0xcff1f0,
+      0x19170f,
       0.72,
     );
     sceneRef.add(previewAmbient, previewHemi, previewLight, previewFill, previewRim);
@@ -342,24 +342,20 @@ export class TextureEditorController {
     const ctx = canvas.getContext('2d');
     if (!ctx) return new THREE.CanvasTexture(canvas);
 
-    const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-    gradient.addColorStop(0, '#f6d47d');
-    gradient.addColorStop(0.48, '#4f7dd8');
-    gradient.addColorStop(1, '#141a23');
-    ctx.fillStyle = gradient;
+    ctx.fillStyle = '#042471';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     const size = 32;
     for (let y = 0; y < canvas.height; y += size) {
       for (let x = 0; x < canvas.width; x += size) {
         ctx.fillStyle = ((x / size + y / size) % 2 === 0)
-          ? 'rgba(255,255,255,0.34)'
-          : 'rgba(0,0,0,0.26)';
+          ? 'rgba(207,241,240,0.34)'
+          : 'rgba(25,23,15,0.28)';
         ctx.fillRect(x, y, size, size);
       }
     }
 
-    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.strokeStyle = 'rgba(230,230,230,0.55)';
     ctx.lineWidth = 3;
     for (let x = -canvas.height; x < canvas.width; x += 48) {
       ctx.beginPath();
@@ -368,7 +364,7 @@ export class TextureEditorController {
       ctx.stroke();
     }
 
-    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.fillStyle = 'rgba(207,241,240,0.82)';
     ctx.beginPath();
     ctx.arc(196, 58, 26, 0, Math.PI * 2);
     ctx.fill();
