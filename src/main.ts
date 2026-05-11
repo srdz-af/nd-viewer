@@ -72,6 +72,7 @@ import { AxisGizmoController } from './ui/AxisGizmoController';
 import { ModalOverlayController } from './ui/ModalOverlayController';
 import { ObjectListController } from './ui/ObjectListController';
 import { PaneController } from './ui/PaneController';
+import { SceneLightPanelController } from './ui/SceneLightPanelController';
 import { TextureEditorController } from './ui/TextureEditorController';
 import { ViewModeController } from './ui/ViewModeController';
 import { WelcomeSplashController } from './ui/WelcomeSplashController';
@@ -119,8 +120,6 @@ import {
 } from './scene/topologyState';
 import {
   cloneTransformState,
-  colorFromInput,
-  colorToHex,
   finiteInteger,
   finiteNumber,
   isPackedSceneUrlState,
@@ -311,15 +310,6 @@ const welcomeLoadSceneButton = document.getElementById('welcome-load-scene-butto
 const welcomeCloseButton = document.getElementById('welcome-close-button') as HTMLButtonElement | null;
 const welcomeDontShowInput = document.getElementById('welcome-dont-show') as HTMLInputElement | null;
 const welcomeRecentList = document.getElementById('welcome-recent-list') as HTMLDivElement | null;
-const sceneLightSelect = document.getElementById('scene-light-select') as HTMLSelectElement | null;
-const sceneLightAddPointButton = document.getElementById('scene-light-add-point') as HTMLButtonElement | null;
-const sceneLightAddDirectionalButton = document.getElementById('scene-light-add-directional') as HTMLButtonElement | null;
-const sceneLightRemoveButton = document.getElementById('scene-light-remove') as HTMLButtonElement | null;
-const sceneLightShadowInput = document.getElementById('scene-light-shadow') as HTMLInputElement | null;
-const sceneLightShadowValue = document.getElementById('scene-light-shadow-value') as HTMLOutputElement | null;
-const sceneLightColorInput = document.getElementById('scene-light-color') as HTMLInputElement | null;
-const sceneLightColorValue = document.getElementById('scene-light-color-value') as HTMLOutputElement | null;
-const sceneLightIntensityInput = document.getElementById('scene-light-intensity') as HTMLInputElement | null;
 const sceneControlTabButtons = Array.from(document.querySelectorAll('[data-scene-control-tab]')) as HTMLButtonElement[];
 const sceneControlPanels = Array.from(document.querySelectorAll('[data-scene-control-panel]')) as HTMLElement[];
 const modalOverlayController = new ModalOverlayController();
@@ -451,7 +441,7 @@ function setCaptureResolutionMode(renderQuality: RenderQuality) {
   composer.setSize(captureResolutionViewportSize.x, captureResolutionViewportSize.y);
   if (qualityChanged) markProjectionDirty();
   syncSceneLightRuntimes();
-  syncSceneLightControls();
+  sceneLightPanel.sync();
 }
 
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -786,7 +776,7 @@ function setSceneLights(states: SceneLightState[]) {
     selectedSceneLightId = sceneLights[0]?.state.id ?? '';
   }
   syncSceneLightRuntimes();
-  syncSceneLightControls();
+  sceneLightPanel.sync();
 }
 
 function applyAnimationLights(states: SceneLightState[] | undefined) {
@@ -804,7 +794,7 @@ function applyAnimationLights(states: SceneLightState[] | undefined) {
     sceneLights[index].state = cloneSceneLightState(state);
   });
   syncSceneLightRuntimes();
-  syncSceneLightControls();
+  sceneLightPanel.sync();
 }
 
 function selectedSceneLightRuntime() {
@@ -836,58 +826,27 @@ function isGeometrySelectionIndex(idx: number) {
   return sceneObjectStore.isGeometrySelectionIndex(idx);
 }
 
-function syncSceneLightControls() {
-  const selected = selectedSceneLightRuntime();
-  if (sceneLightSelect) {
-    sceneLightSelect.replaceChildren();
-    if (sceneLights.length) {
-      sceneLights.forEach(runtime => {
-        const option = document.createElement('option');
-        option.value = runtime.state.id;
-        option.textContent = runtime.state.label;
-        sceneLightSelect.appendChild(option);
-      });
-      sceneLightSelect.value = selected?.state.id ?? sceneLights[0].state.id;
-    } else {
-      const option = document.createElement('option');
-      option.value = '';
-      option.textContent = 'No lights';
-      sceneLightSelect.appendChild(option);
-    }
-    sceneLightSelect.disabled = sceneLights.length === 0;
-  }
-
-  const enabled = !!selected;
-  if (sceneLightRemoveButton) sceneLightRemoveButton.disabled = !enabled;
-  if (sceneLightAddPointButton) {
-    sceneLightAddPointButton.disabled = !enabled;
-    sceneLightAddPointButton.classList.toggle('active', selected?.state.kind === 'point');
-    sceneLightAddPointButton.setAttribute('aria-pressed', String(selected?.state.kind === 'point'));
-  }
-  if (sceneLightAddDirectionalButton) {
-    sceneLightAddDirectionalButton.disabled = !enabled;
-    sceneLightAddDirectionalButton.classList.toggle('active', selected?.state.kind === 'directional');
-    sceneLightAddDirectionalButton.setAttribute('aria-pressed', String(selected?.state.kind === 'directional'));
-  }
-  if (sceneLightShadowInput) {
-    sceneLightShadowInput.disabled = !enabled;
-    sceneLightShadowInput.checked = selected?.state.castShadow ?? false;
-  }
-  if (sceneLightShadowValue) {
-    if (!selected?.state.castShadow) sceneLightShadowValue.textContent = 'Off';
-    else sceneLightShadowValue.textContent = currentShadowMapSize() > 0 ? 'On' : 'Quality off';
-  }
-  if (sceneLightColorInput) {
-    sceneLightColorInput.disabled = !enabled;
-    sceneLightColorInput.value = colorToHex(selected?.state.color ?? 0xffffff);
-  }
-  if (sceneLightColorValue) sceneLightColorValue.textContent = colorToHex(selected?.state.color ?? 0xffffff);
-  if (sceneLightIntensityInput) {
-    sceneLightIntensityInput.disabled = !enabled;
-    sceneLightIntensityInput.value = `${selected?.state.intensity ?? 0}`;
-  }
-  syncSceneLightRuntimes();
-}
+const sceneLightPanel = new SceneLightPanelController({
+  getLights: () => sceneLights,
+  getSelected: selectedSceneLightRuntime,
+  selectLight: id => {
+    selectedSceneLightId = id;
+    selectObject(selectedSceneLightSelectionIndex());
+  },
+  setKind: setSelectedSceneLightKind,
+  removeSelected: removeSelectedSceneLight,
+  setShadow: enabled => updateSelectedSceneLight(state => {
+    state.castShadow = enabled;
+  }),
+  setColor: color => updateSelectedSceneLight(state => {
+    state.color = color;
+  }),
+  setIntensity: intensity => updateSelectedSceneLight(state => {
+    state.intensity = intensity;
+  }),
+  currentShadowMapSize,
+  syncRuntimes: syncSceneLightRuntimes,
+});
 
 function runImmediateViewportOperation(kind: string, scope: 'edit' | 'object' | 'viewport' | 'light' | 'axis', commit: () => void) {
   if (!viewportInteraction) {
@@ -917,7 +876,7 @@ function performRemoveSelectedSceneLight() {
       ? (selectedInstances[0] ?? NO_SELECTION)
       : normalizeSelectionIndex(selectedInstance);
   }
-  syncSceneLightControls();
+  sceneLightPanel.sync();
   updateObjectList();
   updateSelectionOutline();
   updateTransformActionButtons();
@@ -944,7 +903,7 @@ function performUpdateSelectedSceneLight(mutator: (state: SceneLightState) => vo
     rebuildSceneLightRuntimeKind(selected, sceneLightRuntimeOptions(false));
   }
   syncSceneLightRuntimes();
-  syncSceneLightControls();
+  sceneLightPanel.sync();
   updateObjectList();
   updateTransformActionButtons();
   requestSceneUrlUpdate();
@@ -960,32 +919,6 @@ function setSelectedSceneLightKind(kind: SceneLightKind) {
   updateSelectedSceneLight(state => {
     state.kind = kind;
   });
-}
-
-function bindSceneLightControls() {
-  sceneLightSelect?.addEventListener('change', () => {
-    selectedSceneLightId = sceneLightSelect.value;
-    selectObject(selectedSceneLightSelectionIndex());
-  });
-  sceneLightAddPointButton?.addEventListener('click', () => setSelectedSceneLightKind('point'));
-  sceneLightAddDirectionalButton?.addEventListener('click', () => setSelectedSceneLightKind('directional'));
-  sceneLightRemoveButton?.addEventListener('click', removeSelectedSceneLight);
-  sceneLightShadowInput?.addEventListener('change', () => {
-    updateSelectedSceneLight(state => {
-      state.castShadow = !!sceneLightShadowInput.checked;
-    });
-  });
-  sceneLightColorInput?.addEventListener('change', () => {
-    updateSelectedSceneLight(state => {
-      state.color = colorFromInput(sceneLightColorInput.value, state.color);
-    });
-  });
-  sceneLightIntensityInput?.addEventListener('change', () => {
-    updateSelectedSceneLight(state => {
-      state.intensity = finiteNumber(Number.parseFloat(sceneLightIntensityInput.value), state.intensity);
-    });
-  });
-  syncSceneLightControls();
 }
 
 function sceneLightMarkerScale(position: THREE.Vector3, pixelDiameter: number) {
@@ -1144,7 +1077,7 @@ function endSceneLightDrag(ev: PointerEvent | null, commit: boolean) {
   sceneLightDrag.lightId = '';
   sceneLightDrag.handle = 'position';
   sceneLightDrag.moved = false;
-  syncSceneLightControls();
+  sceneLightPanel.sync();
   if (commit) requestSceneUrlUpdate();
   ev?.preventDefault();
   return true;
@@ -1163,7 +1096,7 @@ function cancelSceneLightDrag() {
   sceneLightDrag.lightId = '';
   sceneLightDrag.handle = 'position';
   sceneLightDrag.moved = false;
-  syncSceneLightControls();
+  sceneLightPanel.sync();
   return true;
 }
 
@@ -1710,7 +1643,7 @@ function setObjectVisible(idx: number, visible: boolean, recordUndo = true) {
   }
   reconcileSelection();
   selectObject(selectedInstance, selectedInstance !== NO_SELECTION);
-  syncSceneLightControls();
+  sceneLightPanel.sync();
   requestSceneUrlUpdate();
 }
 
@@ -1741,7 +1674,7 @@ function renameObject(idx: number, value: string) {
   } else if (lightRuntime) {
     lightRuntime.state.label = label;
     selectedSceneLightId = lightRuntime.state.id;
-    syncSceneLightControls();
+    sceneLightPanel.sync();
   } else {
     extraInstances[idx].label = label;
   }
@@ -1928,7 +1861,7 @@ function selectObject(idx: number, additive = false) {
   transformController.clearFaceCenterCloud();
   transformController.clearEditWireOverlay();
   if (PARAMS.editMode && isGeometrySelectionIndex(selectedInstance) && getObjectVisible(selectedInstance)) updateVertexCloud(selectedInstance);
-  syncSceneLightControls();
+  sceneLightPanel.sync();
   textureEditor.updatePanel();
   updateTransformActionButtons();
   requestSceneUrlUpdate();
@@ -2082,7 +2015,7 @@ function startDuplicatePlacement(position: THREE.Vector3): DuplicatePlacement | 
     selectedSceneLightId = state.id;
     selectObject(lightSelectionIndex(sceneLights.length - 1));
     updateObjectList();
-    syncSceneLightControls();
+    sceneLightPanel.sync();
     return {
       undoSnapshot,
       originalSelectedInstance,
@@ -2133,7 +2066,7 @@ function restoreSelectionAfterDuplicate(placement: DuplicatePlacement) {
   else if (!sceneLights.some(runtime => runtime.state.id === selectedSceneLightId)) selectedSceneLightId = sceneLights[0]?.state.id ?? '';
   updateObjectList();
   updateSelectionOutline();
-  syncSceneLightControls();
+  sceneLightPanel.sync();
   textureEditor.updatePanel();
   updateTransformActionButtons();
 }
@@ -2165,7 +2098,7 @@ function commitDuplicatePlacement(token: unknown) {
   sceneHistory.push(placement.undoSnapshot);
   updateObjectList();
   updateSelectionOutline();
-  syncSceneLightControls();
+  sceneLightPanel.sync();
   textureEditor.updatePanel();
   requestSceneUrlUpdate();
 }
@@ -2320,7 +2253,7 @@ function deleteSelected() {
   selectedInstances = keepBaseSelected ? [BASE_SELECTION] : [];
   reconcileSceneMaterials();
   projectAndRenderAll();
-  syncSceneLightControls();
+  sceneLightPanel.sync();
   updateObjectList();
   selectObject(selectedInstance);
   requestSceneUrlUpdate();
@@ -3672,7 +3605,7 @@ function addSceneLightAt(kind: SceneLightKind, position: THREE.Vector3) {
   selectObject(lightSelectionIndex(sceneLights.length - 1));
   setSceneControlTab('lights');
   updateObjectList();
-  syncSceneLightControls();
+  sceneLightPanel.sync();
   requestSceneUrlUpdate();
 }
 
@@ -3854,7 +3787,7 @@ animationTimeline.bind();
 viewportCapture.bindControls();
 modalOverlayController.bindControls();
 renderEffects.bind();
-bindSceneLightControls();
+sceneLightPanel.bind();
 editModeToggle?.addEventListener('click', () => setEditMode(!PARAMS.editMode));
 mobileFullscreenToggle?.addEventListener('click', () => void toggleMobileFullscreen());
 document.addEventListener('fullscreenchange', updateMobileFullscreenToggle);
