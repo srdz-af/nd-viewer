@@ -110,6 +110,34 @@ type BackgroundControllerOptions = {
   onStateChange?: () => void;
 };
 
+export function backgroundElementsFromDocument() {
+  return {
+    selectorEl: document.getElementById('background-selector') as HTMLDivElement | null,
+    swatchButtons: Array.from(document.querySelectorAll('#background-swatches .background-swatch[data-hdri]')) as HTMLButtonElement[],
+    blurInput: document.getElementById('background-blur') as HTMLInputElement | null,
+    blurValue: document.getElementById('background-blur-value') as HTMLOutputElement | null,
+    lightnessInput: document.getElementById('background-lightness') as HTMLInputElement | null,
+    lightnessValue: document.getElementById('background-lightness-value') as HTMLOutputElement | null,
+    colorInput: document.getElementById('background-color') as HTMLInputElement | null,
+    colorValue: document.getElementById('background-color-value') as HTMLOutputElement | null,
+    environmentLightButton: document.getElementById('environment-light-toggle') as HTMLButtonElement | null,
+    qualityButtons: Array.from(document.querySelectorAll('#background-quality-toggle button[data-hdri-quality]')) as HTMLButtonElement[],
+    controlsEl: document.getElementById('background-controls') as HTMLDivElement | null,
+  } satisfies Pick<BackgroundControllerOptions,
+    | 'selectorEl'
+    | 'swatchButtons'
+    | 'blurInput'
+    | 'blurValue'
+    | 'lightnessInput'
+    | 'lightnessValue'
+    | 'colorInput'
+    | 'colorValue'
+    | 'environmentLightButton'
+    | 'qualityButtons'
+    | 'controlsEl'
+  >;
+}
+
 export type BackgroundUrlState = {
   key: string;
   quality: HdriQuality;

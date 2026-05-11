@@ -61,13 +61,14 @@ import {
   surfaceTopologyFromCellTopology,
   type CellTopology,
 } from './geometry/cellTopology';
-import { BackgroundController, type BackgroundUrlState } from './background/BackgroundController';
+import { BackgroundController, backgroundElementsFromDocument, type BackgroundUrlState } from './background/BackgroundController';
 import { KeyboardCameraController } from './controls/KeyboardCameraController';
 import { KeyboardShortcutController } from './interaction/KeyboardShortcutController';
 import { TransformController } from './interaction/TransformController';
 import { ViewportInteractionController } from './interaction/ViewportInteractionController';
 import { createBidirectionalAxes, createFadingGrid } from './viewport/grid';
 import { AxisGizmoController } from './ui/AxisGizmoController';
+import { DimensionControlController } from './ui/DimensionControlController';
 import { EditToolbarController } from './ui/EditToolbarController';
 import { ModalOverlayController } from './ui/ModalOverlayController';
 import { ObjectListController } from './ui/ObjectListController';
@@ -77,7 +78,7 @@ import { SceneLightPanelController } from './ui/SceneLightPanelController';
 import { TextureEditorController } from './ui/TextureEditorController';
 import { ViewModeController } from './ui/ViewModeController';
 import { WelcomeSplashController } from './ui/WelcomeSplashController';
-import { ViewportCaptureController } from './viewport/ViewportCaptureController';
+import { ViewportCaptureController, viewportCaptureElementsFromDocument } from './viewport/ViewportCaptureController';
 import { HypercubeRenderer } from './rendering/HypercubeRenderer';
 import { CachedGrainPass, ColorGradeShader, CopyFramePass, SmoothAfterimagePass } from './rendering/postProcessingPasses';
 import { RenderEffectsController, clamp01, clampSigned01, renderEffectsElementsFromDocument } from './rendering/RenderEffectsController';
@@ -265,19 +266,11 @@ function requestSceneUrlUpdate() {
 
 const app = document.getElementById('app')!;
 const ctxMenu = document.getElementById('context-menu') as HTMLDivElement | null;
-const renderAnimationButton = document.getElementById('render-animation-button') as HTMLButtonElement | null;
-const recordViewportButton = document.getElementById('record-viewport-button') as HTMLButtonElement | null;
-const recordViewportTimer = document.getElementById('record-viewport-timer') as HTMLSpanElement | null;
-const captureFrameButton = document.getElementById('capture-frame-button') as HTMLButtonElement | null;
-const cameraViewOverlay = document.getElementById('camera-view-overlay') as HTMLDivElement | null;
 const editModeToggle = document.getElementById('edit-mode-toggle') as HTMLButtonElement | null;
 const mobileFullscreenToggle = document.getElementById('mobile-fullscreen-toggle') as HTMLButtonElement | null;
 const transformMoveButton = document.getElementById('transform-move-button') as HTMLButtonElement | null;
 const transformRotateButton = document.getElementById('transform-rotate-button') as HTMLButtonElement | null;
 const transformScaleButton = document.getElementById('transform-scale-button') as HTMLButtonElement | null;
-const dimensionValue = document.getElementById('dimension-value') as HTMLOutputElement | null;
-const dimensionDownButton = document.getElementById('dimension-down') as HTMLButtonElement | null;
-const dimensionUpButton = document.getElementById('dimension-up') as HTMLButtonElement | null;
 const cameraRecenterButton = document.getElementById('camera-recenter-button') as HTMLButtonElement | null;
 const focusResetButton = document.getElementById('focus-reset-button') as HTMLButtonElement | null;
 const sceneUndoButton = document.getElementById('scene-undo-button') as HTMLButtonElement | null;
@@ -293,6 +286,10 @@ const welcomeRecentList = document.getElementById('welcome-recent-list') as HTML
 const modalOverlayController = new ModalOverlayController();
 const paneController = new PaneController();
 const sceneControlTabs = new SceneControlTabsController();
+const dimensionControl = new DimensionControlController({
+  getDimension: () => PARAMS.N,
+  setDimension: value => setNewPrimitiveDimension(value),
+});
 const welcomeSplashController = new WelcomeSplashController(
   {
     splash: welcomeSplash,
@@ -336,17 +333,7 @@ const backgroundController = new BackgroundController({
   fallbackEnvironmentTarget,
   baseBackground,
   editBackground,
-  selectorEl: document.getElementById('background-selector') as HTMLDivElement | null,
-  swatchButtons: Array.from(document.querySelectorAll('#background-swatches .background-swatch[data-hdri]')) as HTMLButtonElement[],
-  blurInput: document.getElementById('background-blur') as HTMLInputElement | null,
-  blurValue: document.getElementById('background-blur-value') as HTMLOutputElement | null,
-  lightnessInput: document.getElementById('background-lightness') as HTMLInputElement | null,
-  lightnessValue: document.getElementById('background-lightness-value') as HTMLOutputElement | null,
-  colorInput: document.getElementById('background-color') as HTMLInputElement | null,
-  colorValue: document.getElementById('background-color-value') as HTMLOutputElement | null,
-  environmentLightButton: document.getElementById('environment-light-toggle') as HTMLButtonElement | null,
-  qualityButtons: Array.from(document.querySelectorAll('#background-quality-toggle button[data-hdri-quality]')) as HTMLButtonElement[],
-  controlsEl: document.getElementById('background-controls') as HTMLDivElement | null,
+  ...backgroundElementsFromDocument(),
   getRenderMode: () => PARAMS.renderMode,
   getEditMode: () => PARAMS.editMode,
   onStateChange: () => requestSceneUrlUpdate(),
@@ -576,11 +563,7 @@ const viewportCapture = new ViewportCaptureController({
   camera,
   gridGroup,
   axes,
-  cameraOverlayEl: cameraViewOverlay,
-  renderButton: renderAnimationButton,
-  recordButton: recordViewportButton,
-  captureButton: captureFrameButton,
-  timerEl: recordViewportTimer,
+  ...viewportCaptureElementsFromDocument(),
   setCaptureResolutionMode,
   renderFrame: () => renderViewportFrame(),
   renderAnimationFrame: frame => animationTimeline?.seekToFrame(frame, true),
@@ -3176,9 +3159,7 @@ geometryEditService = new GeometryEditService<PackedSceneUrlState>({
 });
 
 function updateDimensionControl() {
-  if (dimensionValue) dimensionValue.textContent = `${PARAMS.N}D`;
-  if (dimensionDownButton) dimensionDownButton.disabled = PARAMS.N <= 3;
-  if (dimensionUpButton) dimensionUpButton.disabled = PARAMS.N >= MAX_N;
+  dimensionControl.sync();
 }
 
 function setNewPrimitiveDimension(value: number) {
@@ -3679,6 +3660,7 @@ modalOverlayController.bindControls();
 renderEffects.bind();
 sceneLightPanel.bind();
 editToolbar?.bind();
+dimensionControl.bind();
 editModeToggle?.addEventListener('click', () => setEditMode(!PARAMS.editMode));
 mobileFullscreenToggle?.addEventListener('click', () => void toggleMobileFullscreen());
 document.addEventListener('fullscreenchange', updateMobileFullscreenToggle);
@@ -3702,8 +3684,6 @@ sceneLoadInput?.addEventListener('change', () => {
 ].forEach(entry => {
   entry.el?.addEventListener('click', () => transformController.toggleTransformMode(entry.mode));
 });
-dimensionDownButton?.addEventListener('click', () => setNewPrimitiveDimension(PARAMS.N - 1));
-dimensionUpButton?.addEventListener('click', () => setNewPrimitiveDimension(PARAMS.N + 1));
 cameraRecenterButton?.addEventListener('click', () => keyboardCamera.recenterCamera());
 focusResetButton?.addEventListener('click', () => keyboardCamera.resetFocus());
 new KeyboardShortcutController({
