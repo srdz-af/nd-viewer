@@ -70,6 +70,7 @@ import {
 } from './animation/KeyframeTimelineController';
 import { createSceneInstance, type InstanceGeometryData } from './scene/instanceFactory';
 import { DEFAULT_SCENE_STATE } from './scene/defaultSceneState';
+import { GeometryEditService, type EditGeometrySnapshot } from './scene/GeometryEditService';
 import { cloneObjectOrigin, computeObjectOrigin, type ObjectOrigin } from './scene/objectOrigin';
 import { ProjectionPipeline } from './scene/ProjectionPipeline';
 import { RenderSyncService } from './scene/RenderSyncService';
@@ -263,13 +264,7 @@ type EditInsetToken = {
   amount: number;
   original: EditBevelGeometrySnapshot;
 };
-type EditBevelGeometrySnapshot = {
-  X: Float32Array;
-  E: Uint32Array;
-  M: number;
-  cellTopology?: CellTopology;
-  surfaceTopology?: PrimitiveSurfaceTopology;
-};
+type EditBevelGeometrySnapshot = EditGeometrySnapshot;
 type EditBevelToken = {
   undoSnapshot: PackedSceneUrlState;
   mode: EditOperationMode;
@@ -877,6 +872,7 @@ const applyAutoRotation = (dt: number) => axisController.applyAutoRotation(dt);
 let projectionPipeline: ProjectionPipeline | null = null;
 let renderSync: RenderSyncService;
 let sceneObjectStore: SceneObjectStore<SceneLightRuntime>;
+let geometryEditService: GeometryEditService<PackedSceneUrlState>;
 let projectionDirty = true;
 
 function markProjectionDirty() {
@@ -4861,10 +4857,6 @@ function selectedGeometryDimension() {
   return extraInstances[selectedInstance]?.originalN ?? 0;
 }
 
-function finalizeCommittedGeometryEdit() {
-  renderSync.refreshAfterGeometryChange(selectedInstance);
-}
-
 function cellVertexSignature(vertices: number[]) {
   return vertices.slice().sort((a, b) => a - b).join(':');
 }
@@ -5226,9 +5218,7 @@ function updateEditExtrusion(token: unknown, amount: number) {
 
 function commitEditExtrusion(token: unknown) {
   if (!isEditExtrusionToken(token)) return;
-  if (sceneUrlApplying) return;
-  sceneHistory.push(token.undoSnapshot);
-  finalizeCommittedGeometryEdit();
+  geometryEditService.commit(token.undoSnapshot, token.instIdx);
 }
 
 function cancelEditExtrusion(token: unknown) {
@@ -5242,51 +5232,11 @@ function cancelEditExtrusion(token: unknown) {
 }
 
 function captureEditGeometrySnapshot(instIdx: number): EditBevelGeometrySnapshot | null {
-  if (instIdx === BASE_SELECTION) {
-    if (M <= 0 || !baseVisible) return null;
-    return {
-      X: new Float32Array(X),
-      E: new Uint32Array(E),
-      M,
-      cellTopology: cloneCellTopology(baseCellTopology),
-      surfaceTopology: clonePrimitiveSurfaceTopology(baseSurfaceTopology),
-    };
-  }
-
-  const target = extraInstances[instIdx];
-  if (!target || target.M <= 0 || !target.visible) return null;
-  return {
-    X: new Float32Array(target.X),
-    E: new Uint32Array(target.E),
-    M: target.M,
-    cellTopology: cloneCellTopology(target.cellTopology),
-    surfaceTopology: clonePrimitiveSurfaceTopology(target.surfaceTopology),
-  };
+  return geometryEditService.captureSnapshot(instIdx);
 }
 
 function restoreEditGeometrySnapshot(instIdx: number, original: EditBevelGeometrySnapshot) {
-  if (instIdx === BASE_SELECTION) {
-    X = new Float32Array(original.X);
-    M = original.M;
-    Y = new Float32Array(3 * M);
-    E = new Uint32Array(original.E);
-    baseCellTopology = cloneCellTopology(original.cellTopology);
-    baseSurfaceTopology = clonePrimitiveSurfaceTopology(original.surfaceTopology);
-    if (M > 0) {
-      renderSync.rebuildBaseRenderer();
-      baseVisible = true;
-    }
-  } else {
-    const target = extraInstances[instIdx];
-    if (!target) return;
-    target.X = new Float32Array(original.X);
-    target.M = original.M;
-    target.Y = new Float32Array(3 * target.M);
-    target.E = new Uint32Array(original.E);
-    target.cellTopology = cloneCellTopology(original.cellTopology);
-    target.surfaceTopology = clonePrimitiveSurfaceTopology(original.surfaceTopology);
-    renderSync.rebuildInstanceRenderer(target);
-  }
+  geometryEditService.restoreSnapshot(instIdx, original);
 }
 
 function captureEditBevelTargetSnapshot(instIdx: number): EditBevelGeometrySnapshot | null {
@@ -5581,9 +5531,7 @@ function updateEditInset(token: unknown, amount: number) {
 
 function commitEditInset(token: unknown) {
   if (!isEditInsetToken(token)) return;
-  if (sceneUrlApplying) return;
-  sceneHistory.push(token.undoSnapshot);
-  finalizeCommittedGeometryEdit();
+  geometryEditService.commit(token.undoSnapshot, token.instIdx);
 }
 
 function cancelEditInset(token: unknown) {
@@ -5816,9 +5764,7 @@ function commitEditBevel(token: unknown) {
     updateObjectList();
     return;
   }
-  if (sceneUrlApplying) return;
-  sceneHistory.push(token.undoSnapshot);
-  finalizeCommittedGeometryEdit();
+  geometryEditService.commit(token.undoSnapshot, token.instIdx);
 }
 
 function cancelEditBevel(token: unknown) {
@@ -6458,6 +6404,50 @@ renderSync = new RenderSyncService({
   updateTransformActionButtons,
   updateVertexCloud,
   requestSceneUrlUpdate,
+});
+
+geometryEditService = new GeometryEditService<PackedSceneUrlState>({
+  baseSelection: BASE_SELECTION,
+  getBaseState: () => ({
+    X,
+    E,
+    M,
+    cellTopology: baseCellTopology,
+    surfaceTopology: baseSurfaceTopology,
+  }),
+  setBaseState: state => {
+    X = new Float32Array(state.X);
+    M = state.M;
+    Y = new Float32Array(3 * M);
+    E = new Uint32Array(state.E);
+    baseCellTopology = cloneCellTopology(state.cellTopology);
+    baseSurfaceTopology = clonePrimitiveSurfaceTopology(state.surfaceTopology);
+    if (M > 0) baseVisible = true;
+  },
+  getInstanceState: idx => {
+    const target = extraInstances[idx];
+    return target ? {
+      X: target.X,
+      E: target.E,
+      M: target.M,
+      cellTopology: target.cellTopology,
+      surfaceTopology: target.surfaceTopology,
+    } : null;
+  },
+  setInstanceState: (idx, state) => {
+    const target = extraInstances[idx];
+    if (!target) return;
+    target.X = new Float32Array(state.X);
+    target.M = state.M;
+    target.Y = new Float32Array(3 * target.M);
+    target.E = new Uint32Array(state.E);
+    target.cellTopology = cloneCellTopology(state.cellTopology);
+    target.surfaceTopology = clonePrimitiveSurfaceTopology(state.surfaceTopology);
+  },
+  getObjectVisible,
+  isSceneApplying: () => sceneUrlApplying,
+  history: sceneHistory,
+  renderSync,
 });
 
 function updateDimensionControl() {
