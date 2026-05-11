@@ -24,7 +24,7 @@
         --brand-paper: #e6e6e6;
         --ui-bg: rgba(25,23,15,0.82);
         --ui-bg-soft: rgba(4,36,113,0.46);
-        --ui-control-bg: rgba(25,23,15,0.54);
+        --ui-control-bg: var(--brand-ink);
         --ui-bg-hover: rgba(230,230,230,0.16);
         --ui-border: rgba(207,241,240,0.28);
         --ui-border-soft: rgba(230,230,230,0.15);
@@ -88,15 +88,6 @@
       #context-menu,
       #tooltip,
       #help-dialog,
-      #axis-cycle-button,
-      #axis-sync-rotations-button,
-      #camera-recenter-button,
-      #focus-reset-button,
-      #scene-undo-button,
-      #scene-redo-button,
-      #scene-save-button,
-      #scene-load-button,
-      #pane-toggle,
       #background-controls input[type="color"],
       #environment-light-toggle,
       #texture-preview-wrap,
@@ -492,7 +483,7 @@
         padding: 0 8px;
         border: 0;
         border-radius: 4px;
-        background: var(--ui-bg-soft);
+        background: var(--ui-control-bg);
         color: var(--ui-text-strong);
         font: 12px/1 var(--ui-font);
       }
@@ -503,7 +494,7 @@
         padding: 0 8px;
         border: 0;
         border-radius: 4px;
-        background: var(--ui-bg-soft);
+        background: var(--ui-control-bg);
         color: var(--ui-text-strong);
         font: 12px/1 var(--ui-font);
       }
@@ -1548,7 +1539,7 @@
         height: 28px;
         border: 1px solid var(--ui-border-soft);
         border-radius: 4px;
-        background: var(--ui-bg-soft);
+        background: var(--ui-control-bg);
         color: var(--ui-text-strong);
         font: inherit;
       }
@@ -1605,7 +1596,7 @@
         padding: 0 8px;
         border: 1px solid var(--ui-border-soft);
         border-radius: 4px;
-        background: var(--ui-bg-soft);
+        background: var(--ui-control-bg);
         color: var(--ui-text-strong);
         font: inherit;
       }
@@ -1764,8 +1755,12 @@
         height: 132px;
         border-radius: 5px;
         border: 1px solid var(--ui-border-soft);
-        background-color: var(--brand-navy);
-        background-image: none;
+        background-color: #1e2530;
+        background-image:
+          linear-gradient(45deg, rgba(255,255,255,0.08) 25%, transparent 25%),
+          linear-gradient(-45deg, rgba(255,255,255,0.08) 25%, transparent 25%),
+          linear-gradient(45deg, transparent 75%, rgba(255,255,255,0.08) 75%),
+          linear-gradient(-45deg, transparent 75%, rgba(255,255,255,0.08) 75%);
         background-size: 16px 16px;
         background-position: 0 0, 0 8px, 8px -8px, -8px 0;
         overflow: hidden;
@@ -1819,7 +1814,7 @@
         padding: 0 8px;
         border: 1px solid var(--ui-border-soft);
         border-radius: 4px;
-        background: var(--ui-bg-soft);
+        background: var(--ui-control-bg);
         color: var(--ui-text-strong);
         font: inherit;
       }
@@ -1887,7 +1882,7 @@
         padding: 0 8px;
         border: 1px solid var(--ui-border-soft);
         border-radius: 4px;
-        background: var(--ui-bg-soft);
+        background: var(--ui-control-bg);
         color: var(--ui-text-strong);
         font: inherit;
       }
@@ -2126,21 +2121,21 @@
       #transform-actions button {
         width: 44px;
         height: 44px;
-        border-radius: 7px;
-        border: 0;
-        background: transparent;
-        box-shadow: none;
+        border-radius: 50%;
+        border: 1px solid var(--ui-border);
+        background: var(--ui-bg);
+        box-shadow: var(--ui-shadow);
       }
       #edit-cell-dimension-buttons button {
         width: 25px;
         height: 25px;
-        border-radius: 5px;
+        border-radius: 50%;
         opacity: 0.84;
       }
       #edit-operation-buttons button {
         width: 34px;
         height: 34px;
-        border-radius: 6px;
+        border-radius: 50%;
         opacity: 0.92;
       }
       #transform-actions button:hover {
@@ -2162,6 +2157,44 @@
       }
       #edit-extrude-button .material-symbols-rounded {
         transform: rotate(90deg);
+      }
+      #view-toggle button:not(.active),
+      #render-actions button:not(.active):not(.recording),
+      #animation-timeline-controls button:not(.active),
+      #axis-cycle-button:not(.active),
+      #axis-sync-rotations-button:not(.active),
+      #camera-recenter-button:not(.active),
+      #focus-reset-button:not(.active),
+      #scene-undo-button:not(.active),
+      #scene-redo-button:not(.active),
+      #scene-save-button:not(.active),
+      #scene-load-button:not(.active),
+      #pane-toggle:not(.active),
+      .extra-axis-gizmo button.auto-toggle:not(.active),
+      .extra-axis-gizmo button.perspective-toggle:not(.active) {
+        appearance: none;
+        -webkit-appearance: none;
+        background: transparent !important;
+        background-image: none !important;
+        box-shadow: none !important;
+      }
+      #view-toggle button:not(.active):hover,
+      #render-actions button:not(.active):not(.recording):hover,
+      #animation-timeline-controls button:not(.active):hover,
+      #axis-cycle-button:not(.active):hover,
+      #axis-sync-rotations-button:not(.active):hover,
+      #camera-recenter-button:not(.active):hover,
+      #focus-reset-button:not(.active):hover,
+      #scene-undo-button:not(.active):hover,
+      #scene-redo-button:not(.active):hover,
+      #scene-save-button:not(.active):hover,
+      #scene-load-button:not(.active):hover,
+      #pane-toggle:not(.active):hover,
+      .extra-axis-gizmo button.auto-toggle:not(.active):hover,
+      .extra-axis-gizmo button.perspective-toggle:not(.active):hover {
+        background: transparent !important;
+        background-image: none !important;
+        color: var(--ui-text-strong);
       }
       #help-overlay {
         position: fixed;

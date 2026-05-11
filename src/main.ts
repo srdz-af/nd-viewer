@@ -69,6 +69,7 @@ import {
   type RenderQuality,
 } from './animation/KeyframeTimelineController';
 import { createSceneInstance, type InstanceGeometryData } from './scene/instanceFactory';
+import { DEFAULT_SCENE_STATE } from './scene/defaultSceneState';
 import { cloneObjectOrigin, computeObjectOrigin, type ObjectOrigin } from './scene/objectOrigin';
 import { ProjectionPipeline } from './scene/ProjectionPipeline';
 import { SceneHistory } from './scene/SceneHistory';
@@ -2623,9 +2624,20 @@ async function loadSceneUrlPayload(payload: string, clearUrlAfterLoad: boolean) 
   if (clearUrlAfterLoad) clearScenePayloadFromCurrentUrl();
 }
 
-async function initializeSceneUrlState() {
+async function applyDefaultSceneState() {
+  if (!isPackedSceneUrlState(DEFAULT_SCENE_STATE)) {
+    console.warn('Default scene state is invalid.');
+    return;
+  }
+  await applySceneUrlState(DEFAULT_SCENE_STATE);
+}
+
+async function initializeSceneUrlState(loadDefault = false) {
   const payload = readScenePayloadFromUrl();
-  if (!payload) return;
+  if (!payload) {
+    if (loadDefault) await applyDefaultSceneState();
+    return;
+  }
 
   try {
     await loadSceneUrlPayload(payload, true);
@@ -6966,7 +6978,7 @@ window.addEventListener('blur', () => {
 });
 viewportInteraction.bind();
 void backgroundSelectorReady
-  .then(() => initializeSceneUrlState())
+  .then(() => initializeSceneUrlState(true))
   .catch(err => {
     console.warn('Unable to initialize scene URL state', err);
   });
