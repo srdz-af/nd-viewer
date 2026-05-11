@@ -2538,12 +2538,8 @@ editToolbar = new EditToolbarController({
   getTopology: selectedObjectCellTopology,
   getActiveCellDimension: () => transformController.getEditCellDimension(),
   setCellDimension: setEditCellDimension,
-  canStartBevel: () => canStartEditBevel('edge'),
-  canStartInset: canStartEditInset,
-  canStartExtrude: canStartEditExtrusion,
-  startBevel: () => viewportInteraction.startEditOperationFromLastPointer({ type: 'bevel', kind: 'edge' }, true),
-  startInset: () => viewportInteraction.startEditOperationFromLastPointer({ type: 'inset' }, true),
-  startExtrude: () => viewportInteraction.startEditOperationFromLastPointer({ type: 'extrude' }, true),
+  canStartOperation: request => geometryEditOperationFactory?.canStartOperation(request) ?? false,
+  startOperation: request => viewportInteraction.startEditOperationFromLastPointer(request, true),
 });
 
 function updateDimensionControl() {
@@ -2600,18 +2596,6 @@ function updateTransformActionButtons() {
 
 function hasActiveSelection() {
   return selectionService.hasActiveSelection();
-}
-
-function canStartEditExtrusion() {
-  return geometryEditOperationFactory?.canStartExtrusion() ?? false;
-}
-
-function canStartEditInset() {
-  return geometryEditOperationFactory?.canStartInset() ?? false;
-}
-
-function canStartEditBevel(kind: 'vertex' | 'edge') {
-  return geometryEditOperationFactory?.canStartBevel(kind) ?? false;
 }
 
 function handleTransformConstraintKey(key: string) {

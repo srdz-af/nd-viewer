@@ -5,7 +5,7 @@ import { clonePrimitiveSurfaceTopology, type PrimitiveSurfaceTopology } from '..
 import { cloneCellTopology } from '../geometry/cellTopology';
 import { surfaceTopologyForEditedCellTopology, surfaceTopologyFromPositionedCellTopology } from './topologyState';
 import type { GeometryEditService, EditGeometrySnapshot } from './GeometryEditService';
-import type { EditOperationMode, ViewportAmountOperation } from '../interaction/ViewportInteractionController';
+import type { EditOperationMode, EditOperationRequest, ViewportAmountOperation } from '../interaction/ViewportInteractionController';
 
 const BEVEL_MIN_SMOOTHNESS = 1;
 const BEVEL_MAX_SMOOTHNESS = 32;
@@ -163,6 +163,12 @@ export class GeometryEditOperationFactory<TUndoSnapshot> {
     const context = this.options.selectedEditOperationContext();
     if (!context) return false;
     return collectEditBevelTargets(context.topology, context.selection, kind) !== null;
+  }
+
+  canStartOperation(request: EditOperationRequest) {
+    if (request.type === 'extrude') return this.canStartExtrusion();
+    if (request.type === 'inset') return this.canStartInset();
+    return this.canStartBevel(request.kind ?? 'edge');
   }
 
   createExtrusionOperation(mode: EditOperationMode = 'grouped'): ViewportAmountOperation | null {

@@ -1,5 +1,6 @@
 import { MAX_N } from '../constants';
 import { cellCount, type CellTopology } from '../geometry/cellTopology';
+import type { EditOperationRequest } from '../interaction/ViewportInteractionController';
 
 type EditToolbarControllerOptions = {
   getEditMode: () => boolean;
@@ -8,12 +9,8 @@ type EditToolbarControllerOptions = {
   getTopology: () => CellTopology | undefined;
   getActiveCellDimension: () => number;
   setCellDimension: (dimension: number) => void;
-  canStartBevel: () => boolean;
-  canStartInset: () => boolean;
-  canStartExtrude: () => boolean;
-  startBevel: () => void;
-  startInset: () => void;
-  startExtrude: () => void;
+  canStartOperation: (request: EditOperationRequest) => boolean;
+  startOperation: (request: EditOperationRequest) => void;
 };
 
 function editCellDimensionIcon(dimension: number) {
@@ -45,9 +42,9 @@ export class EditToolbarController {
   bind() {
     if (this.bound) return;
     this.bound = true;
-    this.bevelButton?.addEventListener('click', this.options.startBevel);
-    this.insetButton?.addEventListener('click', this.options.startInset);
-    this.extrudeButton?.addEventListener('click', this.options.startExtrude);
+    this.bevelButton?.addEventListener('click', () => this.options.startOperation({ type: 'bevel', kind: 'edge' }));
+    this.insetButton?.addEventListener('click', () => this.options.startOperation({ type: 'inset' }));
+    this.extrudeButton?.addEventListener('click', () => this.options.startOperation({ type: 'extrude' }));
   }
 
   sync() {
@@ -59,9 +56,9 @@ export class EditToolbarController {
     if (!this.operationButtons) return;
     const visible = this.options.getEditMode();
     this.operationButtons.hidden = !visible;
-    if (this.bevelButton) this.bevelButton.disabled = !this.options.canStartBevel();
-    if (this.insetButton) this.insetButton.disabled = !this.options.canStartInset();
-    if (this.extrudeButton) this.extrudeButton.disabled = !this.options.canStartExtrude();
+    if (this.bevelButton) this.bevelButton.disabled = !this.options.canStartOperation({ type: 'bevel', kind: 'edge' });
+    if (this.insetButton) this.insetButton.disabled = !this.options.canStartOperation({ type: 'inset' });
+    if (this.extrudeButton) this.extrudeButton.disabled = !this.options.canStartOperation({ type: 'extrude' });
   }
 
   private syncCellDimensionButtons() {
