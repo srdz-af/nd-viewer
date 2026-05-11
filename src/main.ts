@@ -5730,12 +5730,7 @@ function applyEditBevelPreview(token: EditBevelToken) {
   }
 
   token.applied = true;
-  projectAndRenderAll();
-  applyObjectVisibility();
-  updateObjectList();
-  updateSelectionOutline();
-  updateTransformActionButtons();
-  if (PARAMS.editMode && getObjectVisible(token.instIdx)) updateVertexCloud(token.instIdx);
+  renderSync.refreshAfterGeometryChange(token.instIdx, { dirtyUrl: false });
 }
 
 function updateEditBevel(token: unknown, amount: number, smoothness: number) {
@@ -5749,11 +5744,7 @@ function commitEditBevel(token: unknown) {
   if (!isEditBevelToken(token)) return;
   if (!token.applied) {
     restoreEditBevelTarget(token);
-    projectAndRenderAll();
-    if (PARAMS.editMode && getObjectVisible(token.instIdx)) updateVertexCloud(token.instIdx);
-    updateSelectionOutline();
-    updateTransformActionButtons();
-    updateObjectList();
+    renderSync.refreshAfterGeometryChange(token.instIdx, { dirtyUrl: false });
     return;
   }
   geometryEditService.commit(token.undoSnapshot, token.instIdx);
@@ -5767,12 +5758,7 @@ function cancelEditBevel(token: unknown) {
     : extraInstances[token.instIdx]?.cellTopology;
   if (token.cellIds.length && topology) transformController.setSelectedEditCells(token.dimension, token.cellIds, topology);
   else transformController.setSelectedEditElement(token.dimension, token.vertices, token.cellId);
-  projectAndRenderAll();
-  applyObjectVisibility();
-  updateObjectList();
-  updateSelectionOutline();
-  updateTransformActionButtons();
-  if (PARAMS.editMode && getObjectVisible(token.instIdx)) updateVertexCloud(token.instIdx);
+  renderSync.refreshAfterGeometryChange(token.instIdx, { dirtyUrl: false });
 }
 
 const extraInstances: Instance[] = [];
