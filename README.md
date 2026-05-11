@@ -6,162 +6,192 @@
 
 # Polyple
 
-Polyple is an interactive N-dimensional geometry viewer built with **Three.js**.
+Polyple is an interactive N-dimensional geometry editor and renderer built with **Three.js**. It lets you create high-dimensional objects, project them into 3D, edit their cells, animate projection/camera state, and share exact scenes through compact saved URLs.
 
-It lets you create, inspect, transform, and edit high-dimensional objects, then project them into 3D.
+![Polyple preview](public/preview.gif)
 
-<video src="public/preview.webm" controls autoplay loop muted playsinline width="100%"></video>
+Live demo: https://polyple.xyz/
 
-Live demo:
-https://polyple.xyz/
+## Features
 
-## What It Supports
-
-- N-dimensional primitive library: hypercube, cross polytope, simplex, simplex prism, demicube, 24-cell, and duoprism
-- Canonical projection using selected axes
-- Global N-D rotation with per-axis auto-rotation controls
-- Object transforms (move/rotate/scale)
-- Vertex edit mode (move vertex)
-- Multiple objects, per-object visibility, rename, delete
-- Per-object surface settings, including standard materials and PBR glass controls
-- View modes: wireframe, rendered, faceted
-- Projection/camera keyframes with timeline playback
-- Undo/redo
+- N-dimensional primitive library: plane, hypercube, spiked hypercube, cross polytope, spiked cross, simplex, spiked simplex, simplex prism, spiked simplex prism, demicube, spiked demicube, 24-cell, spiked 24-cell, duoprism, and spiked duoprism
+- Projection controls for choosing projected axes, reordering extra axes, toggling depth perspective per axis, and auto-rotating extra dimensions
+- Object workflow with multiple meshes, multi-select, visibility toggles, rename/delete, duplication, and transform gizmos
+- Edit mode with selectable vertices, edges, faces, volumes, and higher-dimensional cells when topology is available
+- Cell editing operations: move, rotate, scale, delete, extrude, inset, edge bevel, vertex bevel, inward bevel, grouped operation mode, and individual operation mode
+- Shared material slots with per-object assignment, material splitting, renaming, standard material controls, emissive controls, and PBR glass controls
+- Scene lighting with user-created point and directional lights, selectable light objects, transform support, directional handles, shadows, and an environment-light toggle
+- Environment controls for plain color backgrounds and HDRI backgrounds with quality, blur, and brightness settings
+- Render modes for wireframe, solid, and faceted surfaces
+- Render effects: bloom, motion blur, color hue/saturation/brightness/contrast, antialias mode, and throttled film grain
+- Timeline animation with keyframes for projection, camera, render mode, effects, object state, and lights
+- Render/export tools for animation video, live viewport recording, screenshots, camera frame size, FPS, frame count, and render quality tiers
+- Undo/redo and compact scene save/load through generated URLs or saved text files
+- Mobile fullscreen toggle and mobile-friendly transform controls
 
 ## Quick Start
 
 Requirements:
-- Node.js 18+ (recommended)
 
-Install and run:
+- Node.js 18+
+
+Install and run locally:
 
 ```bash
 npm install
 npm run dev
 ```
 
-Build:
+Build and preview the production bundle:
 
 ```bash
 npm run build
 npm run preview
 ```
 
-## Main Controls
+## UI Map
 
-Camera:
+- **Projection Controls**: the upper-left gizmo dock. It contains the dimension selector, XYZ axis gizmo, axis-cycle/reset/focus controls, and extra-axis gizmos.
+- **Scene Controls**: the right-side panel. It contains the object list, undo/redo, scene save/load, and category tabs.
+- **Environment Tab**: background color/HDRI, HDRI quality, environment lighting, background blur, and background brightness.
+- **Lights Tab**: point/directional light selection, light type switching, color, intensity, shadow toggle, and delete.
+- **Render Tab**: FPS, frame count, camera size, render quality, video render, viewport recording, screenshot capture, and render effects.
+- **Texture Tab**: material selector, material usage count, split-material button, material name, standard/glass controls, emissive controls, and live material preview.
+- **Viewport Mode Controls**: bottom-left wireframe/rendered/faceted mode buttons.
+- **Timeline Controls**: bottom timeline with previous-frame, play/pause, next-frame, scrubber, and keyframe markers.
+- **Transformation Controls**: bottom circular controls for edit mode, move, rotate, scale, and edit operations.
+- **Cell Dimension Buttons**: shown above transform controls in edit mode; select vertex/edge/face/volume/higher-cell selection levels.
 
-- Left mouse drag: orbit
+## Camera And Projection
+
+- Left mouse drag: orbit the camera
 - Mouse wheel: zoom
-- Middle mouse drag: cycle projected axis triples
-- Axis gizmo drag: orbit camera
-- Axis gizmo endpoint click: snap view to axis
-
-Global N-D rotation:
-
-- Extra-axis gizmo drag: rotate global space on that extra dimension's projection plane (4D+)
-- Extra-axis gizmo play button: cycle auto-rotation through 1x, 2x, 3x, then stop
-- Extra-axis gizmo depth button: include/exclude that axis from perspective depth
-
-Object operations:
-
-- Shift + A: add object menu
-- Add object menu: choose from the primitive library
-- G: move selected object
-- R: rotate selected object
-- S: scale selected object
-- X: delete selected object (with confirm)
-- Right click: context menu (add/transform/delete depending selection)
-
-Mobile transforms:
-
-- Touch and drag the Move / Rotate / Scale Transformation Controls to transform the selected object
-- Release touch to confirm the transform
-
-While a transform is active:
-
-- X / Y / Z: lock transform axis
-- Extra-axis plane toggle: W during rotate switches to the active extra-dimension rotation plane
-- Left click: confirm
-- Right click: cancel
-
-Edit mode:
-
-- Tab: toggle edit mode
-- Left click vertex: select vertex
-- Right click selected vertex: open vertex move action
-
-History:
-
-- Ctrl+Z / Cmd+Z: undo
-- Ctrl+Y / Cmd+Y: redo
-- Ctrl+Shift+Z / Cmd+Shift+Z: redo
-
-## UI Overview
-
-Use these names when referring to the main UI groups:
-
-- **Projection Controls**: the gizmo panel. It controls which dimensions are projected, how extra dimensions rotate, and how projection axes are arranged.
-- **Scene Controls**: the right-side panel. It controls objects, environment, render settings/effects, and per-object texture/material settings through category tabs.
-- **Transformation Controls**: the circular bottom controls. They toggle edit mode and activate move, rotate, and scale.
-- **Viewport Mode Controls**: the bottom render-mode box. It switches between wireframe, rendered, and faceted modes.
-- **Timeline Controls**: the bottom timeline. It scrubs frames and contains previous-frame, play/pause, and next-frame buttons.
-
-## Projection Controls
-
-Projection Controls contain the XYZ gizmo, dimension stepper, and extra-axis gizmos.
-
-- Dimension stepper: set the dimension used for newly created primitives
+- <kbd>←</kbd> / <kbd>→</kbd> / <kbd>↑</kbd> / <kbd>↓</kbd>: orbit the camera
+- <kbd>Ctrl</kbd> + <kbd>↑</kbd>/<kbd>↓</kbd>: keyboard zoom
+- Middle mouse drag: cycle the projected XYZ axes
 - XYZ gizmo drag: orbit the camera
 - XYZ endpoint click: snap the camera to that axis direction
-- Shift axes button: cycle which axes are projected into XYZ
-- Reset rotations button: reset extra-axis rotations without stopping active auto-rotation
-- Extra-axis gizmo drag: rotate that extra dimension's projection plane
-- Extra-axis play button: cycle auto-rotation through 1x, 2x, 3x, then stop
-- Extra-axis depth button: include/exclude that axis from perspective depth
+- <kbd>+</kbd> / <kbd>-</kbd>: increase or decrease the dimension used for newly created primitives
+- Dimension buttons: set the new primitive dimension directly
+- Shift axes button: cycle which dimensions project into XYZ
+- Reset rotations button: reset extra-axis rotations
+- Recenter camera button: restore the default camera distance/orbit
+- Reset focus button: return the camera focus to the world origin
+- Extra-axis gizmo drag: rotate global N-D space around that extra dimension's projection plane
+- Extra-axis play button: cycle that axis auto-rotation through speed levels, then stop
+- Extra-axis depth button: include or exclude that axis from perspective depth
 - Extra-axis handle drag: reorder extra axes
-- Drag extra-axis gizmo over XYZ tip: swap that extra axis with the highlighted projected axis
+- Drag an extra-axis gizmo over an XYZ tip: swap that extra axis with the highlighted projected axis
+- <kbd>P</kbd>: toggle extra-axis auto-rotation playback
 
-## Scene Controls
+## Objects
 
-Scene Controls are the right-side panel.
+- <kbd>Shift</kbd> + <kbd>A</kbd>: open the add menu at the pointer
+- Right click empty viewport: open the add/keyframe context menu
+- Add menu: create primitives or lights at the pointer plane
+- Click object: select object
+- <kbd>Shift</kbd> + click object: add/remove object from multi-selection
+- Double click object: focus camera on it
+- Object list: select, multi-select, rename, hide/show, and manage objects
+- <kbd>Shift</kbd> + <kbd>D</kbd>: duplicate selected object and place it with the mouse
+- <kbd>X</kbd>: delete selected object, or confirm deletion if the delete confirmation is already open
+- Left click during placement/operation: commit
+- Right click during placement/operation: cancel without opening the context menu
 
-- Object list: select, rename, hide/show, and manage scene objects
-- Environment tab: choose the plain background color or a studio/HDRI background and tune its settings
-- Render tab: set FPS/frame count/camera size, run labeled capture actions, toggle capture quality, and tune render effects
-- Texture tab: edit the selected object's standard material or PBR glass controls
-- Saved texture: save the current texture settings and reapply saved presets from the dropdown
+## Transforms
 
-Texture controls are disabled/greyed out when no object is selected.
+- <kbd>G</kbd>: move selected objects or selected edit cells
+- <kbd>R</kbd>: rotate selected objects or selected edit cells
+- <kbd>S</kbd>: scale selected objects or selected edit cells
+- Transform buttons: toggle move, rotate, or scale from the viewport UI
+- Transform gizmo handles: start constrained transforms on projected or extra axes
+- <kbd>X</kbd> / <kbd>Y</kbd> / <kbd>Z</kbd> / <kbd>W</kbd> / <kbd>V</kbd> / <kbd>U</kbd> / <kbd>T</kbd> / <kbd>S</kbd> during an active transform: lock to the corresponding object axis when available
+- Press a projected-axis lock key twice during a transform: switch from global projected-axis lock to local-axis lock for that dimension
+- <kbd>Ctrl</kbd> during move/scale: snap to integer coordinates
+- <kbd>Ctrl</kbd> during rotate: snap to 30-degree steps
+- Left click: commit active transform
+- Right click, pointer cancel, or window blur: cancel active transform
+- Pointer-lock operations show a small wrapping drag indicator so long drags can continue past screen edges
 
-## Transformation Controls
+## Edit Mode
 
-Transformation Controls are the circular bottom controls.
+- <kbd>Tab</kbd>: toggle edit mode
+- <kbd>1</kbd>: vertex selection
+- <kbd>2</kbd>: edge selection
+- <kbd>3</kbd>: face selection
+- <kbd>4</kbd>: volume selection
+- <kbd>5</kbd>-<kbd>8</kbd>: higher-dimensional cell selection when available
+- Cell dimension buttons: switch the active edit selection dimension
+- Click edit element: select cell under the pointer
+- <kbd>Shift</kbd> + click edit element: add/remove cells from the selection
+- <kbd>Alt</kbd> + click overlapping edit elements: cycle through candidates at the pointer
+- <kbd>Ctrl</kbd> + <kbd>A</kbd> in edit mode: select all cells in the active edit dimension
+- <kbd>X</kbd> in edit mode: delete the selected cell(s) with pruning and vertex compaction
+- Edit mode changes the viewport background to the default edit background for contrast
 
-- Edit button: toggle vertex edit mode
-- Move button: activate move transform
-- Rotate button: activate rotate transform
-- Scale button: activate scale transform
+## Edit Operations
 
-On mobile, touch and drag a Transformation Control to transform the selected object, then release to confirm.
+- <kbd>E</kbd>: extrude selected edit cells
+- <kbd>I</kbd>: inset selected edit cells
+- <kbd>B</kbd>: edge bevel selected edit cells
+- <kbd>Shift</kbd> + <kbd>B</kbd>: vertex bevel selected edit cells
+- <kbd>Alt</kbd> + <kbd>B</kbd>: inward edge bevel
+- <kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>B</kbd>: inward vertex bevel
+- Edit operation buttons: bevel, inset, and extrude beside the transform controls in edit mode
+- Mouse movement controls operation amount; moving in the opposite direction can produce negative extrusion where supported
+- Mouse wheel during bevel: increase/decrease bevel smoothness level
+- Press the same operation key/button again while that operation is active: switch to individual-cell mode
+- Press another operation shortcut while an operation is active: cancel the current operation and start the new one
+- Adjacent selected cells default to grouped operation behavior; repeated operation activation switches to individual behavior
+- Left click: commit operation and write undo/history state
+- Right click, pointer cancel, or window blur: cancel operation and restore the previous topology
 
-## Render Controls
+## Materials
 
-Render Controls are split between the bottom viewport/timeline controls and the Render tab of Scene Controls.
+- Texture tab is always available, even when no object is selected
+- Material dropdown lists all scene materials currently held by objects
+- Material count shows how many objects use the selected material
+- Split material button makes the selected object use an independent material copy
+- Name field renames the selected material slot
+- Editing a shared material updates every object using that material
+- Standard material controls: base color, metalness, roughness, alpha, emissive color, and emissive intensity
+- Glass material controls: base color, alpha, roughness, transmission, IOR, thickness, attenuation color/distance, clearcoat, clearcoat roughness, specular intensity, emissive color, and emissive intensity
+- Material preview uses a generated backdrop/floor only inside the preview so glass and reflection settings are visible
 
-- Wireframe / Rendered / Faceted: change viewport render mode
-- Previous / Play / Next or Space: step through or preview the keyframed animation
-- Render tab: set FPS and frame count, render the animation as a video, record the live viewport, capture a screenshot, or toggle capture quality
-- Timeline: scrub through frames and jump to added keyframes
-- Timeline or canvas right click: insert a keyframe or remove the last keyframe at/before the current frame
-- I: insert keyframe at the current frame
-- U: remove the last keyframe at or before the current frame
+## Lights And Environment
 
-Keyframes capture the current N-D rotation, projection axis order, render mode, bloom, motion blur, camera position, camera target, FOV, and zoom. The render button exports the animation from frame 0 through the configured frame count. Live recording captures the viewport until you stop it.
+- Lights are scene objects and can be selected, moved, duplicated, deleted, and keyframed
+- Add menu can create point lights and directional lights
+- Lights tab switches the selected light between point and directional type
+- Directional lights expose a viewport handle for direction control
+- Environment tab can use a plain color or one of the built-in HDRI backgrounds
+- Background color picker controls the plain background color
+- Environment lighting toggle enables/disables scene illumination from the environment
+- HDRI quality controls switch background assets between SD/HD variants
+- Background blur and brightness tune the environment backdrop
 
-Shortcuts:
+## Rendering And Animation
 
-- 1 / 2 / 3: switch render mode
-- Ctrl+Shift+E: export the animation as video
-- Shift+R: start/stop recording
-- Shift+S: download screenshot
+- <kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> outside edit mode: switch wireframe, rendered, or faceted viewport mode
+- Viewport mode buttons: switch wireframe/rendered/faceted mode
+- <kbd>Space</kbd>: play/pause timeline preview
+- Previous / Play / Next timeline buttons: step or play the animation
+- Timeline scrubber: seek frame
+- Right click timeline or canvas: add/remove keyframes from the keyframe menu
+- <kbd>I</kbd> outside edit mode: insert a keyframe at the current frame
+- <kbd>U</kbd> outside edit mode: remove the last keyframe at or before the current frame
+- Render tab: set FPS, frame count, camera output size, render quality, and render effects
+- <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>E</kbd>: render the animation as video
+- <kbd>Shift</kbd> + <kbd>R</kbd>: start/stop live viewport recording
+- <kbd>Shift</kbd> + <kbd>S</kbd>: download a screenshot of the current frame
+- <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>D</kbd>: show/hide FPS and frame-time overlay
+
+## History And Scene Files
+
+- <kbd>Ctrl</kbd> + <kbd>Z</kbd> / <kbd>Cmd</kbd> + <kbd>Z</kbd>: undo
+- <kbd>Ctrl</kbd> + <kbd>Y</kbd> / <kbd>Cmd</kbd> + <kbd>Y</kbd>: redo
+- <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd> / <kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd>: redo
+- Undo/redo uses compact scene state snapshots for committed operations
+- Save button: generate the compact scene string, download it as a text file, and copy the shareable URL to the clipboard
+- Load button: load a saved scene text file
+- Opening a saved scene URL recreates the exact scene, then restores the browser URL back to the app route after loading
