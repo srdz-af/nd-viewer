@@ -1364,7 +1364,7 @@
         gap: 14px;
         width: 100%;
         margin: 0;
-        padding: 4px 0 10px;
+        padding: 4px 4px 10px 6px;
         overflow-x: auto;
         overflow-y: hidden;
         overscroll-behavior-x: contain;
@@ -2283,6 +2283,15 @@
         font-size: 13px;
         line-height: 1.45;
       }
+      #welcome-version {
+        position: absolute;
+        top: 10px;
+        left: 18px;
+        z-index: 1;
+        color: rgba(25,23,15,0.72);
+        font: 800 11px/20px var(--ui-font);
+        letter-spacing: 0.02em;
+      }
       #welcome-github-star {
         position: absolute;
         top: 10px;
@@ -2808,6 +2817,9 @@
         #welcome-github-star {
           right: 14px;
         }
+        #welcome-version {
+          left: 14px;
+        }
         #welcome-splash-logo img {
           width: calc(100% - 54px);
           height: calc(100% - 54px);
@@ -2839,6 +2851,7 @@
       <section id="welcome-splash-card">
         <h1 id="welcome-splash-title" class="sr-only">Polyple</h1>
         <div id="welcome-splash-logo" aria-hidden="true">
+          <span id="welcome-version">v0.0.1</span>
           <img src="./logo_light.png" alt="" />
           <div id="welcome-github-star">
             <iframe src="https://ghbtns.com/github-btn.html?user=srdz-af&repo=polyple&type=star&count=true" frameborder="0" scrolling="0" width="76" height="20" title="Star Polyple on GitHub"></iframe>

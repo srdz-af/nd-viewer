@@ -96,9 +96,16 @@ import type { ExtraAxisGizmoState } from '../ui/ExtraAxisGizmoController';
 
 
 export class PolypleApp {
+  private readonly confirmExitHandler = (ev: BeforeUnloadEvent) => {
+    ev.preventDefault();
+    ev.returnValue = '';
+  };
+
   constructor(private readonly app: HTMLElement) {}
 
   start() {
+    window.addEventListener('beforeunload', this.confirmExitHandler);
+
     const DEFAULT_BLOOM_INTENSITY = 0;
     const DEFAULT_MOTION_BLUR_INTENSITY = 0;
     const DEFAULT_COLOR_HUE = 0;
@@ -1841,6 +1848,7 @@ export class PolypleApp {
   }
 
   dispose() {
+    window.removeEventListener('beforeunload', this.confirmExitHandler);
     // Runtime cleanup is intentionally incremental; existing handlers are process-lifetime bound for now.
   }
 }
