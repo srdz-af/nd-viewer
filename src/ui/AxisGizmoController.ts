@@ -48,7 +48,6 @@ type AxisGizmoControllerOptions = {
 export class AxisGizmoController {
   private readonly axisGizmoEl = document.getElementById('axis-gizmo') as HTMLDivElement | null;
   private readonly axisLegend = document.getElementById('axis-legend') as HTMLDivElement | null;
-  private readonly axisCycleButton = document.getElementById('axis-cycle-button') as HTMLButtonElement | null;
   private readonly axisSyncRotationsButton = document.getElementById('axis-sync-rotations-button') as HTMLButtonElement | null;
   private readonly paneToggleButton = document.getElementById('pane-toggle') as HTMLButtonElement | null;
   private readonly axisGizmoParts: AxisGizmoPart[] = [];
@@ -72,14 +71,11 @@ export class AxisGizmoController {
     this.extraAxisGizmos = new ExtraAxisGizmoController({
       rootEl: document.getElementById('extra-axis-gizmos') as HTMLDivElement | null,
       getVisibleDims: () => this.visibleDims(),
-      getAxesOrder: () => this.axesOrder,
-      getAxesOffset: () => this.axesOffset,
       getParams: () => this.options.getParams(),
       getRot: () => this.options.getRot(),
       applySceneBackground: () => this.options.applySceneBackground(),
       projectAndRenderAll: () => this.options.projectAndRenderAll(),
       markProjectionDirty: () => this.options.markProjectionDirty?.(),
-      reorderExtraAxes: orderedExtraDims => this.reorderExtraAxes(orderedExtraDims),
       updateProjectedAxisDropTarget: (clientX, clientY, ghostRect) => {
         this.updateProjectedAxisDropTarget(clientX, clientY, ghostRect);
       },
@@ -175,18 +171,6 @@ export class AxisGizmoController {
     return this.extraAxisGizmos.perspectiveDimsFor(localN, axisMap);
   }
 
-  primaryExtraRotationDepthDim(localN: number, axisMap: AxisMap): number {
-    return this.extraAxisGizmos.primaryExtraRotationDepthDim(localN, axisMap);
-  }
-
-  extraRotationPlaneAxis(lockAxis: -1 | 0 | 1 | 2, depthDim: number, n: number) {
-    const params = this.options.getParams();
-    const axes = [params.axesX, params.axesY, params.axesZ].map(dim => Math.max(0, Math.min(n - 1, dim % n)));
-    const preferred = axes[lockAxis >= 0 ? lockAxis : 0];
-    if (preferred !== depthDim) return preferred;
-    return axes.find(dim => dim !== depthDim) ?? -1;
-  }
-
   setProjectionAxes({ x, y, z }: ProjectionAxes) {
     const params = this.options.getParams();
     const nVis = this.visibleDims();
@@ -205,18 +189,6 @@ export class AxisGizmoController {
     this.renderAxisList();
     this.options.projectAndRenderAll();
     this.options.onStateChange?.();
-  }
-
-  cycleAxes(step: number) {
-    const params = this.options.getParams();
-    const n = this.visibleDims();
-    if (n < 3) return;
-    this.axesOffset = (((this.axesOffset + step) % n) + n) % n;
-    this.setProjectionAxes({
-      x: this.axesOrder[this.axesOffset % n],
-      y: this.axesOrder[(this.axesOffset + 1) % n],
-      z: this.axesOrder[(this.axesOffset + 2) % n],
-    });
   }
 
   updateAxesHelperColors() {
@@ -248,7 +220,6 @@ export class AxisGizmoController {
 
   renderAxisList() {
     this.bindProjectionControls();
-    if (this.axisCycleButton) this.axisCycleButton.disabled = this.visibleDims() < 3;
     if (this.axisSyncRotationsButton) this.axisSyncRotationsButton.disabled = this.visibleDims() < 4;
     this.options.setPaneCollapsed(this.options.getPaneCollapsed());
     this.extraAxisGizmos.sync();
@@ -426,35 +397,8 @@ export class AxisGizmoController {
     });
   }
 
-  private reorderExtraAxes(orderedExtraDims: number[]) {
-    const nVis = this.visibleDims();
-    if (nVis <= 3) return;
-    const projectionOrder = this.projectionOrder();
-    const activeDims = projectionOrder.slice(0, 3);
-    const currentExtraDims = projectionOrder.slice(3);
-    const extraSet = new Set(currentExtraDims);
-    const nextExtraDims: number[] = [];
-
-    for (const dim of orderedExtraDims) {
-      if (!extraSet.has(dim) || nextExtraDims.includes(dim)) continue;
-      nextExtraDims.push(dim);
-    }
-    for (const dim of currentExtraDims) {
-      if (!nextExtraDims.includes(dim)) nextExtraDims.push(dim);
-    }
-
-    this.axesOrder = [...activeDims, ...nextExtraDims, ...this.axesOrder.slice(nVis)];
-    this.axesOffset = 0;
-    this.setProjectionAxes({
-      x: activeDims[0] ?? 0,
-      y: activeDims[1] ?? 1,
-      z: activeDims[2] ?? 2,
-    });
-  }
-
   private bindProjectionControls() {
     if (this.projectionControlsBound) return;
-    this.axisCycleButton?.addEventListener('click', () => this.cycleAxes(1));
     this.axisSyncRotationsButton?.addEventListener('click', () => this.extraAxisGizmos.resetRotations());
     this.paneToggleButton?.addEventListener('click', () => {
       this.options.setPaneCollapsed(!this.options.getPaneCollapsed());

@@ -151,7 +151,6 @@ export class PolypleApp {
       setEditMode,
       toggleTransformMode: mode => transformController.toggleTransformMode(mode),
       recenterCamera: () => keyboardCamera.recenterCamera(),
-      resetFocus: () => keyboardCamera.resetFocus(),
     });
     
     function setSceneControlTab(tab: string) {
@@ -217,9 +216,7 @@ export class PolypleApp {
     const visibleDims = () => axisController.visibleDims();
     const currentAxisMap = (localN: number) => axisController.currentAxisMap(localN);
     const perspectiveDimsFor = (localN: number, axisMap: AxisMap) => axisController.perspectiveDimsFor(localN, axisMap);
-    const extraRotationPlaneAxis = (lockAxis: -1 | 0 | 1 | 2, depthDim: number) => axisController.extraRotationPlaneAxis(lockAxis, depthDim, N);
     const setProjectionAxes = (axes: ProjectionAxes) => axisController.setProjectionAxes(axes);
-    const cycleAxes = (step: number) => axisController.cycleAxes(step);
     const renderAxisList = () => axisController.renderAxisList();
     const updateAxisLegend = () => axisController.updateAxisLegend();
     const updateAxisGizmo = () => axisController.updateAxisGizmo();
@@ -1108,8 +1105,6 @@ export class PolypleApp {
       setLightPosition: setLightPositionForSelection,
       visibleDims,
       perspectiveDimsFor,
-      primaryExtraRotationDepthDim: (localN, axisMap) => axisController.primaryExtraRotationDepthDim(localN, axisMap),
-      extraRotationPlaneAxis,
       projectAndRenderAll,
       updateSelectionOutline,
       pushUndoSnapshot,
@@ -1598,7 +1593,6 @@ export class PolypleApp {
       addProductMesh: addProductMeshFromSelection,
       recalculateSelectedOrigin: () => recalculateObjectOrigin(selectionService.primary),
       focusObjectOrigin,
-      cycleAxes,
       onOperationStateChange: updateTransformActionButtons,
     });
     

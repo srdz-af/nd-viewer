@@ -3,7 +3,7 @@ export const axisGizmoCenter = GIZMO_VIEWBOX_SIZE * 0.5;
 export const axisGizmoRadius = 28;
 export const extraAxisGizmoCenter = GIZMO_VIEWBOX_SIZE * 0.5;
 export const extraAxisGizmoRadius = 28;
-export const EXTRA_GIZMO_BASE_ANGLE = -Math.PI / 4;
+export const EXTRA_GIZMO_BASE_ANGLE = -Math.PI / 2;
 export const EXTRA_AXIS_AUTO_ROTATE_SPEED = 0.45;
 
 export function normalizeSignedAngleDelta(value: number) {

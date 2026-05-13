@@ -146,7 +146,6 @@ type ViewportInteractionControllerOptions = {
   addProductMesh: () => void;
   recalculateSelectedOrigin: () => void;
   focusObjectOrigin: (idx: number) => void;
-  cycleAxes: (step: number) => void;
   onOperationStateChange?: () => void;
 };
 
@@ -1111,54 +1110,7 @@ export class ViewportInteractionController {
     if (this.operationManager.isKind('edit-bevel')) {
       ev.preventDefault();
       ev.stopPropagation();
-      return;
     }
-    if (this.operationManager.isActive()) return;
-    ev.preventDefault();
-    ev.stopPropagation();
-    this.lastPointer = { x: ev.clientX, y: ev.clientY };
-    let lastX = this.lastPointer.x;
-    let accum = 0;
-    const prevZoom = this.options.controls.enableZoom;
-    const prevPan = this.options.controls.enablePan;
-    this.options.controls.enableZoom = false;
-    this.options.controls.enablePan = false;
-    this.startViewportOperation({
-      kind: 'axis-shift',
-      scope: 'axis',
-      blocksCamera: true,
-      usesPointerLock: true,
-      updatePointer: (point, pointerEvent) => {
-        if (!pointerEvent) return false;
-        if ((pointerEvent.buttons & 4) === 0) {
-          this.operationManager.finish(true);
-          return true;
-        }
-
-        pointerEvent.preventDefault();
-        this.lastPointer = { x: point.clientX, y: point.clientY };
-        const dx = point.clientX - lastX;
-        lastX = point.clientX;
-        accum += dx;
-        const threshold = 35;
-        let steps = 0;
-        while (accum > threshold) {
-          steps++;
-          accum -= threshold;
-        }
-        while (accum < -threshold) {
-          steps--;
-          accum += threshold;
-        }
-        if (steps !== 0) this.options.cycleAxes(steps);
-        return true;
-      },
-      cleanup: () => {
-        accum = 0;
-        this.options.controls.enableZoom = prevZoom;
-        this.options.controls.enablePan = prevPan;
-      },
-    });
   }
 
   private handlePointerDown(ev: PointerEvent) {

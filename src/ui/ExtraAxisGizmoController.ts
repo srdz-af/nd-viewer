@@ -28,9 +28,11 @@ type ExtraAxisGizmoUI = {
   line: SVGLineElement;
   negButton: HTMLButtonElement;
   posButton: HTMLButtonElement;
+  angleReadout: HTMLDivElement;
+  planeButtons: Map<number, HTMLButtonElement>;
   autoToggleButton: HTMLButtonElement;
   perspectiveToggleButton: HTMLButtonElement;
-  orderHandleButton: HTMLButtonElement;
+  centerButton: HTMLButtonElement;
 };
 
 const AUTO_ROTATE_SPEED_MULTIPLIERS = [0, 1, 2, 3] as const;
@@ -46,14 +48,11 @@ const DEFAULT_PERSPECTIVE_DIMS = Array.from({ length: MAX_N }, (_, dim) => dim);
 type ExtraAxisGizmoControllerOptions = {
   rootEl: HTMLDivElement | null;
   getVisibleDims: () => number;
-  getAxesOrder: () => number[];
-  getAxesOffset: () => number;
   getParams: () => ExtraAxisParams;
   getRot: () => RotND;
   applySceneBackground: () => void;
   projectAndRenderAll: () => void;
   markProjectionDirty?: () => void;
-  reorderExtraAxes: (orderedExtraDims: number[]) => void;
   updateProjectedAxisDropTarget: (clientX: number, clientY: number, ghostRect: DOMRectReadOnly | null) => void;
   takeProjectedAxisDropTarget: () => 0 | 1 | 2 | null;
   clearProjectedAxisDropTarget: () => void;
@@ -67,10 +66,12 @@ export type ExtraAxisGizmoState = {
   autoRotateSpeeds: Array<[number, number]>;
   pausedAutoRotateSpeeds: Array<[number, number]>;
   angles: Array<[number, number]>;
+  planeAxes?: Array<[number, number]>;
 };
 
 type ExtraAxisOrderDragState = {
   pointerId: number;
+  pointerType: string;
   startX: number;
   startY: number;
   grabOffsetX: number;
@@ -80,14 +81,13 @@ type ExtraAxisOrderDragState = {
   active: boolean;
   sourceDim: number;
   source: HTMLDivElement | null;
-  placeholder: HTMLDivElement | null;
   ghost: HTMLDivElement | null;
 };
 
 export class ExtraAxisGizmoController {
   private readonly uis = new Map<number, ExtraAxisGizmoUI>();
-  private readonly angles = new Map<number, number>();
-  private readonly anglePlaneKeys = new Map<number, string>();
+  private readonly angles = new Map<string, number>();
+  private readonly selectedPlaneAxes = new Map<number, number>();
   private readonly selectedPerspectiveDims = new Set<number>(DEFAULT_PERSPECTIVE_DIMS);
   private readonly disabledPerspectiveDims = new Set<number>();
   private readonly autoRotateSpeeds = new Map<number, number>();
@@ -103,6 +103,7 @@ export class ExtraAxisGizmoController {
   };
   private readonly orderDrag: ExtraAxisOrderDragState = {
     pointerId: -1,
+    pointerType: '',
     startX: 0,
     startY: 0,
     grabOffsetX: 0,
@@ -112,7 +113,6 @@ export class ExtraAxisGizmoController {
     active: false,
     sourceDim: -1,
     source: null,
-    placeholder: null,
     ghost: null,
   };
   private readonly scrollBarEl = document.getElementById('extra-axis-scrollbar') as HTMLDivElement | null;
@@ -142,7 +142,6 @@ export class ExtraAxisGizmoController {
     }
     this.updateOrderGhostPosition(ev.clientX, ev.clientY);
     this.updateProjectedAxisDropTarget(ev.clientX, ev.clientY);
-    this.updateOrderPlaceholder(ev.clientX, ev.clientY);
     this.updateOrderAutoScroll(ev.clientX);
   };
   private readonly stepOrderAutoScroll = (ts: number) => {
@@ -162,13 +161,22 @@ export class ExtraAxisGizmoController {
     );
     this.syncScrollIndicator();
     this.updateProjectedAxisDropTarget(this.orderDrag.lastX, this.orderDrag.lastY);
-    this.updateOrderPlaceholder(this.orderDrag.lastX, this.orderDrag.lastY);
     this.orderAutoScroll.frame = requestAnimationFrame(this.stepOrderAutoScroll);
   };
   private readonly handleOrderPointerUp = (ev: PointerEvent) => {
     if (ev.pointerId !== this.orderDrag.pointerId) return;
+    const wasTap = !this.orderDrag.active;
+    const sourceDim = this.orderDrag.sourceDim;
+    const pointerType = this.orderDrag.pointerType;
+    const wasOpen = this.touchPlanePickerDepthDim === sourceDim;
     if (this.orderDrag.active) this.updateProjectedAxisDropTarget(ev.clientX, ev.clientY);
     this.endOrderDrag(true);
+    if (wasTap && sourceDim >= 0 && this.isTouchRevealPointer(pointerType)) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (wasOpen) this.closeTouchPlanePicker();
+      else this.openTouchPlanePicker(sourceDim);
+    }
   };
   private readonly handleOrderPointerCancel = (ev: PointerEvent) => {
     if (ev.pointerId !== this.orderDrag.pointerId) return;
@@ -220,10 +228,19 @@ export class ExtraAxisGizmoController {
     window.removeEventListener('pointercancel', this.handleScrollBarPointerUp);
     this.scrollDrag.pointerId = -1;
   };
+  private touchPlanePickerDepthDim = -1;
+  private readonly handleDocumentPointerDown = (ev: PointerEvent) => {
+    if (this.touchPlanePickerDepthDim < 0) return;
+    const ui = this.uis.get(this.touchPlanePickerDepthDim);
+    const target = ev.target as Node | null;
+    if (ui?.root && target && ui.root.contains(target)) return;
+    this.closeTouchPlanePicker();
+  };
 
   constructor(private readonly options: ExtraAxisGizmoControllerOptions) {
     this.options.rootEl?.addEventListener('scroll', this.handleBandScroll, { passive: true });
     this.scrollBarEl?.addEventListener('pointerdown', this.handleScrollBarPointerDown);
+    window.addEventListener('pointerdown', this.handleDocumentPointerDown, { capture: true });
     window.addEventListener('resize', this.handleBandScroll);
     requestAnimationFrame(this.handleBandScroll);
   }
@@ -265,7 +282,7 @@ export class ExtraAxisGizmoController {
     this.autoRotateSpeeds.clear();
     this.pausedAutoRotateSpeeds.clear();
     this.angles.clear();
-    this.anglePlaneKeys.clear();
+    this.selectedPlaneAxes.clear();
   }
 
   getState(): ExtraAxisGizmoState {
@@ -277,7 +294,8 @@ export class ExtraAxisGizmoController {
       disabledPerspectiveDims: Array.from(this.disabledPerspectiveDims).sort((a, b) => a - b),
       autoRotateSpeeds: sortedEntries(this.autoRotateSpeeds),
       pausedAutoRotateSpeeds: sortedEntries(this.pausedAutoRotateSpeeds),
-      angles: sortedEntries(this.angles),
+      angles: [],
+      planeAxes: sortedEntries(this.selectedPlaneAxes),
     };
   }
 
@@ -326,15 +344,16 @@ export class ExtraAxisGizmoController {
       }
     }
 
-    this.angles.clear();
-    this.anglePlaneKeys.clear();
-    const planesByDepth = new Map(this.currentPlanes().map(plane => [plane.depthDim, plane]));
-    for (const [dim, angle] of state.angles ?? []) {
+    this.selectedPlaneAxes.clear();
+    for (const [dim, planeAxis] of state.planeAxes ?? []) {
       const normalizedDim = normalizeDim(dim);
-      const plane = planesByDepth.get(normalizedDim);
-      if (!plane || !Number.isFinite(angle)) continue;
-      this.setAngle(plane, angle);
+      const normalizedAxis = normalizeDim(planeAxis);
+      if (normalizedDim >= 0 && normalizedAxis >= 0 && normalizedAxis !== normalizedDim) {
+        this.selectedPlaneAxes.set(normalizedDim, normalizedAxis);
+      }
     }
+
+    this.angles.clear();
 
     this.sync();
   }
@@ -348,22 +367,16 @@ export class ExtraAxisGizmoController {
     );
   }
 
-  primaryExtraRotationDepthDim(localN: number, axisMap: AxisMap): number {
-    if (localN < 4) return -1;
-    const available = new Set<number>(axisMap.slice(0, localN));
-    const plane = this.currentPlanes().find(candidate => available.has(candidate.depthDim));
-    return plane?.depthDim ?? axisMap[localN - 1] ?? -1;
-  }
-
   applyAutoRotation(dt: number) {
-    const gizmoPlanes = this.currentPlanes();
-    if (!gizmoPlanes.length || this.autoRotateSpeeds.size === 0) return false;
+    const extraDims = this.currentExtraDims();
+    if (!extraDims.length || this.autoRotateSpeeds.size === 0) return false;
 
     let rotated = false;
-    for (const plane of gizmoPlanes) {
-      const speed = this.autoRotateSpeeds.get(plane.depthDim) ?? 0;
+    for (const depthDim of extraDims) {
+      const speed = this.autoRotateSpeeds.get(depthDim) ?? 0;
       const multiplier = AUTO_ROTATE_SPEED_MULTIPLIERS[speed] ?? 0;
       if (multiplier <= 0) continue;
+      const plane = this.autoRotationPlaneForDepth(depthDim);
       if (plane.planeAxis < 0 || plane.planeAxis === plane.depthDim) continue;
       const delta = EXTRA_AXIS_AUTO_ROTATE_SPEED * multiplier * dt;
       this.options.getRot().applyGivensLeft(plane.planeAxis, plane.depthDim, delta);
@@ -372,45 +385,44 @@ export class ExtraAxisGizmoController {
     }
 
     if (!rotated) return false;
-    this.sync();
+    this.syncPlaneAngleDisplays();
     this.options.applySceneBackground();
     return true;
   }
 
   toggleActiveAutoRotations() {
-    const planes = this.currentPlanes();
-    if (!planes.length) return;
+    const extraDims = this.currentExtraDims();
+    if (!extraDims.length) return;
 
-    const activePlanes = planes.filter(plane => (this.autoRotateSpeeds.get(plane.depthDim) ?? 0) > 0);
-    if (activePlanes.length) {
+    const activeDims = extraDims.filter(dim => (this.autoRotateSpeeds.get(dim) ?? 0) > 0);
+    if (activeDims.length) {
       this.pausedAutoRotateSpeeds.clear();
-      for (const plane of activePlanes) {
-        this.pausedAutoRotateSpeeds.set(plane.depthDim, this.autoRotateSpeeds.get(plane.depthDim) ?? 1);
+      for (const dim of activeDims) {
+        this.pausedAutoRotateSpeeds.set(dim, this.autoRotateSpeeds.get(dim) ?? 1);
       }
-      for (const plane of planes) this.setAutoRotateSpeed(plane.depthDim, 0);
+      for (const dim of extraDims) this.setAutoRotateSpeed(dim, 0);
       this.options.onStateChange?.();
       return;
     }
 
-    const hasPausedSpeed = planes.some(plane => (this.pausedAutoRotateSpeeds.get(plane.depthDim) ?? 0) > 0);
-    for (const plane of planes) {
-      const speed = hasPausedSpeed ? this.pausedAutoRotateSpeeds.get(plane.depthDim) ?? 0 : 1;
-      this.setAutoRotateSpeed(plane.depthDim, speed);
+    const hasPausedSpeed = extraDims.some(dim => (this.pausedAutoRotateSpeeds.get(dim) ?? 0) > 0);
+    for (const dim of extraDims) {
+      const speed = hasPausedSpeed ? this.pausedAutoRotateSpeeds.get(dim) ?? 0 : 1;
+      this.setAutoRotateSpeed(dim, speed);
     }
     this.pausedAutoRotateSpeeds.clear();
     this.options.onStateChange?.();
   }
 
   syncRotationAngles() {
-    const planes = this.currentPlanes();
+    const planes = this.currentExtraDims().map(dim => this.autoRotationPlaneForDepth(dim));
     if (planes.length < 2) return;
 
-    this.ensureAnglesForPlanes(planes);
-    const targetAngle = this.getAngle(planes[0].depthDim);
+    const targetAngle = this.getAngle(planes[0]);
     let rotated = false;
     for (const plane of planes.slice(1)) {
       if (plane.planeAxis < 0 || plane.planeAxis === plane.depthDim) continue;
-      const currentAngle = this.getAngle(plane.depthDim);
+      const currentAngle = this.getAngle(plane);
       const delta = normalizeSignedAngleDelta(targetAngle - currentAngle);
       this.setAngle(plane, targetAngle);
       if (Math.abs(delta) < 1e-4) continue;
@@ -428,7 +440,6 @@ export class ExtraAxisGizmoController {
   resetRotations() {
     this.options.getRot().reset();
     this.angles.clear();
-    this.anglePlaneKeys.clear();
     this.sync();
     this.options.applySceneBackground();
     this.options.projectAndRenderAll();
@@ -437,9 +448,8 @@ export class ExtraAxisGizmoController {
 
   sync() {
     if (!this.options.rootEl) return;
-    const planes = this.currentPlanes();
-    this.ensureAnglesForPlanes(planes);
-    const activeDepthDims = new Set(planes.map(plane => plane.depthDim));
+    const extraDims = this.currentExtraDims();
+    const activeDepthDims = new Set(extraDims);
     const freezeDomOrder = this.orderDrag.active;
     const orderedRoots: HTMLDivElement[] = [];
 
@@ -449,16 +459,17 @@ export class ExtraAxisGizmoController {
         if (this.orderDrag.sourceDim === depthDim) this.endOrderDrag(false);
         ui.root.remove();
         this.uis.delete(depthDim);
-        this.angles.delete(depthDim);
-        this.anglePlaneKeys.delete(depthDim);
+        this.selectedPlaneAxes.delete(depthDim);
+        this.deleteAnglesForDepth(depthDim);
+        if (this.touchPlanePickerDepthDim === depthDim) this.touchPlanePickerDepthDim = -1;
       }
     }
 
-    for (const plane of planes) {
-      let ui = this.uis.get(plane.depthDim);
+    for (const depthDim of extraDims) {
+      let ui = this.uis.get(depthDim);
       if (!ui) {
-        ui = this.createUI(plane.depthDim);
-        this.uis.set(plane.depthDim, ui);
+        ui = this.createUI(depthDim);
+        this.uis.set(depthDim, ui);
       }
       orderedRoots.push(ui.root);
       if (freezeDomOrder && !ui.root.parentElement && ui.root !== this.orderDrag.source) {
@@ -467,99 +478,30 @@ export class ExtraAxisGizmoController {
     }
     if (!freezeDomOrder) this.syncGizmoDomOrder(orderedRoots);
 
-    for (const plane of planes) {
-      const ui = this.uis.get(plane.depthDim);
+    for (const depthDim of extraDims) {
+      const ui = this.uis.get(depthDim);
       if (!ui) continue;
-      const color = AXIS_PALETTE[plane.depthDim % AXIS_PALETTE.length];
-      const depthLabel = axisLabel(plane.depthDim);
-      const planeLabel = axisLabel(plane.planeAxis);
-      const buttonScale = (ui.root.clientWidth || GIZMO_VIEWBOX_SIZE) / GIZMO_VIEWBOX_SIZE;
-      const angle = this.getAngle(plane.depthDim);
-      const dx = Math.cos(angle);
-      const dy = Math.sin(angle);
-      const startX = extraAxisGizmoCenter - dx * extraAxisGizmoRadius;
-      const startY = extraAxisGizmoCenter - dy * extraAxisGizmoRadius;
-      const endX = extraAxisGizmoCenter + dx * extraAxisGizmoRadius;
-      const endY = extraAxisGizmoCenter + dy * extraAxisGizmoRadius;
-
+      const color = AXIS_PALETTE[depthDim % AXIS_PALETTE.length];
+      const depthLabel = axisLabel(depthDim);
       this.setStyle(ui.root, '--extra-axis-color', color);
-      this.setTitle(ui.root, `Rotate global ${depthLabel} axis (${planeLabel}-${depthLabel} plane)`);
+      this.setTitle(ui.root, `${depthLabel} plane rotation controls`);
       ui.root.classList.remove('disabled');
       if (ui.posButton.disabled) ui.posButton.disabled = false;
       if (ui.negButton.disabled) ui.negButton.disabled = false;
-      this.setTitle(ui.orderHandleButton, `Reorder ${depthLabel} axis`);
-      this.setText(ui.posButton, depthLabel);
-      this.setTitle(ui.posButton, `Rotate ${planeLabel}-${depthLabel}`);
-      this.setTitle(ui.negButton, `Rotate ${planeLabel}-${depthLabel}`);
-
-      this.setAttr(ui.line, 'x1', `${startX}`);
-      this.setAttr(ui.line, 'y1', `${startY}`);
-      this.setAttr(ui.line, 'x2', `${endX}`);
-      this.setAttr(ui.line, 'y2', `${endY}`);
-      this.setStyle(ui.line, 'opacity', '0.9');
-
-      this.setStyle(ui.negButton, 'left', `${startX * buttonScale}px`);
-      this.setStyle(ui.negButton, 'top', `${startY * buttonScale}px`);
-      this.setStyle(ui.posButton, 'left', `${endX * buttonScale}px`);
-      this.setStyle(ui.posButton, 'top', `${endY * buttonScale}px`);
-      ui.posButton.classList.remove('back');
-      ui.negButton.classList.remove('back');
-      this.setStyle(ui.posButton, 'z-index', '2');
-      this.setStyle(ui.negButton, 'z-index', '1');
-      this.setAutoRotateSpeed(plane.depthDim, this.autoRotateSpeeds.get(plane.depthDim) ?? 0);
-      this.setPerspectiveDepth(plane.depthDim, this.selectedPerspectiveDims.has(plane.depthDim));
+      this.setText(ui.centerButton, depthLabel);
+      this.setTitle(ui.centerButton, `Drag ${depthLabel} to a projected axis`);
+      this.syncPlaneButtons(ui, depthDim);
+      this.syncActivePlaneLine(ui, depthDim);
+      this.setAutoRotateSpeed(depthDim, this.autoRotateSpeeds.get(depthDim) ?? 0);
+      this.setPerspectiveDepth(depthDim, this.selectedPerspectiveDims.has(depthDim));
     }
     this.syncScrollIndicator();
   }
 
-  private currentPlanes(): ExtraAxisGizmoPlane[] {
-    const ordered = this.orderedVisibleDims();
-    const activeAxes = this.currentActiveDims();
-    const extraDims = ordered.filter(dim => !activeAxes.includes(dim));
-    if (ordered.length < 2 || activeAxes.length === 0 || extraDims.length === 0) return [];
-
-    const planes: ExtraAxisGizmoPlane[] = [];
-    const usedPairs = new Set<string>();
-    const pairKey = (a: number, b: number) => (a < b ? `${a}:${b}` : `${b}:${a}`);
-
-    for (let extraIdx = 0; extraIdx < extraDims.length; extraIdx++) {
-      const depthDim = extraDims[extraIdx];
-      const baseSlot = ((extraIdx % activeAxes.length) + activeAxes.length) % activeAxes.length;
-      const candidates: number[] = [];
-      for (let offset = 0; offset < activeAxes.length; offset++) {
-        const candidate = activeAxes[(baseSlot + offset) % activeAxes.length];
-        if (!candidates.includes(candidate)) candidates.push(candidate);
-      }
-      for (const candidate of ordered) {
-        if (!candidates.includes(candidate)) candidates.push(candidate);
-      }
-
-      let planeAxis = -1;
-      for (const candidate of candidates) {
-        if (candidate < 0 || candidate === depthDim) continue;
-        const key = pairKey(candidate, depthDim);
-        if (usedPairs.has(key)) continue;
-        planeAxis = candidate;
-        usedPairs.add(key);
-        break;
-      }
-
-      if (planeAxis < 0) {
-        planeAxis = candidates.find(candidate => candidate >= 0 && candidate !== depthDim) ?? -1;
-      }
-      if (planeAxis < 0 || planeAxis === depthDim) continue;
-      usedPairs.add(pairKey(planeAxis, depthDim));
-      planes.push({ planeAxis, depthDim });
-    }
-    return planes;
-  }
-
   private orderedVisibleDims() {
     const nVis = this.options.getVisibleDims();
-    const ordered = this.options.getAxesOrder().slice(0, nVis);
-    if (nVis <= 0 || ordered.length === 0) return [];
-    const offset = (((this.options.getAxesOffset() % nVis) + nVis) % nVis);
-    return Array.from({ length: nVis }, (_, idx) => ordered[(offset + idx) % nVis] ?? idx);
+    if (nVis <= 0) return [];
+    return Array.from({ length: nVis }, (_value, dim) => dim);
   }
 
   private currentActiveDims() {
@@ -573,34 +515,48 @@ export class ExtraAxisGizmoController {
     return this.orderedVisibleDims().filter(dim => !activeSet.has(dim));
   }
 
-  private getAngle(depthDim: number) {
-    const existing = this.angles.get(depthDim);
-    if (typeof existing === 'number') return existing;
-    this.angles.set(depthDim, EXTRA_GIZMO_BASE_ANGLE);
-    return EXTRA_GIZMO_BASE_ANGLE;
+  private planesForDepth(depthDim: number): ExtraAxisGizmoPlane[] {
+    return this.orderedVisibleDims()
+      .filter(planeAxis => planeAxis !== depthDim)
+      .map(planeAxis => ({ planeAxis, depthDim }));
   }
 
-  private ensureAnglesForPlanes(planes = this.currentPlanes()) {
+  private autoRotationPlaneForDepth(depthDim: number): ExtraAxisGizmoPlane {
+    const selected = this.selectedPlaneAxes.get(depthDim);
+    if (typeof selected === 'number' && selected >= 0 && selected !== depthDim) {
+      return { planeAxis: selected, depthDim };
+    }
+    const active = this.currentActiveDims().find(dim => dim !== depthDim);
+    if (typeof active === 'number') return { planeAxis: active, depthDim };
+    const fallback = this.orderedVisibleDims().find(dim => dim !== depthDim) ?? -1;
+    return { planeAxis: fallback, depthDim };
+  }
+
+  private getAngle(plane: ExtraAxisGizmoPlane) {
+    const key = this.planeKey(plane);
+    const existing = this.angles.get(key);
+    if (typeof existing === 'number') return existing;
+
+    const mirrorKey = this.planeKey(this.mirrorPlane(plane));
+    const mirrorExisting = this.angles.get(mirrorKey);
+    if (typeof mirrorExisting === 'number') {
+      const angle = this.mirrorAngle(mirrorExisting);
+      this.angles.set(key, angle);
+      return angle;
+    }
+
     const rot = this.options.getRot();
-    const R = rot.matrix;
-    const N = rot.N;
-    const activeDepthDims = new Set<number>();
-    for (const plane of planes) {
-      if (plane.planeAxis < 0 || plane.depthDim < 0 || plane.planeAxis >= N || plane.depthDim >= N) continue;
-      activeDepthDims.add(plane.depthDim);
-      const key = this.planeKey(plane);
-      if (this.angles.has(plane.depthDim) && this.anglePlaneKeys.get(plane.depthDim) === key) continue;
-      this.setAngle(plane, this.angleFromRotationMatrix(plane, R, N));
-    }
-    for (const dim of Array.from(this.angles.keys())) {
-      if (activeDepthDims.has(dim)) continue;
-      this.angles.delete(dim);
-      this.anglePlaneKeys.delete(dim);
-    }
+    const angle = this.angleFromRotationMatrix(plane, rot.matrix, rot.N);
+    this.setAngle(plane, angle);
+    return angle;
   }
 
   private planeKey(plane: ExtraAxisGizmoPlane) {
     return `${plane.planeAxis}:${plane.depthDim}`;
+  }
+
+  private mirrorPlane(plane: ExtraAxisGizmoPlane): ExtraAxisGizmoPlane {
+    return { planeAxis: plane.depthDim, depthDim: plane.planeAxis };
   }
 
   private angleFromRotationMatrix(plane: ExtraAxisGizmoPlane, R: Float32Array, N: number) {
@@ -609,13 +565,140 @@ export class ExtraAxisGizmoController {
     return normalizeSignedAngleDelta(EXTRA_GIZMO_BASE_ANGLE + Math.atan2(y, x));
   }
 
+  private mirrorAngle(angle: number) {
+    const deltaFromBase = normalizeSignedAngleDelta(angle - EXTRA_GIZMO_BASE_ANGLE);
+    return normalizeSignedAngleDelta(EXTRA_GIZMO_BASE_ANGLE - deltaFromBase);
+  }
+
   private setAngle(plane: ExtraAxisGizmoPlane, angle: number) {
-    this.angles.set(plane.depthDim, normalizeSignedAngleDelta(angle));
-    this.anglePlaneKeys.set(plane.depthDim, this.planeKey(plane));
+    const normalizedAngle = normalizeSignedAngleDelta(angle);
+    this.angles.set(this.planeKey(plane), normalizedAngle);
+    if (plane.planeAxis !== plane.depthDim) {
+      this.angles.set(this.planeKey(this.mirrorPlane(plane)), this.mirrorAngle(normalizedAngle));
+    }
   }
 
   private offsetAngle(plane: ExtraAxisGizmoPlane, delta: number) {
-    this.setAngle(plane, this.getAngle(plane.depthDim) + delta);
+    this.setAngle(plane, this.getAngle(plane) + delta);
+  }
+
+  private dialDegrees(angle: number) {
+    const clockwise = ((angle - EXTRA_GIZMO_BASE_ANGLE) % (Math.PI * 2) + (Math.PI * 2)) % (Math.PI * 2);
+    const rounded = Math.round((clockwise * 180 / Math.PI) * 10) / 10;
+    return rounded >= 360 ? 0 : rounded;
+  }
+
+  private formatDialAngle(angle: number) {
+    return `${this.dialDegrees(angle).toFixed(1)}deg`;
+  }
+
+  private deleteAnglesForDepth(depthDim: number) {
+    for (const key of Array.from(this.angles.keys())) {
+      const [a, b] = key.split(':').map(value => Number(value));
+      if (a === depthDim || b === depthDim) this.angles.delete(key);
+    }
+  }
+
+  private planeLabel(plane: ExtraAxisGizmoPlane) {
+    return `${axisLabel(plane.planeAxis)}${axisLabel(plane.depthDim)}`;
+  }
+
+  private syncPlaneButtons(ui: ExtraAxisGizmoUI, depthDim: number) {
+    const planes = this.planesForDepth(depthDim);
+    const activeAxes = new Set(planes.map(plane => plane.planeAxis));
+    const buttonScale = (ui.root.clientWidth || GIZMO_VIEWBOX_SIZE) / GIZMO_VIEWBOX_SIZE;
+    const hidden = this.drag.active && this.drag.depthAxis === depthDim;
+
+    for (const [planeAxis, button] of ui.planeButtons) {
+      if (!activeAxes.has(planeAxis)) {
+        button.remove();
+        ui.planeButtons.delete(planeAxis);
+      }
+    }
+
+    planes.forEach((plane, index) => {
+      let button = ui.planeButtons.get(plane.planeAxis);
+      if (!button) {
+        button = this.createPlaneButton(ui.root, plane);
+        ui.planeButtons.set(plane.planeAxis, button);
+      }
+      const selectorAngle = EXTRA_GIZMO_BASE_ANGLE + ((index / Math.max(1, planes.length)) * Math.PI * 2);
+      const x = extraAxisGizmoCenter + Math.cos(selectorAngle) * extraAxisGizmoRadius;
+      const y = extraAxisGizmoCenter + Math.sin(selectorAngle) * extraAxisGizmoRadius;
+      const planeAngle = this.getAngle(plane);
+      const dotRadius = 8.5;
+      const label = axisLabel(plane.planeAxis);
+      this.setPlaneButtonLabel(button, label);
+      this.setTitle(button, `Rotate ${this.planeLabel(plane)} (${this.formatDialAngle(planeAngle)})`);
+      this.setStyle(button, '--plane-axis-color', AXIS_PALETTE[plane.planeAxis % AXIS_PALETTE.length]);
+      this.setPlaneButtonIndicator(button, Math.cos(planeAngle) * dotRadius, Math.sin(planeAngle) * dotRadius);
+      this.setStyle(button, 'left', `${x * buttonScale}px`);
+      this.setStyle(button, 'top', `${y * buttonScale}px`);
+      button.classList.toggle('selected', this.selectedPlaneAxes.get(depthDim) === plane.planeAxis);
+      button.hidden = hidden;
+    });
+  }
+
+  private syncPlaneAngleDisplays() {
+    for (const depthDim of this.currentExtraDims()) {
+      const ui = this.uis.get(depthDim);
+      if (!ui) continue;
+      this.syncPlaneButtons(ui, depthDim);
+      this.syncActivePlaneLine(ui, depthDim);
+    }
+  }
+
+  private setPlaneButtonLabel(button: HTMLButtonElement, label: string) {
+    const labelEl = button.querySelector<HTMLSpanElement>('.plane-label');
+    if (labelEl) this.setText(labelEl, label);
+  }
+
+  private setPlaneButtonIndicator(button: HTMLButtonElement, x: number, y: number) {
+    const indicator = button.querySelector<HTMLSpanElement>('.plane-angle-indicator');
+    if (!indicator) return;
+    this.setStyle(indicator, 'transform', `translate3d(${x}px, ${y}px, 0)`);
+  }
+
+  private syncActivePlaneLine(ui: ExtraAxisGizmoUI, depthDim: number) {
+    const active = this.drag.active && this.drag.depthAxis === depthDim && this.drag.planeAxis >= 0;
+    ui.root.classList.toggle('plane-active', active);
+    ui.line.style.display = active ? '' : 'none';
+    ui.negButton.hidden = !active;
+    ui.posButton.hidden = !active;
+    ui.angleReadout.hidden = !active;
+    if (!active) return;
+
+    const plane = { planeAxis: this.drag.planeAxis, depthDim };
+    const buttonScale = (ui.root.clientWidth || GIZMO_VIEWBOX_SIZE) / GIZMO_VIEWBOX_SIZE;
+    const angle = this.getAngle(plane);
+    const dx = Math.cos(angle);
+    const dy = Math.sin(angle);
+    const startX = extraAxisGizmoCenter - dx * extraAxisGizmoRadius;
+    const startY = extraAxisGizmoCenter - dy * extraAxisGizmoRadius;
+    const endX = extraAxisGizmoCenter + dx * extraAxisGizmoRadius;
+    const endY = extraAxisGizmoCenter + dy * extraAxisGizmoRadius;
+    const label = this.planeLabel(plane);
+    const formattedAngle = this.formatDialAngle(angle);
+
+    this.setText(ui.posButton, label);
+    this.setText(ui.negButton, label);
+    this.setText(ui.angleReadout, formattedAngle);
+    this.setTitle(ui.posButton, `Rotate ${label}`);
+    this.setTitle(ui.negButton, `Rotate ${label}`);
+    this.setTitle(ui.angleReadout, `${label} angle ${formattedAngle}`);
+    this.setAttr(ui.line, 'x1', `${startX}`);
+    this.setAttr(ui.line, 'y1', `${startY}`);
+    this.setAttr(ui.line, 'x2', `${endX}`);
+    this.setAttr(ui.line, 'y2', `${endY}`);
+    this.setStyle(ui.line, 'opacity', '0.9');
+    this.setStyle(ui.negButton, 'left', `${startX * buttonScale}px`);
+    this.setStyle(ui.negButton, 'top', `${startY * buttonScale}px`);
+    this.setStyle(ui.posButton, 'left', `${endX * buttonScale}px`);
+    this.setStyle(ui.posButton, 'top', `${endY * buttonScale}px`);
+    ui.posButton.classList.remove('back');
+    ui.negButton.classList.remove('back');
+    this.setStyle(ui.posButton, 'z-index', '2');
+    this.setStyle(ui.negButton, 'z-index', '1');
   }
 
   private setAutoRotateSpeed(depthDim: number, speed: number) {
@@ -638,9 +721,9 @@ export class ExtraAxisGizmoController {
       icon.textContent = AUTO_ROTATE_BUTTON_ICONS[normalizedSpeed] ?? AUTO_ROTATE_BUTTON_ICONS[0];
       ui.autoToggleButton.appendChild(icon);
     }
-    const label = axisLabel(depthDim);
+    const label = this.planeLabel(this.autoRotationPlaneForDepth(depthDim));
     const action = AUTO_ROTATE_BUTTON_ACTIONS[normalizedSpeed] ?? AUTO_ROTATE_BUTTON_ACTIONS[0];
-    const title = `${action} ${label} axis`;
+    const title = `${action} ${label}`;
     this.setTitle(ui.autoToggleButton, title);
     this.setAttr(ui.autoToggleButton, 'aria-pressed', String(active));
   }
@@ -687,6 +770,28 @@ export class ExtraAxisGizmoController {
     this.setStyle(this.scrollThumbEl, 'left', `${left}px`);
   }
 
+  private isTouchRevealPointer(pointerType: string) {
+    return pointerType === 'touch' || pointerType === 'pen';
+  }
+
+  private openTouchPlanePicker(depthDim: number) {
+    if (this.touchPlanePickerDepthDim >= 0 && this.touchPlanePickerDepthDim !== depthDim) {
+      this.uis.get(this.touchPlanePickerDepthDim)?.root.classList.remove('plane-picker-open');
+    }
+    this.touchPlanePickerDepthDim = depthDim;
+    this.uis.get(depthDim)?.root.classList.add('plane-picker-open');
+  }
+
+  private closeTouchPlanePicker() {
+    if (this.touchPlanePickerDepthDim < 0) return;
+    const root = this.uis.get(this.touchPlanePickerDepthDim)?.root;
+    root?.classList.remove('plane-picker-open');
+    if (root?.contains(document.activeElement)) {
+      (document.activeElement as HTMLElement | null)?.blur?.();
+    }
+    this.touchPlanePickerDepthDim = -1;
+  }
+
   private setPerspectiveDepth(depthDim: number, active: boolean) {
     if (active) {
       this.selectedPerspectiveDims.add(depthDim);
@@ -712,6 +817,17 @@ export class ExtraAxisGizmoController {
       target.releasePointerCapture(this.drag.pointerId);
     }
     target?.classList.remove('dragging');
+    target?.classList.remove('plane-active');
+    if (this.drag.depthAxis >= 0) {
+      const ui = this.uis.get(this.drag.depthAxis);
+      if (ui) {
+        ui.line.style.display = 'none';
+        ui.negButton.hidden = true;
+        ui.posButton.hidden = true;
+        ui.angleReadout.hidden = true;
+        for (const button of ui.planeButtons.values()) button.hidden = false;
+      }
+    }
     this.drag.active = false;
     this.drag.moved = false;
     this.drag.pointerId = -1;
@@ -732,18 +848,24 @@ export class ExtraAxisGizmoController {
     this.drag.planeAxis = plane.planeAxis;
     this.drag.depthAxis = plane.depthDim;
     this.drag.target = gizmoEl;
+    this.selectedPlaneAxes.set(plane.depthDim, plane.planeAxis);
+    this.setAngle(plane, this.angleFromRotationMatrix(plane, this.options.getRot().matrix, this.options.getRot().N));
     try {
       gizmoEl.setPointerCapture(ev.pointerId);
     } catch {
       // Some browsers are strict about capture when pointerdown starts on a child.
     }
     gizmoEl.classList.add('dragging');
+    this.sync();
+    this.options.onStateChange?.();
   }
 
   private endDrag(ev: PointerEvent) {
     if (ev.pointerId !== this.drag.pointerId) return;
     const moved = this.drag.moved;
     this.resetDragState();
+    this.closeTouchPlanePicker();
+    this.sync();
     if (moved) this.options.projectAndRenderAll();
   }
 
@@ -753,6 +875,7 @@ export class ExtraAxisGizmoController {
     if (ev.button !== 0 || this.orderDrag.pointerId !== -1) return;
     if (this.drag.active) this.resetDragState();
     this.orderDrag.pointerId = ev.pointerId;
+    this.orderDrag.pointerType = ev.pointerType;
     this.orderDrag.startX = ev.clientX;
     this.orderDrag.startY = ev.clientY;
     this.orderDrag.lastX = ev.clientX;
@@ -768,19 +891,14 @@ export class ExtraAxisGizmoController {
   private beginOrderDragPreview(ev: PointerEvent) {
     if (!this.options.rootEl || !this.orderDrag.source) return;
     const sourceRect = this.orderDrag.source.getBoundingClientRect();
+    this.closeTouchPlanePicker();
     this.orderDrag.active = true;
     this.orderDrag.grabOffsetX = ev.clientX - sourceRect.left;
     this.orderDrag.grabOffsetY = ev.clientY - sourceRect.top;
     this.orderDrag.lastX = ev.clientX;
     this.orderDrag.lastY = ev.clientY;
 
-    this.orderDrag.placeholder = document.createElement('div');
-    this.orderDrag.placeholder.className = 'extra-axis-drop-placeholder';
-    this.orderDrag.placeholder.style.width = `${sourceRect.width}px`;
-    this.orderDrag.placeholder.style.height = `${sourceRect.height}px`;
-    this.options.rootEl.insertBefore(this.orderDrag.placeholder, this.orderDrag.source.nextSibling);
-
-    this.orderDrag.source.classList.add('extra-axis-order-source');
+    this.orderDrag.source.classList.add('extra-axis-swap-source');
     this.orderDrag.source.style.display = 'none';
 
     this.orderDrag.ghost = this.orderDrag.source.cloneNode(true) as HTMLDivElement;
@@ -791,10 +909,9 @@ export class ExtraAxisGizmoController {
     document.body.appendChild(this.orderDrag.ghost);
 
     this.options.rootEl.classList.add('dragging');
-    document.body.classList.add('extra-axis-order-dragging');
+    document.body.classList.add('extra-axis-swap-dragging');
     this.updateOrderGhostPosition(ev.clientX, ev.clientY);
     this.updateProjectedAxisDropTarget(ev.clientX, ev.clientY);
-    this.updateOrderPlaceholder(ev.clientX, ev.clientY);
     this.updateOrderAutoScroll(ev.clientX);
   }
 
@@ -842,68 +959,20 @@ export class ExtraAxisGizmoController {
     );
   }
 
-  private updateOrderPlaceholder(clientX: number, clientY: number) {
-    if (!this.options.rootEl || !this.orderDrag.placeholder || !this.orderDrag.source) return;
-    const candidates = Array.from(this.options.rootEl.querySelectorAll<HTMLDivElement>('.extra-axis-gizmo'))
-      .filter(candidate => candidate !== this.orderDrag.placeholder && candidate !== this.orderDrag.source);
-    let beforeEl: HTMLDivElement | null = null;
-
-    for (const candidate of candidates) {
-      const rect = candidate.getBoundingClientRect();
-      const midX = rect.left + (rect.width * 0.5);
-      const midY = rect.top + (rect.height * 0.5);
-      const rowTolerance = rect.height * 0.45;
-      const beforeByRow = clientY < (midY - rowTolerance);
-      const beforeByColumn = Math.abs(clientY - midY) <= rowTolerance && clientX < midX;
-      if (beforeByRow || beforeByColumn) {
-        beforeEl = candidate;
-        break;
-      }
-    }
-
-    if (beforeEl) this.options.rootEl.insertBefore(this.orderDrag.placeholder, beforeEl);
-    else this.options.rootEl.appendChild(this.orderDrag.placeholder);
-  }
-
   private updateOrderGhostPosition(clientX: number, clientY: number) {
     if (!this.orderDrag.ghost) return;
     this.orderDrag.ghost.style.left = `${clientX - this.orderDrag.grabOffsetX}px`;
     this.orderDrag.ghost.style.top = `${clientY - this.orderDrag.grabOffsetY}px`;
   }
 
-  private commitOrderDrag() {
-    if (!this.options.rootEl || !this.orderDrag.active || !this.orderDrag.source || !this.orderDrag.placeholder) return;
-    const draggedDim = this.orderDrag.sourceDim;
-    if (draggedDim < 0) return;
-
-    const orderedDims: number[] = [];
-    for (const child of Array.from(this.options.rootEl.children)) {
-      if (child === this.orderDrag.source) continue;
-      if (child === this.orderDrag.placeholder) {
-        orderedDims.push(draggedDim);
-        continue;
-      }
-      const el = child as HTMLElement;
-      if (!el.classList.contains('extra-axis-gizmo')) continue;
-      const dim = Number(el.dataset.depthDim ?? -1);
-      if (dim >= 0) orderedDims.push(dim);
-    }
-
-    this.options.reorderExtraAxes(orderedDims);
-  }
-
   private clearOrderDragPreview() {
     if (this.orderDrag.ghost?.parentElement) this.orderDrag.ghost.parentElement.removeChild(this.orderDrag.ghost);
-    if (this.orderDrag.placeholder?.parentElement) {
-      this.orderDrag.placeholder.parentElement.removeChild(this.orderDrag.placeholder);
-    }
     if (this.orderDrag.source) {
       this.orderDrag.source.style.display = '';
-      this.orderDrag.source.classList.remove('extra-axis-order-source');
+      this.orderDrag.source.classList.remove('extra-axis-swap-source');
     }
     this.options.rootEl?.classList.remove('dragging');
-    document.body.classList.remove('extra-axis-order-dragging');
-    this.orderDrag.placeholder = null;
+    document.body.classList.remove('extra-axis-swap-dragging');
     this.orderDrag.ghost = null;
   }
 
@@ -916,9 +985,9 @@ export class ExtraAxisGizmoController {
     const sourceDim = this.orderDrag.sourceDim;
     const targetSlot = needsResync ? this.options.takeProjectedAxisDropTarget() : null;
     if (!needsResync) this.options.clearProjectedAxisDropTarget();
-    if (commit && targetSlot == null) this.commitOrderDrag();
     this.clearOrderDragPreview();
     this.orderDrag.pointerId = -1;
+    this.orderDrag.pointerType = '';
     this.orderDrag.startX = 0;
     this.orderDrag.startY = 0;
     this.orderDrag.grabOffsetX = 0;
@@ -961,6 +1030,9 @@ export class ExtraAxisGizmoController {
     const posButton = document.createElement('button');
     posButton.type = 'button';
     posButton.className = 'positive';
+    const angleReadout = document.createElement('div');
+    angleReadout.className = 'angle-readout';
+    angleReadout.hidden = true;
     const autoToggleButton = document.createElement('button');
     autoToggleButton.type = 'button';
     autoToggleButton.className = 'auto-toggle';
@@ -973,21 +1045,15 @@ export class ExtraAxisGizmoController {
     perspectiveToggleButton.innerHTML = `
       <span class="material-symbols-rounded depth-icon" aria-hidden="true">vrpano</span>
     `;
-    const orderHandleButton = document.createElement('button');
-    orderHandleButton.type = 'button';
-    orderHandleButton.className = 'axis-order-handle';
-    orderHandleButton.setAttribute('aria-label', `Reorder ${axisLabel(depthDim)} axis`);
+    const centerButton = document.createElement('button');
+    centerButton.type = 'button';
+    centerButton.className = 'axis-swap-center';
+    centerButton.setAttribute('aria-label', `Drag ${axisLabel(depthDim)} to a projected axis`);
 
-    const onPointerDown = (ev: PointerEvent) => {
-      if (ev.pointerType !== 'mouse') ev.preventDefault();
-      ev.stopPropagation();
-      const plane = this.currentPlanes().find(candidate => candidate.depthDim === depthDim);
-      if (!plane) return;
-      this.beginDrag(ev, plane, root);
-    };
-    root.addEventListener('pointerdown', onPointerDown);
-    negButton.addEventListener('pointerdown', onPointerDown);
-    posButton.addEventListener('pointerdown', onPointerDown);
+    const planeButtons = new Map<number, HTMLButtonElement>();
+    line.style.display = 'none';
+    negButton.hidden = true;
+    posButton.hidden = true;
     autoToggleButton.addEventListener('pointerdown', ev => {
       if (ev.pointerType !== 'mouse') ev.preventDefault();
       ev.stopPropagation();
@@ -1030,12 +1096,12 @@ export class ExtraAxisGizmoController {
       ev.preventDefault();
       ev.stopPropagation();
     });
-    orderHandleButton.addEventListener('pointerdown', ev => this.beginOrderHandleDrag(ev, root, depthDim));
-    orderHandleButton.addEventListener('click', ev => {
+    centerButton.addEventListener('pointerdown', ev => this.beginOrderHandleDrag(ev, root, depthDim));
+    centerButton.addEventListener('click', ev => {
       ev.preventDefault();
       ev.stopPropagation();
     });
-    orderHandleButton.addEventListener('dblclick', ev => {
+    centerButton.addEventListener('dblclick', ev => {
       ev.preventDefault();
       ev.stopPropagation();
     });
@@ -1054,8 +1120,45 @@ export class ExtraAxisGizmoController {
     });
     root.addEventListener('pointercancel', ev => this.endDrag(ev));
 
-    root.append(svg, negButton, posButton, autoToggleButton, perspectiveToggleButton, orderHandleButton);
-    return { root, line, negButton, posButton, autoToggleButton, perspectiveToggleButton, orderHandleButton };
+    root.append(svg, negButton, posButton, angleReadout, autoToggleButton, perspectiveToggleButton, centerButton);
+    return {
+      root,
+      line,
+      negButton,
+      posButton,
+      angleReadout,
+      planeButtons,
+      autoToggleButton,
+      perspectiveToggleButton,
+      centerButton,
+    };
+  }
+
+  private createPlaneButton(root: HTMLDivElement, plane: ExtraAxisGizmoPlane) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'plane-handle';
+    const label = document.createElement('span');
+    label.className = 'plane-label';
+    const indicator = document.createElement('span');
+    indicator.className = 'plane-angle-indicator';
+    button.append(label, indicator);
+    button.addEventListener('pointerdown', ev => {
+      if (ev.pointerType !== 'mouse') ev.preventDefault();
+      ev.stopPropagation();
+      if (ev.button !== 0) return;
+      this.beginDrag(ev, plane, root);
+    });
+    button.addEventListener('click', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+    });
+    button.addEventListener('dblclick', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+    });
+    root.appendChild(button);
+    return button;
   }
 
   private handleDragMove(ev: PointerEvent, root: HTMLDivElement) {

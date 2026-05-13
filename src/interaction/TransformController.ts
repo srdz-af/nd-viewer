@@ -47,8 +47,6 @@ type TransformControllerOptions = {
   setLightPosition: (idx: number, position: THREE.Vector3) => void;
   visibleDims: () => number;
   perspectiveDimsFor: (localN: number, axisMap: AxisMap) => number[];
-  primaryExtraRotationDepthDim: (localN: number, axisMap: AxisMap) => number;
-  extraRotationPlaneAxis: (lockAxis: -1 | 0 | 1 | 2, depthDim: number) => number;
   projectAndRenderAll: () => void;
   updateSelectionOutline: () => void;
   pushUndoSnapshot: () => void;
@@ -76,10 +74,8 @@ type TransformOperation = {
   vertexDataStart: Float32Array | null;
   lockAxis: -1 | 0 | 1 | 2;
   localAxisDim: number;
-  extraAxisDim: number;
   objectDataStart: Float32Array | null;
   originDataStart: Float32Array | null;
-  extraPlane: boolean;
   moveOffset: THREE.Vector3;
   objectStarts: ObjectTransformStart[];
   pivotWorldStart: THREE.Vector3;
@@ -97,9 +93,8 @@ type ObjectTransformStart = {
 };
 
 type TransformGizmoConstraint = {
-  kind: 'free' | 'axis' | 'extra';
+  kind: 'free' | 'axis';
   axisSlot: -1 | 0 | 1 | 2;
-  extraDim: number;
 };
 
 const VERTEX_MARKER_PIXEL_DIAMETER = 8;
@@ -120,12 +115,11 @@ const FREE_HANDLE_COLOR = AXIS_PALETTE[7];
 const FREE_GIZMO_CONSTRAINT: TransformGizmoConstraint = {
   kind: 'free',
   axisSlot: -1,
-  extraDim: -1,
 };
 const PROJECTED_AXIS_CONSTRAINTS: TransformGizmoConstraint[] = [
-  { kind: 'axis', axisSlot: 0, extraDim: -1 },
-  { kind: 'axis', axisSlot: 1, extraDim: -1 },
-  { kind: 'axis', axisSlot: 2, extraDim: -1 },
+  { kind: 'axis', axisSlot: 0 },
+  { kind: 'axis', axisSlot: 1 },
+  { kind: 'axis', axisSlot: 2 },
 ];
 const AXIS_LOCK_KEYS = ['x', 'y', 'z', 'w', 'v', 'u', 't', 's'];
 
@@ -166,13 +160,10 @@ export class TransformController {
   private selectedCellIds: number[] = [];
   private readonly editOverlays: EditOverlayRenderer;
   private axisGuide: THREE.Line | null = null;
-  private extraPlaneGuide: THREE.Line | null = null;
   private activeTransformMode: TransformMode = 'none';
   private transformGizmo: THREE.Group | null = null;
   private transformGizmoRings: THREE.LineLoop[] = [];
   private transformGizmoHandles: THREE.Mesh[] = [];
-  private transformGizmoExtraHandles: THREE.Mesh[] = [];
-  private transformGizmoExtraSignature = '';
   private readonly transformGizmoCenter = new THREE.Vector3();
   private readonly transformGizmoPickWorld = new THREE.Vector3();
   private pendingGizmoConstraint: TransformGizmoConstraint | null = null;
@@ -212,10 +203,8 @@ export class TransformController {
     vertexDataStart: null,
     lockAxis: -1,
     localAxisDim: -1,
-    extraAxisDim: -1,
     objectDataStart: null,
     originDataStart: null,
-    extraPlane: false,
     moveOffset: new THREE.Vector3(),
     objectStarts: [],
     pivotWorldStart: new THREE.Vector3(),
@@ -404,11 +393,6 @@ export class TransformController {
       this.options.scene.remove(this.axisGuide);
       this.axisGuide.geometry.dispose();
       this.axisGuide = null;
-    }
-    if (this.extraPlaneGuide) {
-      this.options.scene.remove(this.extraPlaneGuide);
-      this.extraPlaneGuide.geometry.dispose();
-      this.extraPlaneGuide = null;
     }
   }
 
@@ -783,9 +767,7 @@ export class TransformController {
     const minRadius = this.screenSpaceWorldRadius(bounds.center, TRANSFORM_GIZMO_MIN_PIXEL_RADIUS);
     const radius = Math.max(bounds.radius * 1.18, minRadius, 0.08);
     const handleScale = this.screenSpaceMarkerScale(bounds.center, TRANSFORM_GIZMO_HANDLE_PIXEL_DIAMETER) / radius;
-    const extraDims = this.extraAxisDimsForTransformTarget();
-    this.syncTransformGizmoExtraHandles(extraDims);
-    this.updateTransformGizmoColors(extraDims);
+    this.updateTransformGizmoColors();
 
     this.transformGizmo.position.copy(bounds.center);
     this.transformGizmo.quaternion.identity();
@@ -851,55 +833,7 @@ export class TransformController {
     this.options.scene.add(group);
   }
 
-  private syncTransformGizmoExtraHandles(extraDims: number[]) {
-    if (!this.transformGizmo) return;
-    const signature = extraDims.join(':');
-    if (signature === this.transformGizmoExtraSignature) return;
-
-    for (const handle of this.transformGizmoExtraHandles) {
-      this.transformGizmo.remove(handle);
-      this.transformGizmoHandles = this.transformGizmoHandles.filter(entry => entry !== handle);
-      this.disposeRenderable(handle);
-    }
-    this.transformGizmoExtraHandles = [];
-    this.transformGizmoExtraSignature = signature;
-
-    extraDims.forEach((dim, index) => {
-      const handle = new THREE.Mesh(
-        this.options.vertexGeo,
-        new THREE.MeshBasicMaterial({
-          color: this.axisPaletteColor(dim),
-          transparent: true,
-          opacity: 0.96,
-          depthTest: false,
-          depthWrite: false,
-        }),
-      );
-      handle.position.copy(this.extraHandleDirection(index, extraDims.length));
-      handle.renderOrder = 36;
-      handle.userData.transformGizmoHandle = true;
-      handle.userData.transformGizmoConstraint = {
-        kind: 'extra',
-        axisSlot: -1,
-        extraDim: dim,
-      } satisfies TransformGizmoConstraint;
-      this.transformGizmo?.add(handle);
-      this.transformGizmoExtraHandles.push(handle);
-      this.transformGizmoHandles.push(handle);
-    });
-  }
-
-  private extraHandleDirection(index: number, total: number) {
-    if (total <= 1) return new THREE.Vector3(1, 1, 1).normalize().multiplyScalar(1.18);
-    const angle = ((index + 0.5) / total) * Math.PI * 2;
-    const z = index % 2 === 0 ? 0.58 : -0.58;
-    const radial = Math.sqrt(Math.max(0, 1 - (z * z)));
-    return new THREE.Vector3(Math.cos(angle) * radial, Math.sin(angle) * radial, z)
-      .normalize()
-      .multiplyScalar(1.18);
-  }
-
-  private updateTransformGizmoColors(extraDims: number[]) {
+  private updateTransformGizmoColors() {
     const params = this.options.getParams();
     const activeDims = [params.axesX, params.axesY, params.axesZ];
     this.transformGizmoRings.forEach((ring, axisSlot) => {
@@ -911,9 +845,6 @@ export class TransformController {
       } else if (index >= 1 && index <= 3) {
         this.setRenderableColor(handle.material, this.axisPaletteColor(activeDims[index - 1] ?? index - 1));
       }
-    });
-    this.transformGizmoExtraHandles.forEach((handle, index) => {
-      this.setRenderableColor(handle.material, this.axisPaletteColor(extraDims[index] ?? index + 3));
     });
   }
 
@@ -974,8 +905,6 @@ export class TransformController {
     this.transformGizmo = null;
     this.transformGizmoRings = [];
     this.transformGizmoHandles = [];
-    this.transformGizmoExtraHandles = [];
-    this.transformGizmoExtraSignature = '';
   }
 
   private pickTransformGizmoConstraint(ev: PointerEvent): TransformGizmoConstraint | null {
@@ -1039,29 +968,6 @@ export class TransformController {
       radius = Math.max(radius, this.tmpVec.set(x, y, z).distanceTo(this.transformGizmoCenter));
     });
     return { center: this.transformGizmoCenter, radius };
-  }
-
-  private extraAxisDimsForTransformTarget() {
-    const instIdx = this.options.getParams().editMode
-      ? this.options.getSelectedInstance()
-      : this.getObjectTransformSelection()[0];
-    if (instIdx === undefined) return [];
-    const data = this.getObjectData(instIdx);
-    if (!data || data.originalN < 4) return [];
-
-    const params = this.options.getParams();
-    const projected = new Set([params.axesX, params.axesY, params.axesZ]);
-    const available = data.axisMap
-      .slice(0, data.originalN)
-      .filter(dim => Number.isInteger(dim) && dim >= 0 && !projected.has(dim))
-      .filter((dim, index, arr) => arr.indexOf(dim) === index);
-    if (!available.length) return [];
-
-    const primary = this.options.primaryExtraRotationDepthDim(data.originalN, data.axisMap);
-    if (available.includes(primary)) {
-      return [primary, ...available.filter(dim => dim !== primary)];
-    }
-    return available;
   }
 
   private forEachTransformTargetPosition(visitor: (x: number, y: number, z: number) => void) {
@@ -1133,13 +1039,11 @@ export class TransformController {
 
   private lockTransformToAxisDim(dim: number) {
     if (this.transformOp.mode === 'none') return false;
-    if (!this.transformAxisAvailable(dim)) return false;
 
     if (this.options.isLightSelection(this.transformOp.instIdx)) {
+      if (dim < 0 || dim > 2) return false;
       this.transformOp.lockAxis = dim as 0 | 1 | 2;
       this.transformOp.localAxisDim = -1;
-      this.transformOp.extraAxisDim = -1;
-      this.transformOp.extraPlane = false;
       this.updateAxisGuide();
       return true;
     }
@@ -1147,24 +1051,15 @@ export class TransformController {
     const params = this.options.getParams();
     const projected = [params.axesX, params.axesY, params.axesZ];
     const projectedSlot = projected.indexOf(dim);
-    if (projectedSlot >= 0) {
-      if (this.transformOp.lockAxis === projectedSlot && this.transformOp.extraAxisDim < 0 && this.transformOp.localAxisDim !== dim) {
-        this.transformOp.localAxisDim = dim;
-        this.updateAxisGuide();
-        return true;
-      }
-      this.transformOp.lockAxis = projectedSlot as 0 | 1 | 2;
-      this.transformOp.localAxisDim = -1;
-      this.transformOp.extraAxisDim = -1;
-      this.transformOp.extraPlane = false;
+    if (projectedSlot < 0 || !this.transformAxisAvailable(dim)) return false;
+
+    if (this.transformOp.lockAxis === projectedSlot && this.transformOp.localAxisDim !== dim) {
+      this.transformOp.localAxisDim = dim;
       this.updateAxisGuide();
       return true;
     }
-
-    this.transformOp.lockAxis = -1;
+    this.transformOp.lockAxis = projectedSlot as 0 | 1 | 2;
     this.transformOp.localAxisDim = -1;
-    this.transformOp.extraAxisDim = dim;
-    this.transformOp.extraPlane = this.transformOp.mode === 'rotate';
     this.updateAxisGuide();
     return true;
   }
@@ -1244,8 +1139,6 @@ export class TransformController {
     this.transformOp.pivotWorldStart.copy(primaryStart.originWorldStart);
     this.transformOp.lockAxis = -1;
     this.transformOp.localAxisDim = -1;
-    this.transformOp.extraAxisDim = -1;
-    this.transformOp.extraPlane = false;
     this.applyPendingGizmoConstraint();
 
     if (mode === 'move' || mode === 'rotate') {
@@ -1321,8 +1214,6 @@ export class TransformController {
     this.transformOp.lastHit.copy(this.transformOp.vertexStart);
     this.transformOp.lockAxis = -1;
     this.transformOp.localAxisDim = -1;
-    this.transformOp.extraAxisDim = -1;
-    this.transformOp.extraPlane = false;
     this.applyPendingGizmoConstraint();
     this.transformOp.objectDataStart = null;
     this.transformOp.originDataStart = null;
@@ -1427,8 +1318,6 @@ export class TransformController {
     const constraint = this.pendingGizmoConstraint ?? FREE_GIZMO_CONSTRAINT;
     this.transformOp.lockAxis = constraint.kind === 'axis' ? constraint.axisSlot : -1;
     this.transformOp.localAxisDim = -1;
-    this.transformOp.extraAxisDim = constraint.kind === 'extra' ? constraint.extraDim : -1;
-    this.transformOp.extraPlane = constraint.kind === 'extra' && this.transformOp.mode === 'rotate';
   }
 
   handleGizmoPointerDown(ev: PointerEvent) {
@@ -1529,7 +1418,6 @@ export class TransformController {
     const locked = this.transformOp.lockAxis;
     const center = this.transformOp.vertexStart;
     const targets: THREE.Vector3[] = [];
-    if (this.transformOp.extraAxisDim >= 0) return this.applyEditExtraTransform(dx, dy, snapToInteger);
 
     if (this.transformOp.mode === 'move') {
       const targetCenter = hit.clone().add(this.transformOp.moveOffset);
@@ -1618,58 +1506,6 @@ export class TransformController {
     return true;
   }
 
-  private applyEditExtraTransform(dx: number, dy: number, snapToInteger: boolean) {
-    const data = this.getObjectData(this.transformOp.instIdx);
-    const sourceStart = this.transformOp.vertexDataStart;
-    const dim = this.transformOp.extraAxisDim;
-    if (!data || !sourceStart || !this.objectDataHasAxis(data, dim)) return false;
-
-    const offset = dim * data.count;
-    const delta = this.pointerExtraDelta(dx, dy, this.transformOp.vertexStart);
-    if (this.transformOp.mode === 'move') {
-      for (const vertex of this.transformOp.targetVertices) {
-        const value = sourceStart[offset + vertex] + delta;
-        data.src[offset + vertex] = snapToInteger ? Math.round(value) : value;
-      }
-      return true;
-    }
-
-    if (this.transformOp.mode === 'scale') {
-      const scale = Math.max(MIN_TRANSFORM_SCALE, 1 + ((dx - dy) * 0.005));
-      const pivot = this.averageSourceValue(sourceStart, data.count, dim, this.transformOp.targetVertices);
-      for (const vertex of this.transformOp.targetVertices) {
-        const start = sourceStart[offset + vertex];
-        data.src[offset + vertex] = pivot + ((start - pivot) * scale);
-      }
-      return true;
-    }
-
-    if (this.transformOp.mode === 'rotate') {
-      const params = this.options.getParams();
-      const n = this.options.getN();
-      const axes = [params.axesX % n, params.axesY % n, params.axesZ % n].map(value => Math.max(0, Math.min(n - 1, value)));
-      const dimA = axes[this.transformOp.lockAxis >= 0 ? this.transformOp.lockAxis : 0];
-      const dimB = dim;
-      if (dimA === dimB || !this.objectDataHasAxis(data, dimA)) return false;
-      const offsetA = dimA * data.count;
-      const offsetB = dimB * data.count;
-      const pivotA = this.averageSourceValue(sourceStart, data.count, dimA, this.transformOp.targetVertices);
-      const pivotB = this.averageSourceValue(sourceStart, data.count, dimB, this.transformOp.targetVertices);
-      const angle = (dx - dy) * 0.01;
-      const c = Math.cos(angle);
-      const s = Math.sin(angle);
-      for (const vertex of this.transformOp.targetVertices) {
-        const a0 = sourceStart[offsetA + vertex] - pivotA;
-        const b0 = sourceStart[offsetB + vertex] - pivotB;
-        data.src[offsetA + vertex] = pivotA + (a0 * c - b0 * s);
-        data.src[offsetB + vertex] = pivotB + (a0 * s + b0 * c);
-      }
-      return true;
-    }
-
-    return false;
-  }
-
   finish(commit: boolean) {
     if (this.transformOp.mode === 'none') return;
 
@@ -1705,10 +1541,8 @@ export class TransformController {
     this.transformOp.vertexDataStart = null;
     this.transformOp.lockAxis = -1;
     this.transformOp.localAxisDim = -1;
-    this.transformOp.extraAxisDim = -1;
     this.transformOp.objectDataStart = null;
     this.transformOp.originDataStart = null;
-    this.transformOp.extraPlane = false;
     this.transformOp.objectStarts = [];
     this.clearAxisGuide();
     this.transformOp.moveOffset.set(0, 0, 0);
@@ -1761,7 +1595,7 @@ export class TransformController {
         };
       }
     }
-    if (this.transformOp.lockAxis >= 0 && this.transformOp.extraAxisDim < 0) {
+    if (this.transformOp.lockAxis >= 0) {
       const axisSlot = this.transformOp.lockAxis;
       const projectedDim = this.options.isLightSelection(this.transformOp.instIdx)
         ? axisSlot
@@ -1769,15 +1603,6 @@ export class TransformController {
       return {
         direction: PROJECTED_AXIS_DIRECTIONS[axisSlot].clone().normalize(),
         color: this.axisPaletteColor(projectedDim),
-      };
-    }
-    if (this.transformOp.extraAxisDim >= 0) {
-      const extraDims = this.extraAxisDimsForTransformTarget();
-      const index = Math.max(0, extraDims.indexOf(this.transformOp.extraAxisDim));
-      const total = Math.max(1, extraDims.length);
-      return {
-        direction: this.extraHandleDirection(index, total).normalize(),
-        color: this.axisPaletteColor(this.transformOp.extraAxisDim),
       };
     }
     return null;
@@ -1818,27 +1643,6 @@ export class TransformController {
     };
   }
 
-  private objectDataHasAxis(data: { originalN: number; axisMap: AxisMap }, dim: number) {
-    return dim >= 0 && data.axisMap.slice(0, data.originalN).includes(dim);
-  }
-
-  private pointerExtraDelta(dx: number, dy: number, position: THREE.Vector3) {
-    return (dx - dy) * this.screenSpaceWorldRadius(position, 1);
-  }
-
-  private averageSourceValue(source: Float32Array, count: number, dim: number, vertices: number[]) {
-    if (!vertices.length) return 0;
-    const offset = dim * count;
-    let sum = 0;
-    let valid = 0;
-    for (const vertex of vertices) {
-      if (vertex < 0 || vertex >= count) continue;
-      sum += source[offset + vertex];
-      valid++;
-    }
-    return valid > 0 ? sum / valid : 0;
-  }
-
   private createObjectTransformStart(instIdx: number, mode: TransformMode): ObjectTransformStart {
     if (this.options.isLightSelection(instIdx)) {
       const position = this.options.getLightPosition(instIdx) ?? new THREE.Vector3();
@@ -1857,7 +1661,7 @@ export class TransformController {
     const target = this.getObjectTransformTarget(instIdx);
     const data = this.getObjectData(instIdx);
     const origin = this.options.getObjectOrigin(instIdx);
-    const shouldCaptureData = !!data && (mode === 'rotate' || data.originalN >= 4 || this.pendingGizmoConstraint?.kind === 'extra');
+    const shouldCaptureData = !!data && mode === 'rotate';
     return {
       instIdx,
       startPos: target?.pos.clone() ?? new THREE.Vector3(),
@@ -1878,10 +1682,6 @@ export class TransformController {
     snapToInteger: boolean,
   ) {
     if (this.transformOp.mode === 'move') {
-      if (this.transformOp.extraAxisDim >= 0) {
-        this.applyObjectExtraMove(dx, dy, snapToInteger);
-        return;
-      }
       const rect = this.options.renderer.domElement.getBoundingClientRect();
       this.options.ndc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
       this.options.raycaster.setFromCamera(this.options.ndc, this.options.camera);
@@ -1907,19 +1707,11 @@ export class TransformController {
     }
 
     if (this.transformOp.mode === 'rotate') {
-      if (this.transformOp.extraPlane) {
-        this.applyObjectExtraPlaneRotation(dx, dy);
-      } else {
-        this.applyObjectViewRotation(dx, dy);
-      }
+      this.applyObjectViewRotation(dx, dy);
       return;
     }
 
     if (this.transformOp.mode === 'scale') {
-      if (this.transformOp.extraAxisDim >= 0) {
-        this.applyObjectExtraScale(dx, dy);
-        return;
-      }
       this.applyObjectScale(dx, dy);
     }
   }
@@ -1934,65 +1726,6 @@ export class TransformController {
     if (!target) return;
     target.pos.copy(start.startPos).add(delta);
     if (snapToInteger) this.snapVectorToInteger(target.pos);
-  }
-
-  private applyObjectExtraMove(dx: number, dy: number, snapToInteger: boolean) {
-    const dim = this.transformOp.extraAxisDim;
-    const delta = this.pointerExtraDelta(dx, dy, this.transformOp.pivotWorldStart);
-    this.transformOp.objectStarts.forEach(start => {
-      const data = this.getObjectData(start.instIdx);
-      const origin = this.options.getObjectOrigin(start.instIdx);
-      if (!data || !start.objectDataStart || !this.objectDataHasAxis(data, dim)) return;
-      const offset = dim * data.count;
-      for (let i = 0; i < data.count; i++) {
-        const value = start.objectDataStart[offset + i] + delta;
-        data.src[offset + i] = snapToInteger ? Math.round(value) : value;
-      }
-      if (origin && start.originDataStart) {
-        const value = (start.originDataStart[dim] ?? 0) + delta;
-        origin[dim] = snapToInteger ? Math.round(value) : value;
-      }
-    });
-  }
-
-  private applyObjectExtraPlaneRotation(dx: number, dy: number) {
-    const primaryStart = this.transformOp.objectStarts.find(start => start.instIdx === this.transformOp.instIdx)
-      ?? this.transformOp.objectStarts[0];
-    if (!primaryStart) return;
-    const primaryData = this.getObjectData(primaryStart.instIdx);
-    if (!primaryData) return;
-
-    const dimB = this.transformOp.extraAxisDim >= 0
-      ? this.transformOp.extraAxisDim
-      : this.options.primaryExtraRotationDepthDim(primaryData.originalN, primaryData.axisMap);
-    const dimA = this.options.extraRotationPlaneAxis(this.transformOp.lockAxis, dimB);
-    if (dimA < 0 || dimB < 0 || dimA === dimB || !this.objectDataHasAxis(primaryData, dimA) || !this.objectDataHasAxis(primaryData, dimB)) return;
-
-    const pivotA = primaryStart.originDataStart?.[dimA] ?? 0;
-    const pivotB = primaryStart.originDataStart?.[dimB] ?? 0;
-    const angle = (dx - dy) * 0.01;
-    const c = Math.cos(angle);
-    const s = Math.sin(angle);
-
-    this.transformOp.objectStarts.forEach(start => {
-      const data = this.getObjectData(start.instIdx);
-      if (!data || !start.objectDataStart || data.count <= 0 || !this.objectDataHasAxis(data, dimA) || !this.objectDataHasAxis(data, dimB)) return;
-      const origin = this.options.getObjectOrigin(start.instIdx);
-
-      for (let i = 0; i < data.count; i++) {
-        const a0 = start.objectDataStart[dimA * data.count + i] - pivotA;
-        const b0 = start.objectDataStart[dimB * data.count + i] - pivotB;
-        data.src[dimA * data.count + i] = pivotA + (a0 * c - b0 * s);
-        data.src[dimB * data.count + i] = pivotB + (a0 * s + b0 * c);
-      }
-
-      if (origin && start.originDataStart) {
-        const a0 = (start.originDataStart[dimA] ?? 0) - pivotA;
-        const b0 = (start.originDataStart[dimB] ?? 0) - pivotB;
-        origin[dimA] = pivotA + (a0 * c - b0 * s);
-        origin[dimB] = pivotB + (a0 * s + b0 * c);
-      }
-    });
   }
 
   private objectRotationDelta(dx: number, dy: number) {
@@ -2080,31 +1813,6 @@ export class TransformController {
       }
       scaledOrigin.add(this.transformOp.pivotWorldStart);
       target.pos.copy(start.startPos).add(scaledOrigin.sub(start.originWorldStart));
-    });
-  }
-
-  private applyObjectExtraScale(dx: number, dy: number) {
-    const dim = this.transformOp.extraAxisDim;
-    const delta = (dx - dy) * 0.005;
-    const scale = Math.max(MIN_TRANSFORM_SCALE, this.transformOp.startScale + delta);
-    const scaleFactor = scale / Math.max(this.transformOp.startScale, MIN_TRANSFORM_SCALE);
-    const primaryStart = this.transformOp.objectStarts.find(start => start.instIdx === this.transformOp.instIdx)
-      ?? this.transformOp.objectStarts[0];
-    const pivot = primaryStart?.originDataStart?.[dim] ?? 0;
-
-    this.transformOp.objectStarts.forEach(start => {
-      const data = this.getObjectData(start.instIdx);
-      const origin = this.options.getObjectOrigin(start.instIdx);
-      if (!data || !start.objectDataStart || !this.objectDataHasAxis(data, dim)) return;
-      const offset = dim * data.count;
-      for (let i = 0; i < data.count; i++) {
-        const value = start.objectDataStart[offset + i];
-        data.src[offset + i] = pivot + ((value - pivot) * scaleFactor);
-      }
-      if (origin && start.originDataStart) {
-        const value = start.originDataStart[dim] ?? 0;
-        origin[dim] = pivot + ((value - pivot) * scaleFactor);
-      }
     });
   }
 

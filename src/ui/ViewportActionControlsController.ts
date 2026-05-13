@@ -5,7 +5,6 @@ type ViewportActionControlsOptions = {
   setEditMode: (active: boolean) => void;
   toggleTransformMode: (mode: TransformMode) => void;
   recenterCamera: () => void;
-  resetFocus: () => void;
 };
 
 export class ViewportActionControlsController {
@@ -15,7 +14,6 @@ export class ViewportActionControlsController {
   private readonly rotateButton = document.getElementById('transform-rotate-button') as HTMLButtonElement | null;
   private readonly scaleButton = document.getElementById('transform-scale-button') as HTMLButtonElement | null;
   private readonly cameraRecenterButton = document.getElementById('camera-recenter-button') as HTMLButtonElement | null;
-  private readonly focusResetButton = document.getElementById('focus-reset-button') as HTMLButtonElement | null;
   private bound = false;
 
   constructor(private readonly options: ViewportActionControlsOptions) {}
@@ -65,7 +63,6 @@ export class ViewportActionControlsController {
       entry.el?.addEventListener('click', () => this.options.toggleTransformMode(entry.mode));
     });
     this.cameraRecenterButton?.addEventListener('click', this.options.recenterCamera);
-    this.focusResetButton?.addEventListener('click', this.options.resetFocus);
     this.syncEditMode();
     this.syncFullscreen();
   }

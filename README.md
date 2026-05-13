@@ -15,7 +15,7 @@ Live demo: https://polyple.xyz/
 ## Features
 
 - N-dimensional primitive library: plane, hypercube, spiked hypercube, cross polytope, spiked cross, simplex, spiked simplex, simplex prism, spiked simplex prism, demicube, spiked demicube, 24-cell, spiked 24-cell, duoprism, and spiked duoprism
-- Projection controls for choosing projected axes, reordering extra axes, toggling depth perspective per axis, and auto-rotating extra dimensions
+- Projection controls for choosing projected axes, explicit extra-axis plane rotation, toggling depth perspective per axis, and auto-rotating selected planes
 - Object workflow with multiple meshes, multi-select, visibility toggles, rename/delete, duplication, and transform gizmos
 - Edit mode with selectable vertices, edges, faces, volumes, and higher-dimensional cells when topology is available
 - Cell editing operations: move, rotate, scale, delete, extrude, inset, edge bevel, vertex bevel, inward bevel, grouped operation mode, and individual operation mode
@@ -51,7 +51,7 @@ npm run preview
 
 ## UI Map
 
-- **Projection Controls**: the upper-left gizmo dock. It contains the dimension selector, XYZ axis gizmo, axis-cycle/reset/focus controls, and extra-axis gizmos.
+- **Projection Controls**: the upper-left gizmo dock. It contains the dimension selector, XYZ axis gizmo, recenter/reset controls, and extra-axis plane gizmos.
 - **Scene Controls**: the right-side panel. It contains the object list, undo/redo, scene save/load, and category tabs.
 - **Environment Tab**: background color/HDRI, HDRI quality, environment lighting, background blur, and background brightness.
 - **Lights Tab**: point/directional light selection, light type switching, color, intensity, shadow toggle, and delete.
@@ -68,20 +68,16 @@ npm run preview
 - Mouse wheel: zoom
 - <kbd>←</kbd> / <kbd>→</kbd> / <kbd>↑</kbd> / <kbd>↓</kbd>: orbit the camera
 - <kbd>Ctrl</kbd> + <kbd>↑</kbd>/<kbd>↓</kbd>: keyboard zoom
-- Middle mouse drag: cycle the projected XYZ axes
 - XYZ gizmo drag: orbit the camera
 - XYZ endpoint click: snap the camera to that axis direction
 - <kbd>+</kbd> / <kbd>-</kbd>: increase or decrease the dimension used for newly created primitives
 - Dimension buttons: set the new primitive dimension directly
-- Shift axes button: cycle which dimensions project into XYZ
 - Reset rotations button: reset extra-axis rotations
 - Recenter camera button: restore the default camera distance/orbit
-- Reset focus button: return the camera focus to the world origin
-- Extra-axis gizmo drag: rotate global N-D space around that extra dimension's projection plane
-- Extra-axis play button: cycle that axis auto-rotation through speed levels, then stop
+- Extra-axis plane-dot drag: rotate global N-D space in the named plane for that hidden dimension
+- Extra-axis play button: cycle that axis's selected plane auto-rotation through speed levels, then stop
 - Extra-axis depth button: include or exclude that axis from perspective depth
-- Extra-axis handle drag: reorder extra axes
-- Drag an extra-axis gizmo over an XYZ tip: swap that extra axis with the highlighted projected axis
+- Extra-axis center drag: drag over an XYZ tip to swap that hidden axis with the highlighted projected axis
 - <kbd>P</kbd>: toggle extra-axis auto-rotation playback
 
 ## Objects
@@ -104,9 +100,9 @@ npm run preview
 - <kbd>R</kbd>: rotate selected objects or selected edit cells
 - <kbd>S</kbd>: scale selected objects or selected edit cells
 - Transform buttons: toggle move, rotate, or scale from the viewport UI
-- Transform gizmo handles: start constrained transforms on projected or extra axes
-- <kbd>X</kbd> / <kbd>Y</kbd> / <kbd>Z</kbd> / <kbd>W</kbd> / <kbd>V</kbd> / <kbd>U</kbd> / <kbd>T</kbd> / <kbd>S</kbd> during an active transform: lock to the corresponding object axis when available
-- Press a projected-axis lock key twice during a transform: switch from global projected-axis lock to local-axis lock for that dimension
+- Transform gizmo handles: start free or projected-axis constrained transforms
+- Press the key for one of the currently projected axes during an active transform: lock to that projected axis
+- Press the same projected-axis lock key twice during a transform: switch from global projected-axis lock to local-axis lock for that dimension
 - <kbd>Ctrl</kbd> during move/scale: snap to integer coordinates
 - <kbd>Ctrl</kbd> during rotate: snap to 30-degree steps
 - Left click: commit active transform
