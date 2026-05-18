@@ -67,6 +67,9 @@ const OPERATION_HANDLE_DOT_SIZE = 10;
 const OPERATION_HANDLE_LINE_WIDTH = 2;
 const OPERATION_HANDLE_PICK_RADIUS_PX = 18;
 const OPERATION_HANDLE_COARSE_PICK_RADIUS_PX = 34;
+const OPERATION_LEVEL_OFFSET_X = 14;
+const OPERATION_LEVEL_OFFSET_Y = -32;
+const OPERATION_LEVEL_BUTTON_SIZE = 24;
 
 type CellPickCandidate = {
   cellId: number;
@@ -91,6 +94,16 @@ type ActiveScalarEditDrag = {
   begin: (point: ViewportPointerPoint, pointerId: number) => void;
   end: (pointerId: number) => boolean;
   isDragging: (pointerId?: number) => boolean;
+};
+
+type ScalarEditHandle = {
+  root: HTMLDivElement;
+  line: HTMLDivElement;
+  dot: HTMLDivElement;
+  levelControls: HTMLDivElement;
+  levelDecreaseButton: HTMLButtonElement;
+  levelIncreaseButton: HTMLButtonElement;
+  levelValue: HTMLSpanElement;
 };
 
 type ViewportInteractionControllerOptions = {
@@ -179,12 +192,9 @@ export class ViewportInteractionController {
   private readonly pointerLockStart = { x: this.lastPointer.x, y: this.lastPointer.y };
   private readonly pointerLockPoint = { clientX: this.lastPointer.x, clientY: this.lastPointer.y };
   private virtualCursorEl: HTMLDivElement | null = null;
-  private scalarEditHandle: {
-    root: HTMLDivElement;
-    line: HTMLDivElement;
-    dot: HTMLDivElement;
-  } | null = null;
+  private scalarEditHandle: ScalarEditHandle | null = null;
   private scalarEditHandleHit: { start: THREE.Vector2; end: THREE.Vector2 } | null = null;
+  private scalarLevelControlsAnchor: THREE.Vector2 | null = null;
   private activeScalarEditDrag: ActiveScalarEditDrag | null = null;
   private activeScalarLevelControl: {
     kind: string;
@@ -305,6 +315,21 @@ export class ViewportInteractionController {
     return this.pointerLockPoint;
   }
 
+  private currentOperationScreenPoint(ev: PointerEvent) {
+    if (document.pointerLockElement !== this.options.renderer.domElement || !this.operationManager.current?.usesPointerLock) {
+      return { x: ev.clientX, y: ev.clientY };
+    }
+    const rect = this.options.renderer.domElement.getBoundingClientRect();
+    const wrap = (value: number, min: number, size: number) => {
+      if (!Number.isFinite(value) || size <= 0) return min;
+      return min + ((((value - min) % size) + size) % size);
+    };
+    return {
+      x: wrap(this.pointerLockPoint.clientX, rect.left, rect.width),
+      y: wrap(this.pointerLockPoint.clientY, rect.top, rect.height),
+    };
+  }
+
   private showVirtualCursor() {
     const cursor = this.ensureVirtualCursor();
     cursor.style.display = 'block';
@@ -361,7 +386,10 @@ export class ViewportInteractionController {
     const root = document.createElement('div');
     const line = document.createElement('div');
     const dot = document.createElement('div');
-    root.setAttribute('aria-hidden', 'true');
+    const levelControls = document.createElement('div');
+    const levelDecreaseButton = document.createElement('button');
+    const levelIncreaseButton = document.createElement('button');
+    const levelValue = document.createElement('span');
     Object.assign(root.style, {
       position: 'fixed',
       inset: '0',
@@ -391,15 +419,89 @@ export class ViewportInteractionController {
       borderRadius: '50%',
       transform: 'translate(-50%, -50%)',
     });
-    root.append(line, dot);
+    line.setAttribute('aria-hidden', 'true');
+    dot.setAttribute('aria-hidden', 'true');
+
+    levelControls.id = 'edit-operation-level-controls';
+    levelControls.setAttribute('aria-label', 'Operation levels');
+    Object.assign(levelControls.style, {
+      position: 'fixed',
+      left: '0px',
+      top: '0px',
+      display: 'none',
+      alignItems: 'center',
+      gap: '3px',
+      padding: '3px 4px',
+      border: '1px solid rgba(230, 230, 230, 0.26)',
+      borderRadius: '999px',
+      background: 'rgba(25, 23, 15, 0.88)',
+      boxShadow: '0 0 2px rgba(25, 23, 15, 0.95), 0 6px 16px rgba(0, 0, 0, 0.32)',
+      color: '#e6e6e6',
+      fontFamily: 'var(--ui-font, Manrope, sans-serif)',
+      pointerEvents: 'auto',
+      transform: 'translate(0, -50%)',
+      userSelect: 'none',
+    });
+    const styleLevelButton = (button: HTMLButtonElement) => {
+      button.type = 'button';
+      Object.assign(button.style, {
+        width: `${OPERATION_LEVEL_BUTTON_SIZE}px`,
+        height: `${OPERATION_LEVEL_BUTTON_SIZE}px`,
+        padding: '0',
+        border: '1px solid rgba(230, 230, 230, 0.22)',
+        borderRadius: '50%',
+        background: 'rgba(11, 70, 168, 0.96)',
+        color: '#e6e6e6',
+        font: '800 14px/1 var(--ui-font, Manrope, sans-serif)',
+        cursor: 'pointer',
+      });
+    };
+    styleLevelButton(levelDecreaseButton);
+    styleLevelButton(levelIncreaseButton);
+    levelDecreaseButton.textContent = '-';
+    levelIncreaseButton.textContent = '+';
+    levelDecreaseButton.setAttribute('aria-label', 'Decrease operation levels');
+    levelIncreaseButton.setAttribute('aria-label', 'Increase operation levels');
+    Object.assign(levelValue.style, {
+      minWidth: '18px',
+      color: '#e6e6e6',
+      font: '800 11px/1 var(--ui-font, Manrope, sans-serif)',
+      textAlign: 'center',
+    });
+    levelValue.setAttribute('aria-live', 'polite');
+    levelValue.textContent = '1';
+    levelDecreaseButton.addEventListener('click', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      this.changeActiveEditOperationLevel(-1);
+    });
+    levelIncreaseButton.addEventListener('click', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      this.changeActiveEditOperationLevel(1);
+    });
+    levelControls.append(levelDecreaseButton, levelValue, levelIncreaseButton);
+    root.append(line, dot, levelControls);
     document.body.append(root);
-    this.scalarEditHandle = { root, line, dot };
+    this.scalarEditHandle = {
+      root,
+      line,
+      dot,
+      levelControls,
+      levelDecreaseButton,
+      levelIncreaseButton,
+      levelValue,
+    };
     return this.scalarEditHandle;
   }
 
   private hideScalarEditHandle() {
-    if (this.scalarEditHandle) this.scalarEditHandle.root.style.display = 'none';
+    if (this.scalarEditHandle) {
+      this.scalarEditHandle.root.style.display = 'none';
+      this.scalarEditHandle.levelControls.style.display = 'none';
+    }
     this.scalarEditHandleHit = null;
+    this.scalarLevelControlsAnchor = null;
   }
 
   private updateScalarEditHandle(kind: string, amount: number) {
@@ -428,6 +530,39 @@ export class ViewportInteractionController {
       start: geometry.start.clone(),
       end: geometry.end.clone(),
     };
+    this.updateScalarLevelControls(handle, geometry.end);
+  }
+
+  private updateScalarLevelControls(handle: ScalarEditHandle, anchor: THREE.Vector2 | null) {
+    const control = this.activeScalarLevelControl;
+    if (!control || !anchor) {
+      handle.levelControls.style.display = 'none';
+      this.scalarLevelControlsAnchor = null;
+      return;
+    }
+    if (!this.scalarLevelControlsAnchor) this.scalarLevelControlsAnchor = anchor.clone();
+    const fixedAnchor = this.scalarLevelControlsAnchor;
+
+    const value = control.getValue();
+    handle.levelControls.style.display = 'inline-flex';
+    handle.levelControls.title = control.label;
+    handle.levelControls.setAttribute('aria-label', control.label);
+    handle.levelValue.textContent = String(value);
+    handle.levelDecreaseButton.disabled = value <= control.min;
+    handle.levelIncreaseButton.disabled = value >= control.max;
+    handle.levelDecreaseButton.title = `Decrease ${control.label}`;
+    handle.levelIncreaseButton.title = `Increase ${control.label}`;
+    handle.levelDecreaseButton.style.opacity = handle.levelDecreaseButton.disabled ? '0.42' : '1';
+    handle.levelIncreaseButton.style.opacity = handle.levelIncreaseButton.disabled ? '0.42' : '1';
+    handle.levelDecreaseButton.style.cursor = handle.levelDecreaseButton.disabled ? 'default' : 'pointer';
+    handle.levelIncreaseButton.style.cursor = handle.levelIncreaseButton.disabled ? 'default' : 'pointer';
+
+    const maxX = window.innerWidth - 90;
+    const maxY = window.innerHeight - 18;
+    const x = Math.max(8, Math.min(maxX, fixedAnchor.x + OPERATION_LEVEL_OFFSET_X));
+    const y = Math.max(18, Math.min(maxY, fixedAnchor.y + OPERATION_LEVEL_OFFSET_Y));
+    handle.levelControls.style.left = `${x}px`;
+    handle.levelControls.style.top = `${y}px`;
   }
 
   private isScalarEditOperationActive() {
@@ -735,22 +870,13 @@ export class ViewportInteractionController {
     return started;
   }
 
-  getActiveEditOperationLevelState() {
-    const control = this.activeScalarLevelControl;
-    if (!control) return null;
-    const value = control.getValue();
-    return {
-      kind: control.kind,
-      label: control.label,
-      value,
-      min: control.min,
-      max: control.max,
-    };
-  }
-
-  changeActiveEditOperationLevel(delta: number) {
+  private changeActiveEditOperationLevel(delta: number) {
     if (!this.activeScalarLevelControl || !Number.isFinite(delta) || delta === 0) return false;
-    return this.activeScalarLevelControl.adjust(Math.trunc(delta)) !== false;
+    const changed = this.activeScalarLevelControl.adjust(Math.trunc(delta)) !== false;
+    if (this.scalarEditHandle) {
+      this.updateScalarLevelControls(this.scalarEditHandle, this.scalarEditHandleHit?.end ?? null);
+    }
+    return changed;
   }
 
   startEditExtrusionFromLastPointer(replaceActive = false) {
@@ -1217,6 +1343,7 @@ export class ViewportInteractionController {
   private handleWindowPointerDown(ev: PointerEvent) {
     if (!this.isScalarEditOperationActive()) return;
     if (this.isOperationLevelControlTarget(ev.target)) return;
+    if (this.handleOperationLevelControlPointer(ev)) return;
     if (this.beginScalarEditHandleDrag(ev)) return;
     this.lastPointer = { x: ev.clientX, y: ev.clientY };
     if (ev.button === 0) {
@@ -1230,6 +1357,28 @@ export class ViewportInteractionController {
 
   private isOperationLevelControlTarget(target: EventTarget | null) {
     return target instanceof Element && Boolean(target.closest('#edit-operation-level-controls'));
+  }
+
+  private handleOperationLevelControlPointer(ev: PointerEvent) {
+    if (ev.button !== 0 || !this.scalarEditHandle) return false;
+    const { levelControls, levelDecreaseButton, levelIncreaseButton } = this.scalarEditHandle;
+    if (levelControls.style.display === 'none') return false;
+    const point = this.currentOperationScreenPoint(ev);
+    const contains = (rect: DOMRect) => (
+      point.x >= rect.left
+      && point.x <= rect.right
+      && point.y >= rect.top
+      && point.y <= rect.bottom
+    );
+    if (!contains(levelControls.getBoundingClientRect())) return false;
+
+    if (contains(levelDecreaseButton.getBoundingClientRect())) {
+      this.changeActiveEditOperationLevel(-1);
+    } else if (contains(levelIncreaseButton.getBoundingClientRect())) {
+      this.changeActiveEditOperationLevel(1);
+    }
+    this.consumeOperationPointerEvent(ev);
+    return true;
   }
 
   private handleWindowPointerMove(ev: PointerEvent) {

@@ -1430,8 +1430,6 @@ export class PolypleApp {
       setCellDimension: setEditCellDimension,
       canStartOperation: request => geometryEditOperationFactory?.canStartOperation(request) ?? false,
       startOperation: request => viewportInteraction.startEditOperationFromLastPointer(request, true),
-      getOperationLevelState: () => viewportInteraction?.getActiveEditOperationLevelState() ?? null,
-      changeOperationLevel: delta => viewportInteraction?.changeActiveEditOperationLevel(delta),
     });
     
     function updateDimensionControl() {

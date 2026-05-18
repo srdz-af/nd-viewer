@@ -2162,16 +2162,7 @@
         margin-left: 2px;
         gap: 5px;
       }
-      #edit-operation-level-controls {
-        display: inline-flex;
-        align-items: center;
-        gap: 3px;
-        margin-left: 4px;
-        padding-left: 5px;
-        border-left: 1px solid rgba(230, 230, 230, 0.22);
-      }
       #edit-operation-buttons[hidden],
-      #edit-operation-level-controls[hidden],
       #edit-cell-dimension-buttons[hidden] {
         display: none;
       }
@@ -2194,22 +2185,6 @@
         height: 34px;
         border-radius: 50%;
         opacity: 0.92;
-      }
-      #edit-operation-level-controls button {
-        width: 24px;
-        height: 24px;
-        font-size: 14px;
-        font-weight: 800;
-        line-height: 1;
-      }
-      #edit-operation-level-value {
-        min-width: 18px;
-        color: var(--ui-text);
-        font-size: 11px;
-        font-weight: 800;
-        line-height: 1;
-        text-align: center;
-        user-select: none;
       }
       #transform-actions button:hover {
         background: var(--ui-bg-hover);
@@ -2792,20 +2767,6 @@
           width: 28px;
           height: 28px;
         }
-        #edit-operation-level-controls {
-          gap: 2px;
-          margin-left: 2px;
-          padding-left: 3px;
-        }
-        #edit-operation-level-controls button {
-          width: 21px;
-          height: 21px;
-          font-size: 12px;
-        }
-        #edit-operation-level-value {
-          min-width: 14px;
-          font-size: 10px;
-        }
         #edit-operation-buttons .material-symbols-rounded {
           font-size: 14px;
         }
@@ -3017,11 +2978,6 @@
             <button id="edit-loop-cut-button" type="button" aria-label="Loop cut selected edge" title="Loop cut (Ctrl+R)">
               <span class="material-symbols-rounded" aria-hidden="true">split_scene</span>
             </button>
-            <div id="edit-operation-level-controls" aria-label="Operation levels" hidden>
-              <button id="edit-level-decrease-button" type="button" aria-label="Decrease operation levels">-</button>
-              <span id="edit-operation-level-value" aria-live="polite">1</span>
-              <button id="edit-level-increase-button" type="button" aria-label="Increase operation levels">+</button>
-            </div>
           </div>
         </div>
       </div>
