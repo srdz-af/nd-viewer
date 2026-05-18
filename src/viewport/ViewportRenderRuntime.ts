@@ -36,6 +36,11 @@ const RENDER_QUALITY_PIXEL_RATIO_SCALE: Record<RenderQuality, number> = {
   medium: 0.5,
   low: 0.25,
 };
+const CAMERA_NEAR_MIN = 0.02;
+const CAMERA_NEAR_MAX = 1.0;
+const CAMERA_FAR_MIN = 20;
+const CAMERA_FAR_MAX = 250;
+const CAMERA_CLIPPING_EPS = 1e-4;
 
 export class ViewportRenderRuntime {
   readonly renderer: THREE.WebGLRenderer;
@@ -135,6 +140,7 @@ export class ViewportRenderRuntime {
     const frameStart = performance.now();
     const projectionMs = options.projectIfDirty();
     this.controls.update();
+    this.syncCameraClipping();
     options.updateScreenSpaceMarkers();
     options.updateSceneLightMarkers();
     options.updateAxisGizmo();
@@ -148,9 +154,29 @@ export class ViewportRenderRuntime {
     const w = window.innerWidth;
     const h = window.innerHeight;
     this.camera.aspect = w / h;
+    this.syncCameraClipping();
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
     this.composer.setSize(w, h);
+  }
+
+  private syncCameraClipping() {
+    const distance = this.camera.position.distanceTo(this.controls.target);
+    if (!Number.isFinite(distance) || distance <= 0) return;
+    const near = Math.max(CAMERA_NEAR_MIN, Math.min(CAMERA_NEAR_MAX, distance / 250));
+    const far = Math.max(
+      near + 1,
+      Math.max(CAMERA_FAR_MIN, Math.min(CAMERA_FAR_MAX, (distance * 8) + CAMERA_FAR_MIN)),
+    );
+    if (
+      Math.abs(this.camera.near - near) < CAMERA_CLIPPING_EPS
+      && Math.abs(this.camera.far - far) < CAMERA_CLIPPING_EPS
+    ) {
+      return;
+    }
+    this.camera.near = near;
+    this.camera.far = far;
+    this.camera.updateProjectionMatrix();
   }
 
   private renderEffectsFrame() {
